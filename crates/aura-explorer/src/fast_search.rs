@@ -13,7 +13,7 @@ pub use aura_core::model::explorer::SearchBackendPreference as BackendPreference
 use std::{collections::HashMap,ffi::{OsStr,OsString},fs,os::windows::ffi::{OsStrExt,OsStringExt},path::{Path,PathBuf},
     sync::{Arc,Weak,Mutex,Condvar,OnceLock,atomic::{AtomicBool,AtomicU64,Ordering},mpsc::{self,Receiver,SyncSender,TrySendError}},
     thread::{self,JoinHandle},time::{Duration,Instant}};
-use anyhow::{Result,Context};
+use anyhow::{Result,Context,bail,ensure};
 use windows::{core::PCWSTR,Win32::{Foundation::{HWND,LPARAM,WPARAM},Storage::FileSystem::{GetDriveTypeW,GetLogicalDriveStringsW},UI::WindowsAndMessaging::PostMessageW}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
