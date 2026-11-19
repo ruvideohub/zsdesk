@@ -424,7 +424,7 @@ impl Dock {
     /// The window y (Launchpad coordinates) where the dock begins.
     pub(super) fn dock_top_in_launchpad(&self) -> f32 {
         let lp_top = self.monitor.top as f32;
-        let dock_top = (self.monitor.bottom - self.geo.win_h as i32) as f32 + self.geo.y0 - 12.0 * self.scale;
+        let dock_top = (self.floor_y - self.geo.win_h as i32) as f32 + self.geo.y0 - 12.0 * self.scale;
         dock_top - lp_top
     }
 
@@ -488,7 +488,7 @@ impl Dock {
                 }
             }
             let (sx, sy) = (x + self.monitor.left as f32, y + self.monitor.top as f32);
-            let win_top = (self.monitor.bottom - self.geo.win_h as i32) as f32;
+            let win_top = (self.floor_y - self.geo.win_h as i32) as f32;
             self.drag_move(sx - self.monitor.left as f32, sy - win_top);
         } else if in_dock {
             if let Some(d) = self.drag.take() {

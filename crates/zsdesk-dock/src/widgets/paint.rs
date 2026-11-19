@@ -16,7 +16,79 @@ use windows::Win32::Graphics::Imaging::{IWICBitmapSource, IWICImagingFactory};
 use super::canvas::{alpha, hex, Align, Badge, Canvas, ChartOpts, Col, Font};
 use super::style::{self, Type};
 use super::catalog::*;
-use super::{compact, dur, headline, hms, money, Ctx, Painted, WAct, DAYS, MONTHS};
+use super::{compact, dur, headline, hms, money, Ctx, Painted, WAct};
+
+/// Month and day names for the panel's language. Russian weeks start on Monday, English
+/// ones on Sunday, and the short day letters are the single letter the grid has room for.
+const MONTHS_RU: [&str; 12] = [
+    "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+];
+const MONTHS_EN: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
+];
+/// 0 = Sunday, as `SYSTEMTIME.wDayOfWeek` counts.
+const DAYS_RU: [&str; 7] = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
+const DAYS_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_SHORT_RU: [&str; 7] = ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"];
+const DAY_SHORT_EN: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const LETTER_RU: [&str; 7] = ["В", "П", "В", "С", "Ч", "П", "С"];
+const LETTER_EN: [&str; 7] = ["S", "M", "T", "W", "T", "F", "S"];
+
+fn ru() -> bool {
+    crate::strings::russian()
+}
+/// The weekday a week starts on (0 = Sunday): Monday in Russian, Sunday in English.
+fn week_start() -> u32 {
+    if ru() {
+        1
+    } else {
+        0
+    }
+}
+fn month_name(m: u32) -> &'static str {
+    let i = ((m.clamp(1, 12)) - 1) as usize;
+    if ru() {
+        MONTHS_RU[i]
+    } else {
+        MONTHS_EN[i]
+    }
+}
+fn day_name(wd: u32) -> &'static str {
+    let i = (wd % 7) as usize;
+    if ru() {
+        DAYS_RU[i]
+    } else {
+        DAYS_EN[i]
+    }
+}
+fn day_short(wd: u32) -> &'static str {
+    let i = (wd % 7) as usize;
+    if ru() {
+        DAY_SHORT_RU[i]
+    } else {
+        DAY_SHORT_EN[i]
+    }
+}
+/// First three letters of a month, upper case: "NOV" / "НОЯ".
+fn month_short_upper(m: u32) -> String {
+    month_name(m).chars().take(3).collect::<String>().to_uppercase()
+}
+/// First three letters of a month, as written: "Nov" / "Ноя".
+fn month_short(m: u32) -> String {
+    month_name(m).chars().take(3).collect()
+}
+/// Three letters of a weekday, as written: "Thu" / "Чет".
+fn day_short3(wd: u32) -> String {
+    day_name(wd).chars().take(3).collect()
+}
+fn day_letter(wd: u32) -> &'static str {
+    let i = (wd % 7) as usize;
+    if ru() {
+        LETTER_RU[i]
+    } else {
+        LETTER_EN[i]
+    }
+}
 
 const BLUE: Col = hex(0x0A84FF);
 const GREEN: Col = hex(0x30D158);
@@ -1287,13 +1359,16 @@ fn seg_digit(c: &Canvas, x: f32, y: f32, w: f32, h: f32, d: u32, on: Col, off: C
 
 fn month_grid(c: &Canvas, n: &super::Now, x0: f32, y0: f32, w: f32, h: f32) {
     let colw = w / 7.0;
-    let first = n.first_weekday();
+    let start = week_start();
+    // Day 1 of the month in week-column terms: 0 is the first column of *this*
+    // week layout, so Sunday-first panels keep their Sunday and Russian ones get Monday.
+    let first = (n.first_weekday() + 7 - start) % 7;
     let rows = (first + n.days_in_month()).div_ceil(7) as f32;
     let head = (h * 0.12).clamp(10.0, 20.0);
     let rh = (h - head) / rows;
     let fs = (rh * 0.55).min(colw * 0.5).clamp(7.0, 12.5);
-    for (i, d) in ["S", "M", "T", "W", "T", "F", "S"].iter().enumerate() {
-        c.tc(d, x0 + colw * (i as f32 + 0.5), y0, fs * 0.85, 600, c.text3(), colw);
+    for i in 0..7u32 {
+        c.tc(day_letter((start + i) % 7), x0 + colw * (i as f32 + 0.5), y0, fs * 0.85, 600, c.text3(), colw);
     }
     for day in 1..=n.days_in_month() {
         let idx = first + day - 1;
@@ -1313,8 +1388,10 @@ fn week_row(c: &Canvas, n: &super::Now, x0: f32, y0: f32, w: f32, h: f32) {
     let r = (h * 0.28).min(colw * 0.42).min(16.0);
     let fs = (r * 0.95).max(8.0);
     let ls = (h * 0.2).clamp(8.0, 11.0);
+    let start = week_start();
     for i in 0..7u32 {
-        let off = i as i64 - n.weekday as i64;
+        let wd = (start + i) % 7;
+        let off = wd as i64 - n.weekday as i64;
         let d = n.day as i64 + off;
         let dim = super::days_in_month(n.year, n.month) as i64;
         let prev = super::days_in_month(n.year, if n.month == 1 { 12 } else { n.month - 1 }) as i64;
@@ -1322,7 +1399,7 @@ fn week_row(c: &Canvas, n: &super::Now, x0: f32, y0: f32, w: f32, h: f32) {
         let cx = x0 + colw * (i as f32 + 0.5);
         let today = off == 0;
         // Today in red, as in every calendar face (month grid, date tile, day page).
-        c.tc(&DAYS[i as usize][..1], cx, y0, ls, 600, if today { RED } else { c.text3() }, colw);
+        c.tc(day_letter(wd), cx, y0, ls, 600, if today { RED } else { c.text3() }, colw);
         let cy = y0 + ls * 1.5 + (h - ls * 1.5) / 2.0;
         if today {
             c.circle(cx, cy, r, RED);
@@ -1343,17 +1420,21 @@ fn day_tile(c: &Canvas, n: &super::Now, sh: Shape) {
     let hh = s * 0.28;
     c.rr(x0, y0, s, hh + s * 0.2, s * 0.2, RED);
     c.rr(x0, y0 + hh, s, s * 0.2, 0.0, (0.98, 0.98, 0.99, 1.0));
-    c.tc(&MONTHS[n.month as usize - 1][..3].to_uppercase(), x0 + s / 2.0, y0 + hh * 0.18, hh * 0.62, 700, WHITE, s);
+    c.tc(&month_short_upper(n.month), x0 + s / 2.0, y0 + hh * 0.18, hh * 0.62, 700, WHITE, s);
     c.text(&n.day.to_string(), x0 + s / 2.0, y0 + hh + s * 0.02, s * 0.5, 600, (0.1, 0.1, 0.12, 1.0), Align::Center, s, Font::Display);
 }
 
 fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
     let n = x.now;
     let time = format!("{}:{:02}", h12(n.hour), n.minute);
-    let mon = MONTHS[n.month as usize - 1];
-    let day = DAYS[n.weekday as usize];
-    let date_long = format!("{day}, {mon} {}", n.day);
-    let date_short = format!("{} {} {}", &day[..3], &mon[..3], n.day);
+    let mon = month_name(n.month);
+    let day = day_name(n.weekday);
+    let date_long = if ru() { format!("{day}, {} {mon}", n.day) } else { format!("{day}, {mon} {}", n.day) };
+    let date_short = if ru() {
+        format!("{} {} {mon}", n.day, day_short(n.weekday))
+    } else {
+        format!("{} {} {}", day_short(n.weekday), month_short(n.month), n.day)
+    };
     out.hits.push(((0.0, 0.0, c.w, c.h), WAct::Open("ms-settings:dateandtime".into())));
     match k {
         ClockKind::Digital | ClockKind::ClockWeather => {
@@ -1385,8 +1466,8 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
                                 c.tw(t, rx + cs * 1.9, c.h / 2.0 - cs * 0.85, cs * 1.25, 600, c.text1(), c.w - rx - cs * 1.9 - 6.0);
                             }
                             None => {
-                                c.tw(&day[..3].to_uppercase(), rx, c.h / 2.0 - cs * 1.3, cs, 700, RED, c.w - rx - 6.0);
-                                c.tw(&format!("{} {}", &mon[..3], n.day), rx, c.h / 2.0 - 1.0, cs * 1.15, 600, c.text1(), c.w - rx - 6.0);
+                                c.tw(&day_short3(n.weekday).to_uppercase(), rx, c.h / 2.0 - cs * 1.3, cs, 700, RED, c.w - rx - 6.0);
+                                c.tw(&format!("{} {}", month_short(n.month), n.day), rx, c.h / 2.0 - 1.0, cs * 1.15, 600, c.text1(), c.w - rx - 6.0);
                             }
                         }
                     } else {
@@ -1414,15 +1495,19 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
                     }
                 }
                 Shape::Medium if k == ClockKind::Digital => {
-                    let tw = c.num(&time, 16.0, 6.0, 50.0, 300, c.text1());
-                    c.num(&format!(":{:02}", n.second), 18.0 + tw, 30.0, 22.0, 300, c.text3());
-                    c.tw(ampm(n.hour), 20.0 + tw + 34.0, 34.0, 15.0, 500, c.text2(), 40.0);
-                    c.tw(&date_long, 18.0, 68.0, 13.0, 400, c.text2(), c.w - 36.0);
+                    // The date sits on the bottom edge of the card, not at a fixed y: a long
+                    // Russian date used to wrap and lose its second line off the card.
+                    let date_y = c.h - 24.0;
+                    let tw = c.num(&time, 16.0, 4.0, 46.0, 300, c.text1());
+                    c.num(&format!(":{:02}", n.second), 18.0 + tw, 26.0, 21.0, 300, c.text3());
+                    c.tw(ampm(n.hour), 20.0 + tw + 32.0, 30.0, 14.0, 500, c.text2(), 40.0);
+                    c.tw(&date_long, 18.0, date_y, 12.5, 400, c.text2(), c.w - 24.0);
                 }
                 Shape::Medium => {
-                    let tw = c.num(&time, 16.0, 12.0, 40.0, 400, c.text1());
-                    c.tw(ampm(n.hour), 20.0 + tw, 34.0, 13.0, 500, c.text2(), 40.0);
-                    c.tw(&date_long, 18.0, 66.0, 12.0, 400, c.text2(), c.w * 0.6);
+                    let date_y = c.h - 24.0;
+                    let tw = c.num(&time, 16.0, 8.0, 38.0, 400, c.text1());
+                    c.tw(ampm(n.hour), 20.0 + tw, 30.0, 13.0, 500, c.text2(), 40.0);
+                    c.tw(&date_long, 18.0, date_y, 12.0, 400, c.text2(), c.w - 24.0);
                     if let Some((e, t)) = weather {
                         c.text(e, c.w - 60.0, 16.0, 28.0, 400, c.text1(), Align::Center, 60.0, Font::Text);
                         c.tr(&t, c.w - 16.0, 56.0, 20.0, 500, c.text1());
@@ -1582,7 +1667,7 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
                 Shape::Mini => day_tile(c, &n, sh),
                 Shape::Dock => {
                     c.tw(&day.to_uppercase(), 10.0, c.h * 0.12, (c.h * 0.18).max(9.0), 700, RED, c.w - 12.0);
-                    let t = format!("{} {}", &mon[..3], n.day);
+                    let t = format!("{} {}", month_short(n.month), n.day);
                     c.num(&t, 10.0, c.h * 0.36, fit(c, &t, c.h * 0.36, 9.0, 600, Font::Display, c.w - 12.0), 600, c.text1());
                 }
                 Shape::Small => {
@@ -1606,7 +1691,7 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
             Shape::Mini => day_tile(c, &n, sh),
             Shape::Dock => {
                 c.tw(day, 12.0, c.h * 0.14, (c.h * 0.19).max(9.5), 400, c.text2(), c.w);
-                let t = format!("{} {}", &mon[..3], n.day);
+                let t = format!("{} {}", month_short(n.month), n.day);
                 c.num(&t, 12.0, c.h * 0.38, fit(c, &t, c.h * 0.36, 10.0, 600, Font::Display, c.w - 16.0), 600, c.text1());
             }
             Shape::Small => {
@@ -1680,7 +1765,8 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
             _ => {
                 let pad = if sh == Shape::Small { 10.0 } else { 14.0 };
                 let hs = if sh == Shape::Small { 11.5 } else { 14.0 };
-                c.tw(if sh == Shape::Small { &mon[..3] } else { mon }, pad + 2.0, 10.0, hs, 600, c.text1(), 160.0);
+                let head = if sh == Shape::Small { month_short(n.month) } else { mon.to_string() };
+                c.tw(&head, pad + 2.0, 10.0, hs, 600, c.text1(), 160.0);
                 c.tr(&n.year.to_string(), c.w - pad - 2.0, 10.0, hs, 600, RED);
                 month_grid(c, &n, pad, 32.0, c.w - 2.0 * pad, c.h - 38.0);
             }
@@ -1744,7 +1830,7 @@ fn weekday_of(ymd: &str) -> String {
         y -= 1;
     }
     let wd = (y + y / 4 - y / 100 + y / 400 + T[(m - 1) as usize] + d).rem_euclid(7);
-    DAYS[wd as usize][..3].to_string()
+    day_short(wd as u32).to_string()
 }
 
 /// Columns of hours or days: label, emoji, temperature.
@@ -1762,12 +1848,14 @@ fn forecast_cols(c: &Canvas, items: &[(String, &'static str, String)], x0: f32, 
 type Day = (String, &'static str, String, String);
 
 fn weather(c: &Canvas, out: &mut Painted, k: WeatherKind, x: &Ctx, sh: Shape) {
-    out.hits.push(((0.0, 0.0, c.w, c.h), WAct::Open(format!("https://www.msn.com/en-ca/weather/forecast/in-{}", x.cfg.weather_city.replace(' ', "-")))));
+    // The card asks for a place (the form has the city field); opening a web page on every
+    // click made the widget feel like a link, which is what it looked like without data.
+    out.hits.push(((0.0, 0.0, c.w, c.h), WAct::Connect("weather")));
     let Some(w) = x.weather else {
         if k == WeatherKind::Banner && !matches!(sh, Shape::Mini | Shape::Dock) {
             bg(c, false);
         }
-        compact_or_text(c, sh, Vis::Glyph(G_SUN, c.text3()), "—", &x.cfg.weather_city, "Fetching weather…");
+        compact_or_text(c, sh, Vis::Glyph(G_SUN, c.text3()), "—", &x.cfg.weather_city, "No data · click to set the place");
         return;
     };
     let city = &x.cfg.weather_city;
@@ -2888,7 +2976,7 @@ fn progress(c: &Canvas, s: Span, x: &Ctx, sh: Shape) {
             let m = n.hour * 60 + n.minute;
             (24u32, n.hour, "Today", m as f32 / 1440.0)
         }
-        Span::Month => (n.days_in_month(), n.day - 1, MONTHS[n.month as usize - 1], (n.day - 1) as f32 / n.days_in_month() as f32 + (n.hour as f32 / 24.0) / n.days_in_month() as f32),
+        Span::Month => (n.days_in_month(), n.day - 1, month_name(n.month), (n.day - 1) as f32 / n.days_in_month() as f32 + (n.hour as f32 / 24.0) / n.days_in_month() as f32),
         Span::Year => {
             let d = n.day_of_year();
             (52, (d - 1) / 7, "This year", (d - 1) as f32 / n.days_in_year() as f32)

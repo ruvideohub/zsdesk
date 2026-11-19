@@ -213,6 +213,15 @@ pub struct Config {
     /// `shell:AppsFolder`) or a full .exe path; `"|"` is a separator; an object is a stack.
     pub pins: Vec<Pin>,
 
+    /// Where the desktop clock card was dragged to (physical px on its monitor). `None`
+    /// means "a corner", which is what `clock_corner` says.
+    #[serde(default)]
+    pub clock_pos: Option<[i32; 2]>,
+
+    /// The desktop clock stays where it is: dragging does nothing.
+    #[serde(default)]
+    pub clock_locked: bool,
+
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
     #[serde(default)]
@@ -269,6 +278,8 @@ impl Default for Config {
             clock_12h: false,
             clock_date: true,
             clock_seconds: false,
+            clock_pos: None,
+            clock_locked: false,
             cc_pin_added: false,
             pins: Vec::new(),
         }

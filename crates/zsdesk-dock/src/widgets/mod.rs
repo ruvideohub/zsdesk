@@ -140,8 +140,6 @@ pub fn days_in_month(y: u32, m: u32) -> u32 {
         }
     }
 }
-pub const MONTHS: [&str; 12] = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-pub const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /// Everything widgets read, borrowed for one paint.
 pub struct Ctx<'a> {

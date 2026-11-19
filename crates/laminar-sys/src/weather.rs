@@ -56,7 +56,34 @@ pub const DEFAULT_LAT_LON: (f32, f32) = (43.65, -79.38);
 
 /// Performs a blocking HTTPS GET to `host` + `path` (path includes the query string).
 /// Returns the body when the status is 200.
+///
+/// Three ways to reach the network, in turn: Windows' automatic proxy detection (the usual
+/// case), the proxy settings the machine has configured, and a direct connection. One mode
+/// failing used to leave the weather widget empty for ever.
 pub fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
+    for mode in [ProxyMode::Auto, ProxyMode::Configured, ProxyMode::Direct] {
+        if let Some(body) = https_get_mode(mode, host, path) {
+            return Some(body);
+        }
+    }
+    None
+}
+
+/// How to reach the network; the WinHTTP constant is picked at the call site, so this
+/// file doesn't depend on how the bindings name its type.
+#[derive(Clone, Copy, PartialEq)]
+enum ProxyMode {
+    Auto,
+    Configured,
+    Direct,
+}
+
+fn https_get_mode(mode: ProxyMode, host: &str, path: &str) -> Option<Vec<u8>> {
+    let access = match mode {
+        ProxyMode::Auto => WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        ProxyMode::Configured => WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+        ProxyMode::Direct => WINHTTP_ACCESS_TYPE_NO_PROXY,
+    };
     struct H(*mut core::ffi::c_void);
     impl Drop for H {
         fn drop(&mut self) {
@@ -72,7 +99,7 @@ pub fn https_get(host: &str, path: &str) -> Option<Vec<u8>> {
     let wpath = wide(path);
     let verb = wide("GET");
     unsafe {
-        let session = H(WinHttpOpen(PCWSTR(agent.as_ptr()), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0));
+        let session = H(WinHttpOpen(PCWSTR(agent.as_ptr()), access, PCWSTR::null(), PCWSTR::null(), 0));
         if session.0.is_null() {
             return None;
         }

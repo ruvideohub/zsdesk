@@ -112,7 +112,11 @@ pub fn run_watchdog(pid: u32, original_state: Option<u32>) {
 }
 
 /// Reserve (or release) a strip at the bottom of the monitor for the dock.
-pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, registered: &mut bool) {
+/// Reserves a strip of `height` px at the bottom of `monitor` and returns the rect Windows
+/// actually gave it (or `None` when nothing is reserved). When Explorer's taskbar is on
+/// screen it already owns the bottom strip, so the rect we get back sits *above* it — that
+/// is where the panel has to go, otherwise the taskbar covers it.
+pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, registered: &mut bool) -> Option<RECT> {
     let mut d = abd(Some(hwnd));
     d.uCallbackMessage = WM_APP_APPBAR;
     d.uEdge = ABE_BOTTOM;
@@ -126,9 +130,11 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, registered:
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
             d.rc.top = d.rc.bottom - height;
             SHAppBarMessage(ABM_SETPOS, &mut d);
+            return Some(d.rc);
         } else if *registered {
             SHAppBarMessage(ABM_REMOVE, &mut d);
             *registered = false;
         }
     }
+    None
 }

@@ -191,6 +191,10 @@ const CMD_CLOCK_24H: usize = 3620;
 const CMD_CLOCK_DATE: usize = 3621;
 const CMD_CLOCK_SECONDS: usize = 3622;
 const CMD_CLOCK_HIDE: usize = 3623;
+/// The panel's own switch for the desktop clock (the card's menu can only hide it).
+const CMD_CLOCK_DESKTOP: usize = 3624;
+/// The card keeps its place while dragging is off.
+const CMD_CLOCK_LOCK: usize = 3625;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -632,6 +636,10 @@ struct Dock {
     /// The Start button's four panes, and whether they're spread (hovered).
     /// The desktop clock card, when the settings ask for one.
     clock: Option<crate::desktop_clock::DesktopClock>,
+    /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
+    /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
+    /// above it instead of underneath.
+    floor_y: i32,
     start_panes: Vec<StartPane>,
     start_open: bool,
 }
@@ -1030,7 +1038,7 @@ impl Dock {
                 self.hwnd,
                 Some(HWND_TOPMOST),
                 self.monitor.left,
-                self.monitor.bottom - self.geo.win_h as i32,
+                self.floor_y - self.geo.win_h as i32,
                 self.geo.win_w as i32,
                 self.geo.win_h as i32,
                 SWP_NOACTIVATE,
@@ -1307,7 +1315,7 @@ impl Dock {
         self.paint_dock_widgets(true);
         self.apply_region();
         if tracing() {
-            let top = self.monitor.bottom - self.geo.win_h as i32;
+            let top = self.floor_y - self.geo.win_h as i32;
             for (i, it) in self.items.iter().enumerate() {
                 trace!("item {i} at ({}, {}) {:?} {}", self.monitor.left + self.geo.center_abs(i) as i32, top + (self.geo.y0 + self.geo.shelf_h / 2.0) as i32, it.kind, it.key);
             }
@@ -1753,7 +1761,7 @@ impl Dock {
     fn resync_hover(&mut self) {
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.monitor.bottom - self.geo.win_h as i32;
+        let win_top = self.floor_y - self.geo.win_h as i32;
         let (x, y) = (p.x - self.monitor.left, p.y - win_top);
         let r = self.region_rect(true);
         let inside = !self.tucked
@@ -1776,7 +1784,7 @@ impl Dock {
             let _ = KillTimer(Some(self.hwnd), T_REVEAL);
             let mut p = POINT::default();
             let _ = get_cursor_pos(&mut p);
-            let edge = self.monitor.bottom - (self.cfg.reveal_zone * self.scale).round() as i32 - 1;
+            let edge = self.floor_y - (self.cfg.reveal_zone * self.scale).round() as i32 - 1;
             if p.y >= edge && p.x >= self.monitor.left && p.x < self.monitor.right {
                 trace!("reveal: pointer rested at the bottom edge ({}, {})", p.x, p.y);
                 self.set_tucked(false);
@@ -1958,8 +1966,6 @@ impl Dock {
             m.push(MenuItem::sep());
             m.extend(self.dock_size_items(&it.key));
             m.push(MenuItem::sep());
-            let in_lp = self.cfg.launchpad_widgets.iter().chain(self.cfg.right_widgets.iter()).any(|w| w.id() == def.id);
-            m.push(MenuItem::item("Show in Launchpad", CMD_WIDGET_TO_LP).checked(in_lp));
             m.push(MenuItem::item("Remove from Dock", CMD_WIDGET_REMOVE).danger());
             m.push(MenuItem::sep());
         } else if item.as_ref().map(|it| it.kind == Kind::Trash).unwrap_or(false) {
@@ -1982,6 +1988,7 @@ impl Dock {
         m.push(MenuItem::item("Automatically Hide the Dock", CMD_AUTOHIDE).checked(self.cfg.auto_hide));
         m.push(MenuItem::item("Magnification", CMD_MAGNIFY).checked(self.cfg.magnify));
         m.push(MenuItem::item("Hide the Windows Taskbar", CMD_TASKBAR).checked(self.cfg.hide_windows_taskbar));
+        m.push(MenuItem::item("Clock on the Desktop", CMD_CLOCK_DESKTOP).checked(self.cfg.desktop_clock));
         m.push(MenuItem::sep());
         // Widgets: the everyday ones are one click away, the rest live in the gallery.
         m.push(MenuItem::header("Widgets on the Panel"));
@@ -1991,7 +1998,6 @@ impl Dock {
             let present = self.cfg.pins.iter().any(|p| matches!(p, Pin::Widget { widget, .. } if widget.as_str() == id));
             m.push(MenuItem::item(def.name, CMD_WIDGET_TOGGLE_BASE + index).checked(present));
         }
-        m.push(MenuItem::item("More Widgets…", CMD_WIDGET_ADD));
         m.push(MenuItem::sep());
         m.push(MenuItem::item("Dock Settings…", CMD_SETTINGS));
         if crate::updater::installed() {
@@ -2044,7 +2050,7 @@ impl Dock {
         let g = &self.geo;
         let i = 4.min(g.left.len().saturating_sub(1));
         let (x, y) = (g.center_abs(i), g.y0 + g.shelf_h / 2.0);
-        let anchor = POINT { x: self.monitor.left + x as i32, y: self.monitor.bottom - g.win_h as i32 + g.y0 as i32 };
+        let anchor = POINT { x: self.monitor.left + x as i32, y: self.floor_y - g.win_h as i32 + g.y0 as i32 };
         match name {
             "menu" => {
                 self.on_move(x, y);
@@ -2362,10 +2368,17 @@ impl Dock {
             CMD_CLOCK_DATE => self.save_and_apply(|c| c.clock_date = !c.clock_date),
             CMD_CLOCK_SECONDS => self.save_and_apply(|c| c.clock_seconds = !c.clock_seconds),
             CMD_CLOCK_HIDE => self.save_and_apply(|c| c.desktop_clock = false),
+            // The way back: the clock card is created by the panel as soon as the switch is on.
+            CMD_CLOCK_DESKTOP => self.save_and_apply(|c| c.desktop_clock = !c.desktop_clock),
             cmd if (CMD_CLOCK_CORNER_BASE..CMD_CLOCK_CORNER_BASE + 4).contains(&cmd) => {
                 let corner = crate::config::ClockCorner::from_code(cmd - CMD_CLOCK_CORNER_BASE);
-                self.save_and_apply(|c| c.clock_corner = corner);
+                // A corner is a preset: it drops wherever the card was dragged to.
+                self.save_and_apply(|c| {
+                    c.clock_corner = corner;
+                    c.clock_pos = None;
+                });
             }
+            CMD_CLOCK_LOCK => self.save_and_apply(|c| c.clock_locked = !c.clock_locked),
             cmd if (CMD_CLOCK_SCALE_BASE..CMD_CLOCK_SCALE_BASE + CLOCK_SCALES.len()).contains(&cmd) => {
                 let scale = CLOCK_SCALES[cmd - CMD_CLOCK_SCALE_BASE];
                 self.save_and_apply(|c| c.clock_scale = scale);
@@ -2942,7 +2955,7 @@ impl Dock {
             .collect();
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.monitor.bottom - self.geo.win_h as i32;
+        let win_top = self.floor_y - self.geo.win_h as i32;
         let cx_px = if self.hovering { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
         let (cx, sc) = self.geo.slot_center(cx_px, if self.hovering { 1.0 } else { 0.0 }, i);
         let icon_top = self.geo.y0 + self.geo.p + self.geo.b - self.geo.b * sc;
@@ -3584,6 +3597,10 @@ impl Dock {
                     if w.is_some() {
                         self.weather = w;
                         self.paint_dock_widgets(true);
+                    } else {
+                        // No network, no answer, or no place yet: the widget says so and the
+                        // panel tries again in a few minutes instead of in half an hour.
+                        trace!("weather: no data");
                     }
                     render = true;
                 }
@@ -3682,7 +3699,7 @@ impl Dock {
                     _ => Target::None,
                 };
                 // The pointer is still over the dock: resume normal hover tracking.
-                let win_top = self.monitor.bottom - self.geo.win_h as i32;
+                let win_top = self.floor_y - self.geo.win_h as i32;
                 self.hovering = false;
                 self.on_move((sx - self.monitor.left) as f32, (sy - win_top) as f32);
                 result
@@ -3715,7 +3732,7 @@ impl Dock {
             self.apply_region();
         }
         let _ = self.animate_amount(0.0, 120);
-        let win_top = self.monitor.bottom - self.geo.win_h as i32;
+        let win_top = self.floor_y - self.geo.win_h as i32;
         let (x, y) = ((sx - self.monitor.left) as f32, (sy - win_top) as f32);
         let Some(fd) = &self.file_drag else { return Target::None };
         let old = fd.insert;
@@ -3949,7 +3966,7 @@ impl Dock {
         }
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.monitor.bottom - self.geo.win_h as i32;
+        let win_top = self.floor_y - self.geo.win_h as i32;
         // Drags don't magnify the icons.
         let amount = if self.hovering && self.file_drag.is_none() { 1.0 } else { 0.0 };
         let local_x = if amount > 0.0 { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
@@ -4413,7 +4430,8 @@ impl Dock {
         }
         if self.helper {
             let h = self.reserve_height();
-            taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+            self.use_floor(assigned);
             return;
         }
         self.helpers.sync(self.cfg.show_on_all_displays);
@@ -4427,7 +4445,36 @@ impl Dock {
             self.taskbar_hidden = false;
         }
         let h = self.reserve_height();
-        taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+        self.use_floor(assigned);
+    }
+
+    /// Move the panel onto the strip Windows reserved for it. Explorer's taskbar keeps the
+    /// bottom of the screen when it is visible, so the panel sits on top of it.
+    fn use_floor(&mut self, assigned: Option<RECT>) {
+        let floor = assigned.map(|r| r.bottom).unwrap_or(self.monitor.bottom);
+        if floor == self.floor_y {
+            return;
+        }
+        trace!("panel floor: {} -> {}", self.floor_y, floor);
+        self.floor_y = floor;
+        if self.geo.win_w <= 0.0 {
+            return;
+        }
+        unsafe {
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                self.monitor.left,
+                self.floor_y - self.geo.win_h as i32,
+                self.geo.win_w as i32,
+                self.geo.win_h as i32,
+                SWP_NOACTIVATE,
+            );
+        }
+        // Everything that hangs off the panel follows it.
+        let anchor = self.cc_anchor();
+        self.control_center.reposition(self.monitor, anchor);
     }
 
     /// The hover label: a glass pill holding the label text, above everything else.
@@ -4653,7 +4700,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_NCHITTEST => {
             let (sx, sy) = lparam_xy(lp);
             let through = with_dock_ret(|d| {
-                let top = (d.monitor.bottom - d.geo.win_h as i32) as f32;
+                let top = (d.floor_y - d.geo.win_h as i32) as f32;
                 d.headroom_passes_through(sx - d.monitor.left as f32, sy - top)
             })
             .unwrap_or(false);
@@ -4770,8 +4817,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             return LRESULT(0);
         }
         WM_APP_CLOCK_MOVED => {
-            let corner = crate::config::ClockCorner::from_code(wp.0);
-            with_dock(|d| d.save_and_apply(|c| c.clock_corner = corner));
+            // The card posts the corner it was let go in, in physical px.
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.clock_pos = Some([x, y])));
             return LRESULT(0);
         }
         WM_APP_RESYNC_HOVER => {
@@ -4836,6 +4884,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 T_WEATHER => {
                     d.services.send(Req::Weather(d.cfg.weather_lat, d.cfg.weather_lon));
+                    // Nothing yet: try again in three minutes rather than in half an hour.
+                    let next = if d.weather.is_none() { 3 * 60 * 1000 } else { 30 * 60 * 1000 };
+                    unsafe {
+                        let _ = SetTimer(Some(d.hwnd), T_WEATHER, next, None);
+                    }
                 }
                 T_WIDGETS => {
                     if d.retheme_pending {
@@ -5264,6 +5317,7 @@ impl Dock {
         m.push(MenuItem::item("24-Hour Time", CMD_CLOCK_24H).checked(!prefs.hour12));
         m.push(MenuItem::item("Show the Date", CMD_CLOCK_DATE).checked(prefs.date));
         m.push(MenuItem::item("Show Seconds", CMD_CLOCK_SECONDS).checked(prefs.seconds));
+        m.push(MenuItem::item("Lock Position", CMD_CLOCK_LOCK).checked(self.cfg.clock_locked));
         m.push(MenuItem::sep());
         m.push(MenuItem::item("Hide the Clock", CMD_CLOCK_HIDE).danger());
         let mut point = POINT::default();
@@ -5470,9 +5524,12 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             lpw_press: None,
             wtick: 0,
             clock: None,
+            floor_y: 0,
             start_panes: Vec::new(),
             start_open: false,
         };
+        // Until the appbar answers, the panel sits on the monitor's own bottom edge.
+        dock.floor_y = dock.monitor.bottom;
         dock.update_theme();
         dock.update_glass();
         dock.build_label()?;

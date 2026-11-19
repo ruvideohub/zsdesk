@@ -82,6 +82,10 @@ pub struct Prefs {
     pub date: bool,
     /// Seconds in the time (the card then repaints every second).
     pub seconds: bool,
+    /// Where the card was left, in physical px; `None` means its corner.
+    pub pos: Option<(i32, i32)>,
+    /// Dragging does nothing while this is on.
+    pub locked: bool,
 }
 
 impl Prefs {
@@ -92,6 +96,8 @@ impl Prefs {
             hour12: cfg.clock_12h,
             date: cfg.clock_date,
             seconds: cfg.clock_seconds,
+            pos: cfg.clock_pos.map(|[x, y]| (x, y)),
+            locked: cfg.clock_locked,
         }
     }
 
@@ -164,7 +170,15 @@ impl ClockState {
     fn place(&self) {
         let (w, h) = self.size();
         let margin = (MARGIN * self.dpi.max(1.0)).round() as i32;
-        let (x, y) = corner_origin(self.prefs.corner, self.monitor, w, h, margin);
+        // Dragged somewhere: stay there (and never off the display). Otherwise: the corner
+        // the settings ask for.
+        let (x, y) = match self.prefs.pos {
+            Some((px, py)) => (
+                px.clamp(self.monitor.left, (self.monitor.right - w).max(self.monitor.left)),
+                py.clamp(self.monitor.top, (self.monitor.bottom - h).max(self.monitor.top)),
+            ),
+            None => corner_origin(self.prefs.corner, self.monitor, w, h, margin),
+        };
         unsafe {
             // The card belongs to the desktop, not above your work. `SetWindowPos` with a
             // null insert-after is HWND_TOP, which is what put it over every window; here
@@ -195,25 +209,6 @@ impl ClockState {
             let _ = SetWindowPos(self.hwnd, Some(front), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
         self.below = front.0 as isize;
-    }
-
-    /// The corner nearest to where the card was dropped.
-    fn nearest_corner(&self) -> ClockCorner {
-        let mut r = RECT::default();
-        if unsafe { GetWindowRect(self.hwnd, &mut r) }.is_err() {
-            return self.prefs.corner;
-        }
-        let cx = (r.left + r.right) / 2;
-        let cy = (r.top + r.bottom) / 2;
-        let monitor = self.monitor;
-        let middle_x = (monitor.left + monitor.right) / 2;
-        let middle_y = (monitor.top + monitor.bottom) / 2;
-        match (cx < middle_x, cy < middle_y) {
-            (true, true) => ClockCorner::TopLeft,
-            (false, true) => ClockCorner::TopRight,
-            (true, false) => ClockCorner::BottomLeft,
-            (false, false) => ClockCorner::BottomRight,
-        }
     }
 
     /// The two halves of the time: the digits and, for 12-hour time, AM/PM.
@@ -474,6 +469,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
         }
         WM_LBUTTONDOWN => {
             if let Some(state) = state_of(hwnd) {
+                // Locked: the card stays put (its menu still opens on right-click).
+                if state.prefs.locked {
+                    return LRESULT(0);
+                }
                 let mut pointer = POINT::default();
                 let mut card = RECT::default();
                 unsafe {
@@ -509,16 +508,18 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                     unsafe {
                         let _ = ReleaseCapture();
                     }
-                    // Snap to the nearest corner and let the panel remember it.
-                    let corner = state.nearest_corner();
-                    state.prefs.corner = corner;
+                    // Stay where it was let go and let the panel remember the spot: a
+                    // card that jumps back to a corner can't be placed anywhere else.
+                    let mut rect = RECT::default();
+                    let _ = unsafe { GetWindowRect(hwnd, &mut rect) };
+                    state.prefs.pos = Some((rect.left, rect.top));
                     state.place();
                     unsafe {
                         let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                             Some(state.dock),
                             crate::dock::WM_APP_CLOCK_MOVED,
-                            WPARAM(corner.code()),
-                            LPARAM(0),
+                            WPARAM(rect.left as isize as usize),
+                            LPARAM(rect.top as isize),
                         );
                     }
                 }
@@ -570,14 +571,14 @@ mod tests {
     fn a_bigger_card_still_fits_the_smallest_display() {
         let monitor = RECT { left: 0, top: 0, right: 1024, bottom: 768 };
         let k = 1.0 * 1.5;
-        let (w, h) = card_size(Prefs { corner: ClockCorner::BottomRight, scale: 1.5, hour12: false, date: true, seconds: false }, k);
+        let (w, h) = card_size(Prefs { corner: ClockCorner::BottomRight, scale: 1.5, hour12: false, date: true, seconds: false, pos: None, locked: false }, k);
         let (x, y) = corner_origin(ClockCorner::BottomRight, monitor, w as i32, h as i32, 36);
         assert!(x >= monitor.left && y >= monitor.top);
     }
 
     #[test]
     fn twelve_hour_time_has_no_leading_zero_and_a_suffix() {
-        let prefs = |hour12, seconds| Prefs { corner: ClockCorner::TopRight, scale: 1.0, hour12, date: true, seconds };
+        let prefs = |hour12, seconds| Prefs { corner: ClockCorner::TopRight, scale: 1.0, hour12, date: true, seconds, pos: None, locked: false };
         let now = SYSTEMTIME {
             wYear: 2026,
             wMonth: 11,
