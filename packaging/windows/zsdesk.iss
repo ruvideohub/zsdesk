@@ -83,6 +83,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Автозапуск: сетки, виджет часов и панель сразу после входа, окно не открывается.
+Name: "autostart"; Description: "{cm:Autostart}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "setup-logo.bmp"; Flags: dontcopy
@@ -104,12 +106,18 @@ Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\ZSDesk.exe"; AppUserModel
 Name: "{group}\{cm:Fences}"; Filename: "{app}\ZSDesk.exe"; Parameters: "--desktop"; Check: not WizardNoIcons
 #endif
 
+[Registry]
+; Одна запись на всё: ZSDesk сам поднимает панель (zsdesk-dock.exe) и гасит её при выходе.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "ZSDesk"; ValueData: """{app}\ZSDesk.exe"" --desktop --tray"; Flags: uninsdeletevalue; Tasks: autostart
+
 [Run]
 Filename: "{app}\ZSDesk.exe"; Description: "{cm:LaunchProgram,ZSDesk}"; Flags: nowait postinstall skipifsilent
 
 [CustomMessages]
 chinesesimp.Fences=ZSDesk 桌面格子
 english.Fences=ZSDesk Desktop Fences
+chinesesimp.Autostart=随 Windows 启动（面板、桌面格子和时钟，托盘运行）
+english.Autostart=Start with Windows (panel, fences and clock in the tray)
 chinesesimp.Options=安装选项
 english.Options=Installation options
 chinesesimp.HideOptions=收起安装选项

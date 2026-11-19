@@ -94,6 +94,27 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
   `"auto"`), из апстрима убраны виджеты, коннекторы и «О программе».
 - Иконка ZSDesk — первая на панели; на рабочем столе — стеклянный виджет часов
   в стиле macOS (время и дата по-русски, не перекрывает окна и не ловит клики).
+- **Свой значок у панели**: `zsdesk-dock.exe` несёт иконку (золотая полоса с плитками,
+  16–256 px) и номер версии, поэтому в Проводнике, «Пуске» и списке программ видно
+  панель, а не пустую системную иконку. Рисуется из кода: `python3 scripts/make-icons.py`.
+
+### Установка и автозапуск
+
+```powershell
+# из папки с ZSDesk.exe и zsdesk-dock.exe
+powershell -ExecutionPolicy Bypass -File install.ps1
+
+# или двойным щелчком: install.cmd
+install.cmd -Remove        # удалить: процессы, автозапуск, ярлыки, папку
+```
+
+- Ставит в профиль пользователя: `%LOCALAPPDATA%\Programs\ZSDesk`, администратор не нужен.
+- Автозапуск — одна запись `HKCU\…\Run`: `ZSDesk.exe --desktop --tray`. При входе в Windows
+  сразу появляются сетки, виджет часов и панель, окно файлового менеджера не открывается,
+  значок стоит в трее.
+- Отдельная запись для панели не нужна и вредна: панель — дочерний процесс `ZSDesk.exe`
+  и живёт ровно столько же, сколько он. Нужна только панель — `install.cmd -PanelOnly`.
+- Прочее: `-NoAutostart`, `-DesktopShortcut`, `-NoStart`, `-Dir <путь>`.
 
 ```powershell
 cargo build -p zsdesk-dock --release   # панель

@@ -1074,6 +1074,7 @@ dependencies = [
 name = "zsdesk-dock"
 version = "0.3.18"
 dependencies = [
+ "embed-resource",
  "laminar-sys",
  "serde",
  "serde_json",

@@ -81,8 +81,9 @@ pub fn wanted(args: &[std::ffi::OsString]) -> bool {
         || flag("--quick-search")
         || flag("--quick-search-settings")
         || flag("--background");
-    // `--desktop quit` asks the running fences to go away and starts nothing.
-    let quitting = flag("quit") && flag("--desktop");
+    // `--desktop --quit` asks the running fences to go away and starts nothing, so a
+    // request to quit must never bring a panel up on its way out.
+    let quitting = flag("--quit") && flag("--desktop");
     !quiet && !quitting
 }
 
@@ -111,6 +112,6 @@ mod tests {
 
     #[test]
     fn closing_the_fences_does_not_start_one() {
-        assert!(!wanted(&args(&["--desktop", "quit"])));
+        assert!(!wanted(&args(&["--desktop", "--quit"])));
     }
 }

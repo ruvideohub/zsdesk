@@ -11,6 +11,9 @@ on:
     paths:
       - 'crates/zsdesk-dock/**'
       - 'crates/laminar-sys/**'
+      - 'packaging/windows/install.*'
+      - 'packaging/windows/install-readme.txt'
+      - 'scripts/make-icons.py'
       - '.github/workflows/dock-build.yml'
 
 permissions:
@@ -51,6 +54,10 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item -LiteralPath target/release/zsdesk-app.exe -Destination dist/ZSDesk.exe
           Copy-Item -LiteralPath target/release/zsdesk-dock.exe -Destination dist/zsdesk-dock.exe
+          # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
+          Copy-Item -LiteralPath packaging/windows/install.ps1 -Destination dist/install.ps1
+          Copy-Item -LiteralPath packaging/windows/install.cmd -Destination dist/install.cmd
+          Copy-Item -LiteralPath packaging/windows/install-readme.txt -Destination dist/install-readme.txt
           Get-ChildItem -LiteralPath dist | Format-Table Name, Length
       - name: Sign the executables
         working-directory: zsdesk

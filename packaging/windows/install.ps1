@@ -1,0 +1,232 @@
+﻿<#
+.SYNOPSIS
+    Устанавливает ZSDesk с панелью и включает автозапуск.
+
+.DESCRIPTION
+    Копирует ZSDesk.exe и zsdesk-dock.exe в папку пользователя, кладёт ярлыки в меню
+    «Пуск» и прописывает автозапуск при входе в Windows. Автозапуск запускает
+    `ZSDesk.exe --desktop --tray`: сетки появляются сразу, окно файлового менеджера не
+    открывается, в трее стоит значок, а панель внизу и виджет часов поднимает сам
+    ZSDesk — поэтому отдельная запись автозапуска панели не нужна и даже вредна:
+    вторая панель подралась бы за место на экране.
+
+    Администратор не нужен: всё ставится в профиль пользователя (PrivilegesRequired)
+    и в HKCU.
+
+.PARAMETER Dir
+    Куда ставить. По умолчанию %LOCALAPPDATA%\Programs\ZSDesk.
+
+.PARAMETER NoAutostart
+    Не прописывать автозапуск (и убрать прежний).
+
+.PARAMETER PanelOnly
+    Автозапуск только панели (zsdesk-dock.exe), без сеток и файлового менеджера.
+
+.PARAMETER DesktopShortcut
+    Положить ярлык ещё и на рабочий стол.
+
+.PARAMETER NoStart
+    Не запускать ZSDesk после установки.
+
+.PARAMETER Remove
+    Удалить: остановить процессы, убрать автозапуск, ярлыки и папку.
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File install.ps1
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File install.ps1 -Remove
+#>
+[CmdletBinding()]
+param(
+    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\ZSDesk'),
+    [switch]$NoAutostart,
+    [switch]$PanelOnly,
+    [switch]$DesktopShortcut,
+    [switch]$NoStart,
+    [switch]$Remove
+)
+
+$ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+
+$RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+# Папки оболочки могут быть пустыми в урезанной среде — тогда ярлыки просто не делаем.
+$Programs   = [Environment]::GetFolderPath('Programs')
+$DesktopDir = [Environment]::GetFolderPath('Desktop')
+$StartMenu  = if ($Programs) { Join-Path $Programs 'ZSDesk.lnk' } else { $null }
+$ShellLink  = if ($Programs) { Join-Path $Programs 'ZSDesk - сетки и панель.lnk' } else { $null }
+$Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'ZSDesk.lnk' } else { $null }
+$Source    = $PSScriptRoot
+if (-not $Source) { $Source = (Get-Location).Path }
+if (-not $Dir) { throw 'Не задана папка установки и пуст %LOCALAPPDATA%: запусти с -Dir "C:\ZSDesk".' }
+$Exe       = Join-Path $Dir 'ZSDesk.exe'
+$Dock      = Join-Path $Dir 'zsdesk-dock.exe'
+
+function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
+function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
+function Write-Ok([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
+
+function Stop-ZSDesk {
+    # Вежливо: просим запущенный ZSDesk закрыться (он сам погасит панель и вернёт
+    # панель задач Windows), потом ждём, и только затем добиваем остатки.
+    if (Test-Path -LiteralPath $Exe) {
+        try { Start-Process -FilePath $Exe -ArgumentList '--desktop', '--quit' -Wait -ErrorAction Stop | Out-Null } catch { }
+        for ($i = 0; $i -lt 40; $i++) {
+            $alive = Get-Process -Name 'ZSDesk' -ErrorAction SilentlyContinue
+            if (-not $alive) { break }
+            Start-Sleep -Milliseconds 250
+        }
+    }
+    Get-Process -Name 'ZSDesk', 'zsdesk-dock' -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
+    }
+}
+
+function Set-Autostart([string]$Name, [string]$Value) {
+    New-ItemProperty -Path $RunKey -Name $Name -Value $Value -PropertyType String -Force | Out-Null
+}
+
+function Remove-Autostart([string]$Name) {
+    $existing = Get-ItemProperty -Path $RunKey -Name $Name -ErrorAction SilentlyContinue
+    if ($existing) { Remove-ItemProperty -Path $RunKey -Name $Name -Force; Write-Note "автозапуск «$Name» выключен" }
+}
+
+function Remove-Shortcut([string]$Path) {
+    if (-not $Path) { return }
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force; Write-Note "удалён ярлык $Path" }
+}
+
+function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [string]$Description) {
+    if (-not $Path) { return }
+    $link = $null
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($Path)
+        $link.TargetPath = $Target
+        if ($Arguments) { $link.Arguments = $Arguments }
+        $link.WorkingDirectory = Split-Path -Parent $Target
+        $link.IconLocation = "$Target,0"
+        $link.Description = $Description
+        $link.Save()
+    } finally {
+        if ($link) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
+        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+    }
+}
+
+# ------------------------------------------------------------------ удаление
+if ($Remove) {
+    Write-Head 'Удаление ZSDesk'
+    Stop-ZSDesk
+    Remove-Autostart 'ZSDesk'
+    Remove-Autostart 'ZSDesk Dock'
+    Remove-Shortcut $StartMenu
+    Remove-Shortcut $ShellLink
+    Remove-Shortcut $Desktop
+    if (Test-Path -LiteralPath $Dir) {
+        Remove-Item -LiteralPath $Dir -Recurse -Force
+        Write-Note "папка $Dir удалена"
+    }
+    Write-Host ''
+    Write-Host 'Готово. Настройки остались в %APPDATA%\ZSDesk — удали папку вручную, если они больше не нужны.' -ForegroundColor Green
+    return
+}
+
+# ------------------------------------------------------------------ установка
+Write-Head 'Установка ZSDesk'
+
+$needed = @('ZSDesk.exe', 'zsdesk-dock.exe')
+$missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
+if ($missing.Count -gt 0) {
+    Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
+    Write-Host 'Положи install.ps1 в ту же папку, что ZSDesk.exe и zsdesk-dock.exe (как в архиве сборки).' -ForegroundColor Red
+    exit 1
+}
+
+$sameFolder = ($Source.TrimEnd('\') -eq $Dir.TrimEnd('\'))
+if (-not $sameFolder) { Stop-ZSDesk }
+
+New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+foreach ($file in $needed) {
+    if (-not $sameFolder) {
+        Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $Dir -Force
+    }
+    Write-Note "$file -> $Dir"
+}
+# Скачанный архив помечен «из интернета»; снимаем метку, иначе SmartScreen ругается
+# сильнее, чем на подпись.
+try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
+
+# Visual C++ Runtime: ZSDesk собран с динамическим CRT. Если рядом с exe лежат
+# библиотеки — копируем их; если нет и в системе их тоже нет, предупреждаем.
+$runtime = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
+foreach ($dll in $runtime) {
+    if (Test-Path -LiteralPath (Join-Path $Source $dll)) {
+        Copy-Item -LiteralPath (Join-Path $Source $dll) -Destination $Dir -Force
+    }
+}
+if ($env:SystemRoot) {
+    $system32 = Join-Path $env:SystemRoot 'System32'
+    if (-not (Test-Path -LiteralPath (Join-Path $system32 'vcruntime140.dll'))) {
+        Write-Host '  Внимание: в системе нет Visual C++ Runtime (vcruntime140.dll). Поставь «Microsoft Visual C++ 2015-2022 Redistributable (x64)».' -ForegroundColor Yellow
+    }
+}
+
+# ------------------------------------------------------------------ автозапуск
+Write-Head 'Автозапуск'
+if ($NoAutostart) {
+    Remove-Autostart 'ZSDesk'
+    Remove-Autostart 'ZSDesk Dock'
+    Write-Note 'автозапуск не прописан'
+} elseif ($PanelOnly) {
+    Set-Autostart 'ZSDesk Dock' ('"{0}"' -f $Dock)
+    Remove-Autostart 'ZSDesk'
+    Write-Ok "при входе в Windows запускается только панель: $Dock"
+} else {
+    Set-Autostart 'ZSDesk' ('"{0}" --desktop --tray' -f $Exe)
+    Remove-Autostart 'ZSDesk Dock'
+    Write-Ok "при входе в Windows запускается $Exe --desktop --tray"
+    Write-Note 'это сетки, виджет часов и панель сразу; окно файлового менеджера не открывается'
+}
+
+# ------------------------------------------------------------------ ярлыки
+Write-Head 'Ярлыки'
+if ($StartMenu -or $Desktop) {
+    New-Shortcut $StartMenu $Exe '' 'ZSDesk — файловый менеджер с панелью и сетками'
+    if ($StartMenu) { Write-Note "меню «Пуск»: $StartMenu" }
+    New-Shortcut $ShellLink $Exe '--desktop --tray' 'ZSDesk — сетки рабочего стола и панель, без окна'
+    if ($ShellLink) { Write-Note "меню «Пуск»: $ShellLink" }
+    if ($DesktopShortcut) {
+        New-Shortcut $Desktop $Exe '' 'ZSDesk — файловый менеджер с панелью и сетками'
+        if ($Desktop) { Write-Note "рабочий стол: $Desktop" }
+    }
+} else {
+    Write-Note 'папки оболочки недоступны — ярлыки не создаются'
+}
+
+# ------------------------------------------------------------------ подпись
+try {
+    foreach ($file in Get-ChildItem -LiteralPath $Dir -Filter '*.exe') {
+        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+        $state = if ($signature.Status -eq 'Valid') { 'подпись проверена' } else { "подпись: $($signature.Status)" }
+        Write-Note ("{0}: {1}" -f $file.Name, $state)
+    }
+} catch { Write-Note 'проверить подпись не удалось — на работу это не влияет' }
+
+# ------------------------------------------------------------------ запуск
+if (-not $NoStart) {
+    Stop-ZSDesk
+    Start-Process -FilePath $Exe -ArgumentList '--desktop', '--tray' -WorkingDirectory $Dir
+    Write-Ok 'ZSDesk запущен'
+}
+
+Write-Host ''
+Write-Host 'Установлено.' -ForegroundColor Green
+Write-Host "  Папка:      $Dir"
+Write-Host '  Панель:     внизу экрана, первая иконка — сам ZSDesk'
+Write-Host '  Сетки:      на рабочем столе, появляются сразу'
+Write-Host '  Часы:       правый нижний угол, стеклянная карточка'
+Write-Host '  Значок:     в трее; выход — правый клик по нему'
+Write-Host ''
+Write-Host 'Удалить: powershell -ExecutionPolicy Bypass -File install.ps1 -Remove'
