@@ -52,6 +52,15 @@ jobs:
           Copy-Item -LiteralPath target/release/zsdesk-app.exe -Destination dist/ZSDesk.exe
           Copy-Item -LiteralPath target/release/zsdesk-dock.exe -Destination dist/zsdesk-dock.exe
           Get-ChildItem -LiteralPath dist | Format-Table Name, Length
+      - name: Sign the executables
+        working-directory: zsdesk
+        shell: pwsh
+        # A self-signed certificate unless ZSDesk_SIGN_PFX_B64 / ZSDesk_SIGN_PFX_PASSWORD
+        # hold a real one; see scripts/sign.ps1.
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -Path dist
+        env:
+          ZSDesk_SIGN_PFX_B64: ${{ secrets.ZSDesk_SIGN_PFX_B64 }}
+          ZSDesk_SIGN_PFX_PASSWORD: ${{ secrets.ZSDesk_SIGN_PFX_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
           name: zsdesk-dock-windows-x64

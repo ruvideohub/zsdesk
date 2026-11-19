@@ -147,6 +147,13 @@ pub struct Config {
     /// (e.g. "github": {"username": "…"}). API keys live in Windows Credential Manager.
     pub widget_settings: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
 
+    /// A clock card in the corner of the desktop, macOS style.
+    pub desktop_clock: bool,
+
+    /// The panel's own language: "ru" (default), "en", or "auto" for the Windows
+    /// interface language. See strings.rs.
+    pub language: String,
+
     /// Pinned apps, left to right. Each entry is an AppUserModelID (as used by
     /// `shell:AppsFolder`) or a full .exe path; `"|"` is a separator; an object is a stack.
     pub pins: Vec<Pin>,
@@ -194,6 +201,8 @@ impl Default for Config {
             panel_shadow: 0.42,
             card_shadow: 0.35,
             widget_settings: Default::default(),
+            language: "ru".into(),
+            desktop_clock: true,
             pins: Vec::new(),
         }
     }

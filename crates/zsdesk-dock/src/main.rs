@@ -7,6 +7,7 @@
 
 mod apps;
 mod config;
+mod desktop_clock;
 mod displays;
 mod dock;
 mod effects;
@@ -19,6 +20,7 @@ mod metrics;
 mod preview;
 mod services;
 mod stack;
+mod strings;
 mod taskbar;
 mod tracker;
 mod tray;
@@ -69,6 +71,10 @@ fn main() -> Result<()> {
     let started = std::time::Instant::now();
     // Velopack's install / update / uninstall steps run here and exit (see updater.rs).
     updater::startup();
+    // The panel's own labels: Russian unless the settings say otherwise.
+    if let Some(cfg) = config::Config::load() {
+        strings::set_language(&cfg.language);
+    }
     leave_install_folder();
     let args: Vec<String> = std::env::args().skip(1).collect();
 

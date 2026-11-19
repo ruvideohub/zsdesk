@@ -31,7 +31,8 @@ pub struct MenuItem {
 
 impl MenuItem {
     pub fn item(label: impl Into<String>, cmd: usize) -> Self {
-        Self { kind: Kind::Item, label: label.into(), shortcut: None, cmd, checked: false, enabled: true, danger: false }
+        let label = crate::strings::tr_owned(label.into());
+        Self { kind: Kind::Item, label, shortcut: None, cmd, checked: false, enabled: true, danger: false }
     }
     pub fn sep() -> Self {
         Self { kind: Kind::Separator, ..Self::item("", 0) }

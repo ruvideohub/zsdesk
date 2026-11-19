@@ -196,6 +196,31 @@ const GROUP_B: &[&str] = &[
     "windows.immersivecontrolpanel_cw5n1h2txyewy!microsoft.windows.immersivecontrolpanel",
 ];
 
+/// ZSDesk.exe, which the installer puts beside this panel's own executable.
+pub fn own_app() -> Option<String> {
+    let exe = std::env::current_exe().ok()?;
+    let host = exe.with_file_name("ZSDesk.exe");
+    host.is_file().then(|| host.to_string_lossy().into_owned())
+}
+
+/// ZSDesk's own icon first in the panel, always.
+///
+/// The panel belongs to ZSDesk, so its file manager must be one click away even after an
+/// upgrade replaced the panel with this one. The icon comes from ZSDesk.exe itself (the
+/// shell hands over both the bitmap and the caption), so there is no artwork to ship.
+/// Returns whether the settings changed and need saving.
+pub fn ensure_own_pin(cfg: &mut crate::config::Config) -> bool {
+    let Some(own) = own_app() else { return false };
+    if cfg.pins.iter().any(|pin| pin.app() == Some(own.as_str())) {
+        return false;
+    }
+    cfg.pins.insert(0, Pin::Id(own));
+    if !cfg.pins.get(1).is_some_and(|pin| pin.is_sep()) {
+        cfg.pins.insert(1, Pin::sep());
+    }
+    true
+}
+
 pub fn default_pins() -> Vec<Pin> {
     let exists = |id: &&&str| shell_item(id).is_ok();
     let mut pins: Vec<Pin> = GROUP_A.iter().filter(exists).take(6).map(|s| Pin::Id(s.to_string())).collect();

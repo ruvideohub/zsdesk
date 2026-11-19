@@ -74,6 +74,8 @@ const T_TRAY_RENDER: usize = 18;
 const T_DRAG_PREVIEW: usize = 19;
 /// A drag rested on a window tile: bring that window forward.
 const T_DRAG_SWITCH: usize = 20;
+/// The desktop clock card: one second, redraws only when the minute changes.
+const T_CLOCK: usize = 21;
 pub const WM_APP_WINKEY: u32 = WM_APP + 4;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
@@ -573,6 +575,8 @@ struct Dock {
     /// Ticks of the widget timer (seconds).
     wtick: u64,
     /// The Start button's four panes, and whether they're spread (hovered).
+    /// The desktop clock card, when the settings ask for one.
+    clock: Option<crate::desktop_clock::DesktopClock>,
     start_panes: Vec<StartPane>,
     start_open: bool,
 }
@@ -4617,6 +4621,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     d.rescan();
                 },
                 T_REVEAL => d.on_reveal_timer(),
+                T_CLOCK => d.tick_clock(),
                 T_TRAY_RAISE => crate::tray::raise(),
                 T_UPDATE_CHECK => unsafe {
                     // Look again every hour (no network; a check runs only when due).
@@ -4932,6 +4937,15 @@ fn this_display(opts: &Options) -> (RECT, u32) {
     }
 }
 
+impl Dock {
+    /// One second of the desktop clock: nothing is redrawn unless the minute changed.
+    fn tick_clock(&mut self) {
+        if let Some(clock) = self.clock.as_mut() {
+            let _ = clock.tick(&self.compositor, &self.gfx, self.scale);
+        }
+    }
+}
+
 fn primary_monitor() -> RECT {
     unsafe {
         let m = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
@@ -4945,7 +4959,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
     let integrate = !(opts.measure || opts.demo_hover || opts.demo.is_some());
 
     // Settings: first run writes defaults with the apps installed on this PC.
-    let cfg = match Config::load() {
+    let mut cfg = match Config::load() {
         Some(c) => c,
         None => {
             let mut c = Config::default();
@@ -4958,6 +4972,10 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             c
         }
     };
+    // ZSDesk's own icon leads the panel, including for settings written by an older dock.
+    if apps::ensure_own_pin(&mut cfg) && Config::exists() {
+        cfg.save();
+    }
 
     unsafe {
         TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), std::sync::atomic::Ordering::Relaxed);
@@ -5111,6 +5129,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             menu_lpw: None,
             lpw_press: None,
             wtick: 0,
+            clock: None,
             start_panes: Vec::new(),
             start_open: false,
         };
@@ -5148,6 +5167,16 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         dock.hub.ask_output();
         dock.hub.ask_brightness();
         let main_dock = integrate && opts.monitor.is_none();
+        if main_dock && dock.cfg.desktop_clock {
+            match crate::desktop_clock::DesktopClock::new(&dock.compositor, dock.monitor, dock.scale) {
+                Ok(mut clock) => {
+                    let _ = clock.tick(&dock.compositor, &dock.gfx, dock.scale);
+                    dock.clock = Some(clock);
+                    SetTimer(Some(hwnd), T_CLOCK, 1000, None);
+                }
+                Err(error) => trace!("desktop clock unavailable: {error:?}"),
+            }
+        }
         let _kb = if main_dock { crate::winkey::install(hwnd, dock.cfg.win_key_launchpad) } else { None };
         if main_dock {
             // Host the tray icons apps put beside the clock (shown in Launchpad).

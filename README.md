@@ -90,6 +90,10 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
   Колонки виджетов и центр управления из Laminar выключены.
 - Настройки панели: `%APPDATA%\ZSDesk\Dock\config.json`. Панель не обновляет
   себя: обновления приходят с установщиком ZSDesk.
+- Интерфейс панели и Launchpad — на русском (`language` в `config.json`: `"ru"`, `"en"`,
+  `"auto"`), из апстрима убраны виджеты, коннекторы и «О программе».
+- Иконка ZSDesk — первая на панели; на рабочем столе — стеклянный виджет часов
+  в стиле macOS (время и дата по-русски, не перекрывает окна и не ловит клики).
 
 ```powershell
 cargo build -p zsdesk-dock --release   # панель

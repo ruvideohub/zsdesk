@@ -156,9 +156,9 @@ struct Row {
     ctl: Ctl,
 }
 
-const SECTION_NAMES: [&str; 5] = ["Dock", "Glass", "Behavior", "About", "Widgets"];
-/// The order the tabs are shown in (section numbers stay as above; About goes last).
-const TAB_ORDER: [usize; 5] = [0, 1, 2, 4, 3];
+const SECTION_NAMES: [&str; 3] = ["Dock", "Glass", "Behavior"];
+/// The order the tabs are shown in.
+const TAB_ORDER: [usize; 3] = [0, 1, 2];
 
 fn section_rows(i: usize) -> Vec<Row> {
     use Ctl::*;
@@ -191,16 +191,6 @@ fn section_rows(i: usize) -> Vec<Row> {
             r("hide_windows_taskbar", "Hide the Windows taskbar", "A watchdog brings it back if Laminar exits.", Toggle),
             r("show_on_all_displays", "Show the dock on all displays", "Otherwise only on the main display.", Toggle),
             r("per_display_windows", "Each display shows only its own windows", "Pinned apps always show.", Toggle),
-        ],
-        4 => vec![
-            r("show_background_apps", "Background Apps widget", "Always in Launchpad unless turned off here.", Toggle),
-            r("show_windows_update", "Windows Update widget", "Always in Launchpad unless turned off here.", Toggle),
-            r("show_windows_settings", "Windows Settings widget", "Always in Launchpad unless turned off here.", Toggle),
-        ],
-        3 => vec![
-            r("start_at_login", "Start Laminar when you sign in", "Off until you turn it on. Installed copies only.", Toggle),
-            r("check_updates", "Check for updates automatically", "New versions download quietly; an icon in the dock offers to install them.", Toggle),
-            r("update_check_hours", "How often to check", "Daily by default. Check for updates (above) works any time.", Choice(&[("At startup", 0), ("Daily", 24), ("Weekly", 168)])),
         ],
         _ => vec![],
     }
@@ -303,7 +293,6 @@ const LAMINAR_SETTINGS: &[(&str, usize)] = &[
     ("Laminar: Glass & transparency", 1),
     ("Laminar: Auto-hide & behavior", 2),
     ("Laminar: Windows key & taskbar", 2),
-    ("Laminar: Widgets & connections", 4),
 ];
 
 /// Everything Launchpad shows, borrowed from the dock for one render.
@@ -563,6 +552,9 @@ impl Launchpad {
     // ------------------------------------------------------------ small builders
 
     fn txt(c: &Compositor, gfx: &Gfx, parent: &ContainerVisual, s: &str, st: TextStyle, x: f32, y: f32) -> Result<(f32, f32)> {
+        // Everything Launchpad draws passes through here, so the label table covers it.
+        let localized = crate::strings::tr(s);
+        let s: &str = &localized;
         let (v, w, h) = ui::text(c, gfx, s, &st)?;
         v.SetOffset(v3(x.round(), y.round(), 0.0))?;
         parent.Children()?.InsertAtTop(&v)?;
@@ -810,65 +802,6 @@ impl Launchpad {
 
         let mut y = ty + 56.0 * s;
         let row_w = pw - 2.0 * pad;
-        if sec == 3 {
-            let title = format!("Laminar Dock {}", d.app_version);
-            let lines = [
-                title.as_str(),
-                d.app_update,
-                "Rust · Windows Composition · Direct2D/DirectWrite",
-                "Changes here apply immediately and are saved to config.json.",
-            ];
-            for (k, l) in lines.iter().enumerate() {
-                Self::txt(c, gfx, content, l, TextStyle { px: if k == 0 { 15.0 } else { 13.0 } * s, weight: if k == 0 { 600 } else { 400 }, color: if k == 0 { theme::text() } else { theme::text_2() }, ..Default::default() }, pad, y)?;
-                y += 28.0 * s;
-            }
-            y += 12.0 * s;
-            let (bw, bh) = (180.0 * s, 34.0 * s);
-            Self::rect(c, content, pad, y, bw, bh, 9.0 * s, theme::ink(0.14))?;
-            Self::txt(c, gfx, content, "Open settings file", TextStyle { px: 12.5 * s, weight: 500, center: true, max_w: Some(bw), ..Default::default() }, pad, y + 8.0 * s)?;
-            self.hit(PanelId::Center, (ox + pad, oy + y, bw, bh), Act::OpenConfig, 9.0 * s, true, false);
-            // Updates happen here, in place: the button changes with the state, and a
-            // downloaded version gets its own buttons and links (no pop-up menu).
-            let ux = pad + bw + 12.0 * s;
-            let button = |this: &mut Self, x: f32, label: &str, act: Option<Act>, primary: bool| -> Result<()> {
-                let fill = if primary { theme::accent() } else { theme::ink(0.14) };
-                Self::rect(c, content, x, y, bw, bh, 9.0 * s, fill)?;
-                let color = if primary { (1.0, 1.0, 1.0, 1.0) } else if act.is_some() { theme::text() } else { theme::text_2() };
-                Self::txt(c, gfx, content, label, TextStyle { px: 12.5 * s, weight: if primary { 600 } else { 500 }, color, center: true, max_w: Some(bw), ..Default::default() }, x, y + 8.0 * s)?;
-                if let Some(a) = act {
-                    this.hit(PanelId::Center, (ox + x, oy + y, bw, bh), a, 9.0 * s, true, false);
-                }
-                Ok(())
-            };
-            match d.update_ui {
-                UpdateUi::Off => {}
-                UpdateUi::Idle => button(self, ux, "Check for updates", Some(Act::CheckUpdates), false)?,
-                UpdateUi::Checking => button(self, ux, "Checking…", None, false)?,
-                UpdateUi::Ready(_) => {
-                    button(self, ux, "Restart and Update", Some(Act::UpdateNow), true)?;
-                    button(self, ux + bw + 12.0 * s, "What's New", Some(Act::UpdateNotes), false)?;
-                }
-            }
-            y += bh;
-            if let UpdateUi::Ready(_) = d.update_ui {
-                // Smaller choices as links under the buttons.
-                y += 14.0 * s;
-                let mut lx = pad;
-                let links = [
-                    ("Remind me tomorrow", Act::UpdateSnooze(24 * 3600)),
-                    ("Remind me next week", Act::UpdateSnooze(7 * 24 * 3600)),
-                    ("Skip this version", Act::UpdateSkip),
-                    ("Check again", Act::CheckUpdates),
-                ];
-                for (label, act) in links {
-                    let (w, h) = Self::txt(c, gfx, content, label, TextStyle { px: 12.5 * s, weight: 500, color: theme::accent_f(), ..Default::default() }, lx, y)?;
-                    self.hit(PanelId::Center, (ox + lx - 6.0 * s, oy + y - 4.0 * s, w + 12.0 * s, h + 8.0 * s), act, 6.0 * s, true, false);
-                    lx += w + 24.0 * s;
-                }
-                y += 18.0 * s;
-            }
-            y += 20.0 * s;
-        }
         // Widgets: a scrolling page (switches, then settings and every connection).
         let page = if sec == 4 {
             let top = y;
