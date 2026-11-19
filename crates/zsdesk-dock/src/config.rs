@@ -55,6 +55,48 @@ impl WRef {
     }
 }
 
+/// Which corner of the monitor the desktop clock card sits in.
+///
+/// In config.json: `"top-right"`, `"bottom-left"` and so on.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ClockCorner {
+    TopLeft,
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ClockCorner {
+    /// The order the card's menu lists the corners in.
+    pub const ALL: [ClockCorner; 4] =
+        [ClockCorner::TopLeft, ClockCorner::TopRight, ClockCorner::BottomLeft, ClockCorner::BottomRight];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ClockCorner::TopLeft => "Top left",
+            ClockCorner::TopRight => "Top right",
+            ClockCorner::BottomLeft => "Bottom left",
+            ClockCorner::BottomRight => "Bottom right",
+        }
+    }
+
+    /// A number the window procedure can put in a message, and back.
+    pub fn code(self) -> usize {
+        match self {
+            ClockCorner::TopLeft => 0,
+            ClockCorner::TopRight => 1,
+            ClockCorner::BottomLeft => 2,
+            ClockCorner::BottomRight => 3,
+        }
+    }
+
+    pub fn from_code(code: usize) -> Self {
+        *Self::ALL.get(code).unwrap_or(&ClockCorner::TopRight)
+    }
+}
+
 impl Pin {
     pub fn sep() -> Self {
         Pin::Id(SEPARATOR.to_string())
@@ -150,6 +192,17 @@ pub struct Config {
     /// A clock card in the corner of the desktop, macOS style.
     pub desktop_clock: bool,
 
+    /// Which corner the clock card sits in (right-click the card to change it).
+    pub clock_corner: ClockCorner,
+    /// Size multiplier for the clock card: 0.85 compact, 1.0 normal, 1.2 large.
+    pub clock_scale: f32,
+    /// 12-hour time with AM/PM instead of 24-hour.
+    pub clock_12h: bool,
+    /// The weekday and date under the time.
+    pub clock_date: bool,
+    /// Seconds in the time; the card then repaints every second.
+    pub clock_seconds: bool,
+
     /// The panel's own language: "ru" (default), "en", or "auto" for the Windows
     /// interface language. See strings.rs.
     pub language: String,
@@ -203,6 +256,11 @@ impl Default for Config {
             widget_settings: Default::default(),
             language: "ru".into(),
             desktop_clock: true,
+            clock_corner: ClockCorner::TopRight,
+            clock_scale: 1.0,
+            clock_12h: false,
+            clock_date: true,
+            clock_seconds: false,
             pins: Vec::new(),
         }
     }
@@ -264,6 +322,7 @@ impl Config {
                 self.right_widgets.retain(|w| w.id() != *id);
             }
         }
+        self.clock_scale = self.clock_scale.clamp(0.75, 1.5);
         self.panel_shadow = self.panel_shadow.clamp(0.0, 1.0);
         self.card_shadow = self.card_shadow.clamp(0.0, 1.0);
         // Pins saved before version-folder handling point into a folder an update deletes.

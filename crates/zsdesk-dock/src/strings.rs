@@ -76,6 +76,32 @@ pub fn tr_owned(text: String) -> String {
 
 fn lookup(text: &str) -> Option<&'static str> {
     Some(match text {
+        // ------------------------------------------------- clock card (right-click it)
+        "Desktop Clock" => "Часы на рабочем столе",
+        "Corner: Top left" => "Угол: верхний левый",
+        "Corner: Top right" => "Угол: верхний правый",
+        "Corner: Bottom left" => "Угол: нижний левый",
+        "Corner: Bottom right" => "Угол: нижний правый",
+        "Size: Compact" => "Размер: компактный",
+        "Size: Normal" => "Размер: обычный",
+        "Size: Large" => "Размер: крупный",
+        "24-Hour Time" => "24-часовой формат",
+        "Show the Date" => "Показывать дату",
+        "Show Seconds" => "Показывать секунды",
+        "Hide the Clock" => "Убрать часы",
+
+        // ---------------------------------------------------------------- widgets
+        "Widgets on the Panel" => "Виджеты на панели",
+        "More Widgets…" => "Другие виджеты…",
+        "Clock" => "Часы",
+        "Today's Forecast" => "Погода на сегодня",
+        "Calendar" => "Календарь",
+        "Resource Monitor" => "Монитор ресурсов",
+        "Battery" => "Батарея",
+        "Now Playing Compact" => "Сейчас играет",
+        "Network" => "Сеть",
+        "Quick Controls" => "Быстрые действия",
+
         // ---------------------------------------------------------------- dock menu
         "Open" => "Открыть",
         "Open New Window" => "Открыть новое окно",

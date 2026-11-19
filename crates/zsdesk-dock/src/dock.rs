@@ -74,9 +74,13 @@ const T_TRAY_RENDER: usize = 18;
 const T_DRAG_PREVIEW: usize = 19;
 /// A drag rested on a window tile: bring that window forward.
 const T_DRAG_SWITCH: usize = 20;
-/// The desktop clock card: one second, redraws only when the minute changes.
-const T_CLOCK: usize = 21;
+/// The desktop clock card: one second, redraws only when its text changes.
+const T_CLOCK: usize = 24;
 pub const WM_APP_WINKEY: u32 = WM_APP + 4;
+/// The desktop clock card was right-clicked: open its menu.
+pub const WM_APP_CLOCK_MENU: u32 = WM_APP + 12;
+/// The desktop clock card was dragged to a corner: wparam is the corner code.
+pub const WM_APP_CLOCK_MOVED: u32 = WM_APP + 13;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
 /// The tray icons changed (see tray.rs).
@@ -178,6 +182,30 @@ const CMD_LPW_CONNECT: usize = 76;
 const CMD_LPW_UP: usize = 77;
 const CMD_LPW_DOWN: usize = 78;
 const CMD_LPW_RESET: usize = 79;
+/// The desktop clock card's own menu: corners (base + ClockCorner::code), sizes.
+const CMD_CLOCK_CORNER_BASE: usize = 3600;
+const CMD_CLOCK_SCALE_BASE: usize = 3610;
+const CMD_CLOCK_24H: usize = 3620;
+const CMD_CLOCK_DATE: usize = 3621;
+const CMD_CLOCK_SECONDS: usize = 3622;
+const CMD_CLOCK_HIDE: usize = 3623;
+/// Widgets on the panel: the section header's list once, then the gallery.
+const CMD_WIDGET_ADD: usize = 81;
+const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
+/// Widgets one click away from the panel's own menu: the everyday ones.
+const DOCK_WIDGETS: [&str; 8] = [
+    "clock",
+    "weather-hourly",
+    "month",
+    "resource-monitor",
+    "battery",
+    "now-playing-compact",
+    "network",
+    "control-tiles",
+];
+/// The card's three sizes, as multipliers.
+const CLOCK_SCALES: [f32; 3] = [0.85, 1.0, 1.2];
+const CLOCK_SIZE_NAMES: [&str; 3] = ["Compact", "Normal", "Large"];
 /// Timer length menu: base + minutes.
 const CMD_TIMER_MIN_BASE: usize = 3000;
 const TIMER_MINUTES: [usize; 7] = [1, 5, 10, 15, 25, 45, 60];
@@ -1909,6 +1937,16 @@ impl Dock {
         m.push(MenuItem::item("Magnification", CMD_MAGNIFY).checked(self.cfg.magnify));
         m.push(MenuItem::item("Hide the Windows Taskbar", CMD_TASKBAR).checked(self.cfg.hide_windows_taskbar));
         m.push(MenuItem::sep());
+        // Widgets: the everyday ones are one click away, the rest live in the gallery.
+        m.push(MenuItem::header("Widgets on the Panel"));
+        for (index, id) in DOCK_WIDGETS.iter().enumerate() {
+            let id: &str = id;
+            let Some(def) = crate::widgets::catalog::get(id) else { continue };
+            let present = self.cfg.pins.iter().any(|p| matches!(p, Pin::Widget { widget, .. } if widget.as_str() == id));
+            m.push(MenuItem::item(def.name, CMD_WIDGET_TOGGLE_BASE + index).checked(present));
+        }
+        m.push(MenuItem::item("More Widgets…", CMD_WIDGET_ADD));
+        m.push(MenuItem::sep());
         m.push(MenuItem::item("Dock Settings…", CMD_SETTINGS));
         if crate::updater::installed() {
         }
@@ -2272,6 +2310,35 @@ impl Dock {
             CMD_AUTOHIDE => self.save_and_apply(|c| c.auto_hide = !c.auto_hide),
             CMD_MAGNIFY => self.save_and_apply(|c| c.magnify = !c.magnify),
             CMD_TASKBAR => self.save_and_apply(|c| c.hide_windows_taskbar = !c.hide_windows_taskbar),
+            CMD_CLOCK_24H => self.save_and_apply(|c| c.clock_12h = !c.clock_12h),
+            CMD_CLOCK_DATE => self.save_and_apply(|c| c.clock_date = !c.clock_date),
+            CMD_CLOCK_SECONDS => self.save_and_apply(|c| c.clock_seconds = !c.clock_seconds),
+            CMD_CLOCK_HIDE => self.save_and_apply(|c| c.desktop_clock = false),
+            cmd if (CMD_CLOCK_CORNER_BASE..CMD_CLOCK_CORNER_BASE + 4).contains(&cmd) => {
+                let corner = crate::config::ClockCorner::from_code(cmd - CMD_CLOCK_CORNER_BASE);
+                self.save_and_apply(|c| c.clock_corner = corner);
+            }
+            cmd if (CMD_CLOCK_SCALE_BASE..CMD_CLOCK_SCALE_BASE + CLOCK_SCALES.len()).contains(&cmd) => {
+                let scale = CLOCK_SCALES[cmd - CMD_CLOCK_SCALE_BASE];
+                self.save_and_apply(|c| c.clock_scale = scale);
+            }
+            CMD_WIDGET_ADD => {
+                if !self.launchpad.open {
+                    self.open_launchpad();
+                }
+                self.lp_act(Act::AddWidgets);
+            }
+            cmd if (CMD_WIDGET_TOGGLE_BASE..CMD_WIDGET_TOGGLE_BASE + DOCK_WIDGETS.len()).contains(&cmd) => {
+                let id = DOCK_WIDGETS[cmd - CMD_WIDGET_TOGGLE_BASE];
+                self.save_and_apply(|c| {
+                    let present = c.pins.iter().any(|p| matches!(p, Pin::Widget { widget, .. } if widget.as_str() == id));
+                    if present {
+                        c.pins.retain(|p| !matches!(p, Pin::Widget { widget, .. } if widget.as_str() == id));
+                    } else {
+                        c.pins.push(Pin::Widget { widget: id.to_string(), size: None });
+                    }
+                });
+            }
             CMD_SETTINGS => {
                 // The Settings view lives in Launchpad's centre panel.
                 if !self.launchpad.open {
@@ -4359,6 +4426,15 @@ impl Dock {
         if old.per_display_windows != self.cfg.per_display_windows {
             self.rescan();
         }
+        if old.desktop_clock != self.cfg.desktop_clock
+            || old.clock_corner != self.cfg.clock_corner
+            || (old.clock_scale - self.cfg.clock_scale).abs() > f32::EPSILON
+            || old.clock_12h != self.cfg.clock_12h
+            || old.clock_date != self.cfg.clock_date
+            || old.clock_seconds != self.cfg.clock_seconds
+        {
+            self.restart_clock();
+        }
         if old.auto_hide != self.cfg.auto_hide {
             if self.cfg.auto_hide {
                 unsafe { SetTimer(Some(self.hwnd), T_HIDE, 800, None) };
@@ -4578,6 +4654,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         }
         WM_APP_WINKEY => {
             with_dock(|d| d.toggle_launchpad());
+            return LRESULT(0);
+        }
+        WM_APP_CLOCK_MENU => {
+            with_dock(|d| d.clock_menu());
+            return LRESULT(0);
+        }
+        WM_APP_CLOCK_MOVED => {
+            let corner = crate::config::ClockCorner::from_code(wp.0);
+            with_dock(|d| d.save_and_apply(|c| c.clock_corner = corner));
             return LRESULT(0);
         }
         WM_APP_RESYNC_HOVER => {
@@ -4937,10 +5022,67 @@ fn this_display(opts: &Options) -> (RECT, u32) {
 }
 
 impl Dock {
-    /// One second of the desktop clock: nothing is redrawn unless the minute changed.
+    /// One second of the desktop clock: nothing is redrawn unless its text changed.
     fn tick_clock(&mut self) {
         if let Some(clock) = self.clock.as_mut() {
-            let _ = clock.tick(&self.compositor, &self.gfx, self.scale);
+            let _ = clock.tick(&self.compositor, &self.gfx);
+        }
+    }
+
+    /// Create, update or remove the desktop clock card from the current settings.
+    fn restart_clock(&mut self) {
+        if !self.is_main_dock() {
+            return;
+        }
+        if !self.cfg.desktop_clock {
+            if self.clock.take().is_some() {
+                let _ = unsafe { KillTimer(Some(self.hwnd), T_CLOCK) };
+            }
+            return;
+        }
+        let prefs = crate::desktop_clock::Prefs::from_config(&self.cfg);
+        if let Some(clock) = self.clock.as_mut() {
+            clock.set_prefs(prefs);
+            let _ = clock.repaint(&self.compositor, &self.gfx);
+            return;
+        }
+        match crate::desktop_clock::DesktopClock::new(&self.compositor, self.monitor, self.scale, prefs, self.hwnd) {
+            Ok(mut clock) => {
+                let _ = clock.repaint(&self.compositor, &self.gfx);
+                self.clock = Some(clock);
+                let _ = unsafe { SetTimer(Some(self.hwnd), T_CLOCK, 1000, None) };
+            }
+            Err(error) => trace!("desktop clock unavailable: {error:?}"),
+        }
+    }
+
+    /// The clock card's menu: where it sits, how big it is and what it shows.
+    fn clock_menu(&mut self) {
+        let prefs = match self.clock.as_ref() {
+            Some(clock) => clock.prefs(),
+            None => return,
+        };
+        let mut m = vec![MenuItem::header("Desktop Clock")];
+        for (index, corner) in crate::config::ClockCorner::ALL.iter().enumerate() {
+            m.push(MenuItem::item(format!("Corner: {}", corner.label()), CMD_CLOCK_CORNER_BASE + index).checked(prefs.corner == *corner));
+        }
+        m.push(MenuItem::sep());
+        for (index, (name, scale)) in CLOCK_SIZE_NAMES.iter().zip(CLOCK_SCALES).enumerate() {
+            m.push(MenuItem::item(format!("Size: {name}"), CMD_CLOCK_SCALE_BASE + index).checked((prefs.scale - scale).abs() < 0.01));
+        }
+        m.push(MenuItem::sep());
+        m.push(MenuItem::item("24-Hour Time", CMD_CLOCK_24H).checked(!prefs.hour12));
+        m.push(MenuItem::item("Show the Date", CMD_CLOCK_DATE).checked(prefs.date));
+        m.push(MenuItem::item("Show Seconds", CMD_CLOCK_SECONDS).checked(prefs.seconds));
+        m.push(MenuItem::sep());
+        m.push(MenuItem::item("Hide the Clock", CMD_CLOCK_HIDE).danger());
+        let mut point = POINT::default();
+        let _ = get_cursor_pos(&mut point);
+        self.hide_preview();
+        self.menu_open = true;
+        if let Err(error) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, point, false, self.scale, self.monitor) {
+            trace!("clock menu failed: {error:?}");
+            self.menu_open = false;
         }
     }
 }
@@ -5166,16 +5308,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         dock.hub.ask_output();
         dock.hub.ask_brightness();
         let main_dock = integrate && opts.monitor.is_none();
-        if main_dock && dock.cfg.desktop_clock {
-            match crate::desktop_clock::DesktopClock::new(&dock.compositor, dock.monitor, dock.scale) {
-                Ok(mut clock) => {
-                    let _ = clock.tick(&dock.compositor, &dock.gfx, dock.scale);
-                    dock.clock = Some(clock);
-                    SetTimer(Some(hwnd), T_CLOCK, 1000, None);
-                }
-                Err(error) => trace!("desktop clock unavailable: {error:?}"),
-            }
-        }
+        dock.restart_clock();
         let _kb = if main_dock { crate::winkey::install(hwnd, dock.cfg.win_key_launchpad) } else { None };
         if main_dock {
             // Host the tray icons apps put beside the clock (shown in Launchpad).
