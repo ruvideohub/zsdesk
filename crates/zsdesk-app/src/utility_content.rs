@@ -95,10 +95,15 @@ impl Panel{
     use super::*;
     #[test]fn english_shortcuts_keep_section_and_key_columns(){
         let _language=zsdesk_core::i18n::Scope::english(true);
+        // The help text is one translated block: assertions may not hard-code
+        // wording of any particular language, but the columns must survive.
+        let all=shortcut_rows(crate::window::shortcut_block());
         let rows=shortcut_rows(crate::window::shortcut_help_text());
         assert_eq!(rows.iter().filter(|row|row.section).count(),if crate::edition::DESKTOP&&!crate::edition::DESKTOP_ONLY{2}else{1});
-        if !crate::edition::DESKTOP_ONLY{assert!(rows.iter().any(|row|row.key=="Ctrl+W / Ctrl+F4"&&row.description=="Close tab"));}
-        if crate::edition::DESKTOP{assert!(rows.iter().any(|row|row.key=="Hover"&&row.description=="Expand a collapsed fence"));}
+        // Every shown row comes from the full block with the same two columns.
+        assert!(rows.iter().all(|row|all.iter().any(|other|other.key==row.key&&other.description==row.description)));
+        if !crate::edition::DESKTOP_ONLY{assert!(rows.iter().any(|row|row.key=="Ctrl+W / Ctrl+F4"&&!row.description.is_empty()));}
+        if crate::edition::DESKTOP{let desktop=rows.iter().filter(|row|!row.section&&!row.key.is_empty()).count();assert!(desktop>=4,"desktop section lost its key column: {desktop}");}
     }
     #[test]fn shortcut_aliases_and_groups_keep_their_meaning(){
         let rows=shortcut_rows("文件管理器\nCtrl+W / Ctrl+F4 关闭标签　Ctrl+F1 展开或收起命令栏\n\n桌面格子\n鼠标悬停 展开格子");

@@ -146,6 +146,8 @@ fn release_window_properties(hwnd:HWND){
     for property in [windows::core::w!("ZSDesk.NativeCaption"),windows::core::w!("ZSDesk.CaptionVisual"),windows::core::w!("ZSDesk.CaptionPress")]{let _=unsafe{RemovePropW(hwnd,property)};}
 }
 
+#[cfg(test)]pub(crate) fn shortcut_block()->&'static str{zsdesk_core::i18n::text(input::SHORTCUTS)}
+
 pub(crate) fn shortcut_help_text()->&'static str{
     let text=zsdesk_core::i18n::text(input::SHORTCUTS);
     let desktop=zsdesk_core::i18n::text("桌面格子");
