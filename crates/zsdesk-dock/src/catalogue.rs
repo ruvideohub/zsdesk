@@ -95,7 +95,13 @@ mod tests {
         std::fs::write(root.join("notes.txt"), b"").unwrap();
         let entries = scan(&[root.clone()]);
         let names: Vec<_> = entries.iter().map(|entry| entry.name.as_str()).collect();
-        assert_eq!(names, vec!["notepad", "Zoom"]);
+        // Windows treats the two spellings as one file and keeps whichever case
+        // the filesystem stored, so the assertion may not pin the casing: what
+        // matters is that one entry survives, deduplicated and without the
+        // uninstall shortcut.
+        assert_eq!(names.len(), 2, "{names:?}");
+        assert_eq!(names.iter().filter(|name| name.eq_ignore_ascii_case("notepad")).count(), 1, "{names:?}");
+        assert!(names.iter().any(|name| *name == "Zoom"), "{names:?}");
         std::fs::remove_dir_all(root).unwrap();
     }
 
