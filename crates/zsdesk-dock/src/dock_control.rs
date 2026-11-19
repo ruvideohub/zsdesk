@@ -21,7 +21,7 @@ impl Dock {
 
     /// The panel's top edge in screen px — the drop-down's anchor.
     pub(super) fn cc_anchor(&self) -> f32 {
-        (self.monitor.bottom - self.geo.win_h) as f32 + self.geo.margin
+        self.monitor.bottom as f32 - self.geo.win_h + self.geo.margin
     }
 
     /// Repaint the drop-down when it is open (it follows the system state).

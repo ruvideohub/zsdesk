@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 
-use windows::core::Result;
+use windows::core::{Interface, Result};
 use windows::UI::Composition::*;
 use windows::Win32::Foundation::{HWND, RECT};
 
@@ -156,7 +156,7 @@ impl ControlCenter {
 
     /// Show the drop-down right-aligned above the panel. `dock_top` is the panel's top edge
     /// in screen px.
-    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, dock_top: f32, scale: f32, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionBrush)>) -> Result<()> {
+    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, dock_top: f32, scale: f32, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionSurfaceBrush)>) -> Result<()> {
         self.scale = scale;
         self.size = (W, self.height(d));
         let (w, h) = ((W * scale).ceil(), (self.size.1 * scale).ceil());
@@ -200,7 +200,7 @@ impl ControlCenter {
     // ------------------------------------------------------------------ paint
 
     /// Repaint the drop-down; the size follows the content (the network list, the theme).
-    pub fn render(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionBrush)>) -> Result<()> {
+    pub fn render(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionSurfaceBrush)>) -> Result<()> {
         self.size = (W, self.height(d));
         let (w, h) = self.size;
         let scale = self.scale;
@@ -233,7 +233,8 @@ impl ControlCenter {
             let Some(key) = id.strip_prefix("tray:").and_then(|k| k.parse::<u64>().ok()) else { continue };
             if let Some((_, brush)) = tray_brushes.get(&key) {
                 let sp = c.CreateSpriteVisual()?;
-                sp.SetBrush(brush)?;
+                let brush: CompositionBrush = brush.cast()?;
+                sp.SetBrush(&brush)?;
                 sp.SetSize(ui::v2(size * scale, size * scale))?;
                 sp.SetOffset(ui::v3(x * scale, y * scale, 0.0))?;
                 root.Children()?.InsertAtTop(&sp)?;
