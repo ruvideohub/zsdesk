@@ -12,11 +12,12 @@
 use windows::core::w;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_GETSTATE, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, ABM_SETSTATE,
     ABS_AUTOHIDE, APPBARDATA,
 };
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA};
 
 use crate::dock::WM_APP_APPBAR;
 
@@ -40,7 +41,19 @@ fn trays() -> Vec<HWND> {
 /// does not use: hidden taskbar, the panel keeps the bottom; taskbar on screen, the panel
 /// moves to the top of the monitor instead of stacking on top of it.
 pub fn tray_visible() -> bool {
-    trays().first().map(|h| unsafe { IsWindowVisible(*h).as_bool() }).unwrap_or(false)
+    let Some(h) = trays().first().copied() else { return false };
+    unsafe {
+        if !IsWindowVisible(h).as_bool() { return false; }
+        // An auto-hidden taskbar keeps WS_VISIBLE and only slides off the edge: a few pixels
+        // of it stay inside the monitor. A taskbar that really keeps the bottom edge shows its
+        // full height, and only that one may push the panel to the top.
+        let mut r = RECT::default();
+        if GetWindowRect(h, &mut r).is_err() { return true; }
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() { return true; }
+        let monitor = info.rcMonitor;
+        (monitor.bottom.min(r.bottom) - monitor.top.max(r.top)).max(0) >= 12
+    }
 }
 
 pub fn set_visible(visible: bool) {
@@ -122,7 +135,10 @@ pub fn run_watchdog(pid: u32, original_state: Option<u32>) {
 /// Explorer's taskbar keeps the bottom one — on the top edge. Returns the rect Windows
 /// actually gave it (or `None` when nothing is reserved). Whatever comes back, the panel
 /// goes inside it, so a visible taskbar can never end up on top of the panel.
-pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut bool) -> Option<RECT> {
+///
+/// `registered` remembers which edge currently holds our reservation (`Some(true)` = top),
+/// because moving between edges needs a remove-and-register, not just a new position.
+pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut Option<bool>) -> Option<RECT> {
     let mut d = abd(Some(hwnd));
     d.uCallbackMessage = WM_APP_APPBAR;
     d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
@@ -133,9 +149,18 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
     };
     unsafe {
         if reserve {
-            if !*registered {
+            // The shell does not move an appbar from one edge to the other: ABM_SETPOS with a
+            // new uEdge leaves the old strip reserved, and that is the empty gap at the top
+            // that stayed after the panel returned to the bottom. Take the old edge back first.
+            if *registered == Some(!at_top) {
+                d.uEdge = if at_top { ABE_BOTTOM } else { ABE_TOP };
+                SHAppBarMessage(ABM_REMOVE, &mut d);
+                *registered = None;
+                d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
+            }
+            if registered.is_none() {
                 SHAppBarMessage(ABM_NEW, &mut d);
-                *registered = true;
+                *registered = Some(at_top);
             }
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
             // Windows may have shrunk the strip; keep our own height on the edge we asked for.
@@ -146,9 +171,12 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
             }
             SHAppBarMessage(ABM_SETPOS, &mut d);
             return Some(d.rc);
-        } else if *registered {
+        } else if registered.is_some() {
+            if let Some(edge_top) = *registered {
+                d.uEdge = if edge_top { ABE_TOP } else { ABE_BOTTOM };
+            }
             SHAppBarMessage(ABM_REMOVE, &mut d);
-            *registered = false;
+            *registered = None;
         }
     }
     None

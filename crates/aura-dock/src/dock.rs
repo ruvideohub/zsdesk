@@ -649,7 +649,10 @@ struct Dock {
     /// This is a helper dock for an extra display (no taskbar takeover / Windows key).
     helper: bool,
     helpers: crate::displays::Helpers,
-    appbar: bool,
+    /// Which edge holds our appbar reservation: `Some(true)` = top, `None` = not reserved.
+    /// Remembered per edge because moving the panel needs a remove-and-register, not a
+    /// second ABM_SETPOS — the old strip stayed reserved otherwise.
+    appbar_edge: Option<bool>,
     tray_original: Option<u32>,
     taskbar_hidden: bool,
     // measurement
@@ -4507,12 +4510,26 @@ impl Dock {
         if !self.integrate {
             return;
         }
+        // Hide (or give back) Explorer's taskbar *before* choosing the edge. The edge depends
+        // on whether that taskbar really keeps the bottom one, and judging that while we were
+        // still about to hide it made the panel jump to the top for a tick and leave its
+        // reservation behind — the empty strip at the top the user saw afterwards.
+        if !self.helper {
+            if self.cfg.hide_windows_taskbar && !self.taskbar_hidden {
+                self.tray_original = taskbar::take_over();
+                taskbar::spawn_watchdog(self.tray_original);
+                self.taskbar_hidden = true;
+            } else if !self.cfg.hide_windows_taskbar && self.taskbar_hidden {
+                taskbar::restore(self.tray_original.take());
+                self.taskbar_hidden = false;
+            }
+        }
         // The panel takes the edge the Windows taskbar leaves free. With the taskbar on
         // screen (the "Hide the Windows Taskbar" switch off) it keeps the bottom, so the
         // panel goes to the top of the monitor instead of sitting on top of it.
         let panel_top = !self.cfg.hide_windows_taskbar || !self.taskbar_hidden && taskbar::tray_visible();
         if panel_top != self.panel_top {
-            trace!("panel edge: bottom -> {}", if panel_top { "top" } else { "bottom" });
+            trace!("panel edge -> {}", if panel_top { "top" } else { "bottom" });
             self.panel_top = panel_top;
             // Land on the monitor's own edge first, so the rebuild below doesn't draw the
             // panel where the other edge used to be; the appbar refines it in a moment.
@@ -4526,22 +4543,13 @@ impl Dock {
         }
         if self.helper {
             let h = self.reserve_height();
-            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar);
+            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge);
             self.use_floor(assigned);
             return;
         }
         self.helpers.sync(self.cfg.show_on_all_displays);
-        if self.cfg.hide_windows_taskbar && !self.taskbar_hidden {
-            // (main dock only — helpers returned above)
-            self.tray_original = taskbar::take_over();
-            taskbar::spawn_watchdog(self.tray_original);
-            self.taskbar_hidden = true;
-        } else if !self.cfg.hide_windows_taskbar && self.taskbar_hidden {
-            taskbar::restore(self.tray_original.take());
-            self.taskbar_hidden = false;
-        }
         let h = self.reserve_height();
-        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar);
+        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge);
         self.use_floor(assigned);
     }
 
@@ -4723,7 +4731,7 @@ impl Dock {
         self.helpers.stop();
         crate::tray::stop();
         if self.integrate {
-            taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar);
+            taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar_edge);
             if self.taskbar_hidden {
                 taskbar::restore(self.tray_original.take());
                 self.taskbar_hidden = false;
@@ -5189,7 +5197,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         // Explorer restarted: its new taskbar needs hiding and our AppBar re-registering.
         with_dock(|d| {
             d.taskbar_hidden = false;
-            d.appbar = false;
+            d.appbar_edge = None;
             d.apply_system();
         });
         crate::tray::on_taskbar_created();
@@ -5618,7 +5626,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             integrate,
             helper: opts.monitor.is_some(),
             helpers: crate::displays::Helpers::default(),
-            appbar: false,
+            appbar_edge: None,
             tray_original: None,
             taskbar_hidden: false,
             measure_step: 0,
