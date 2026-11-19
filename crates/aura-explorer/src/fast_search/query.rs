@@ -31,7 +31,7 @@ impl Parser{
                 if let Some(value)=text.strip_prefix("ext:"){let values:Vec<_>=value.split(';').filter(|v|!v.is_empty()).map(|v|v.trim_start_matches('.').to_owned()).collect();ensure!(!values.is_empty(),"文件类型筛选为空");return Ok(Expr::Ext(values));}
                 if let Some(value)=text.strip_prefix("path:"){ensure!(!value.is_empty(),"路径筛选为空");return Ok(Expr::Path(value.into()));}
                 if text.contains('\\'){return Ok(Expr::Path(text));}
-                if text.contains(':'){bail!("自带搜索支持文件名、通配符、分组、排除、ext:、file:、folder: 和 path:；此语法可切换 Everything 使用");}
+                if text.contains(':'){bail!("搜索支持文件名、通配符、分组、排除、ext:、file:、folder: 和 path:");}
                 Ok(Expr::Name(text))},_=>bail!("搜索表达式无效")}
     }
 }

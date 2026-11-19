@@ -92,11 +92,7 @@ Source: "{#SourceDir}\AuraExplorer.exe"; DestName: "AuraExplorer-update-helper.e
 Source: "{#SourceDir}\msvcp140.dll"; Flags: dontcopy
 Source: "{#SourceDir}\vcruntime140.dll"; Flags: dontcopy
 Source: "{#SourceDir}\vcruntime140_1.dll"; Flags: dontcopy
-Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "AuraExplorerWindowHook-*.dll,\engines\everything\Everything.exe"; Flags: ignoreversion recursesubdirs createallsubdirs
-#if FileExists(SourceDir + "\engines\everything\Everything.exe")
-#define EngineHash GetSHA256OfFile(SourceDir + "\engines\everything\Everything.exe")
-Source: "{#SourceDir}\engines\everything\Everything.exe"; DestDir: "{app}\engines\everything"; Flags: ignoreversion; Check: NeedsSearchEngine
-#endif
+Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "AuraExplorerWindowHook-*.dll"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\AuraExplorerWindowHook-*.dll"; DestDir: "{app}"; Flags: onlyifdoesntexist
 
 [Icons]
@@ -168,20 +164,6 @@ var
   Primary, Other, Browse: TNewButton;
   Progress: TNewProgressBar;
   Expanded, Loaded: Boolean;
-
-#ifdef EngineHash
-function NeedsSearchEngine: Boolean;
-var
-  Target: String;
-begin
-  Target := ExpandConstant('{app}\engines\everything\Everything.exe');
-  Result := True;
-  if FileExists(Target) then begin
-    Result := CompareText(GetSHA256OfFile(Target), '{#EngineHash}') <> 0;
-    if not Result then Log('Keeping the identical Everything service executable.');
-  end;
-end;
-#endif
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var

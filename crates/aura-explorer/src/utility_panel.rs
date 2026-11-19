@@ -189,7 +189,7 @@ impl Panel{
         if query.trim().is_empty(){if let Some(engine)=&self.engine{engine.cancel_query();}self.busy=false;self.search_error=false;self.status=aura_core::i18n::text("输入关键词搜索文件和文件夹").into();return;}
         if self.engine.is_none(){match crate::storage::load(&self.profile).and_then(|session|FastSearch::for_profile(&self.profile,self.hwnd,RESULTS,SearchOptions::from_ui(&session.ui))){
             Ok(engine)=>self.engine=Some(engine),Err(error)=>{self.busy=false;self.search_error=true;self.status=aura_core::tr_format!("搜索不可用：{error:#}" , error=error);return;}}}
-        self.busy=true;self.search_error=false;self.generation=self.engine.as_ref().unwrap().start_page(&query,None,0,200,crate::fast_search::everything::SearchSort::NameAsc);self.status=aura_core::i18n::text("正在搜索…").into();
+        self.busy=true;self.search_error=false;self.generation=self.engine.as_ref().unwrap().start_page(&query,None,0,200,crate::fast_search::SearchSort::NameAsc);self.status=aura_core::i18n::text("正在搜索…").into();
     }
     fn invalidate_query(&mut self){
         self.generation=0;if let Some(engine)=&self.engine{engine.cancel_query();}self.paths.clear();

@@ -11,7 +11,6 @@ param(
     [string]$OutputDir,
     [string]$RoutingDir,
     [string]$RuntimeDir,
-    [string]$EverythingDir = $env:AURA_EVERYTHING_DIR,
     [string]$InnoCompiler,
     [string]$ListaryBuildRoot,
     [switch]$SkipBuild,
@@ -59,24 +58,6 @@ if (-not $RuntimeDir) { throw 'Visual C++ x64 Redistributable files are required
 $RuntimeDir=[IO.Path]::GetFullPath($RuntimeDir)
 $runtimeFiles=@('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')
 foreach ($name in $runtimeFiles) { if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDir $name) -PathType Leaf)) { throw "Redistributable file missing: $name" } }
-$enginePinPath=Join-Path $root 'packaging\engines\everything.json'
-$enginePin=Get-Content -LiteralPath $enginePinPath -Raw | ConvertFrom-Json -AsHashtable
-if($enginePin.schema -ne 'AuraExplorer.EverythingPackage.v1' -or $enginePin.product -ne 'Everything' -or $enginePin.platform -ne 'windows-x64' -or $enginePin.edition -ne 'standard') { throw 'Everything package identity is invalid' }
-$engineFiles=@('Everything.exe','Everything.lng','License.txt')
-if(@($enginePin.files.Keys).Count -ne $engineFiles.Count -or @($enginePin.files.Keys | Where-Object { $_ -notin $engineFiles }).Count) { throw 'Unexpected Everything package member' }
-if(@($Editions | Where-Object { $_ -ne 'desktop-box' }).Count) {
-if(-not $EverythingDir) { throw 'Official Everything runtime files are required; supply -EverythingDir' }
-$EverythingDir=[IO.Path]::GetFullPath($EverythingDir)
-if((Get-Item -LiteralPath $EverythingDir).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Everything source must be a real directory' }
-if((Get-FileHash -LiteralPath (Join-Path $EverythingDir 'manifest.json')).Hash -ne (Get-FileHash -LiteralPath $enginePinPath).Hash) { throw 'Everything source manifest differs from the pinned manifest' }
-foreach($name in $engineFiles) {
-    $file=Get-Item -LiteralPath (Join-Path $EverythingDir $name)
-    $entry=$enginePin.files[$name]
-    if($file.Attributes -band [IO.FileAttributes]::ReparsePoint -or $file.PSIsContainer -or $file.Length -ne $entry.bytes -or (Get-FileHash -LiteralPath $file.FullName).Hash.ToLowerInvariant() -ne $entry.sha256) { throw "Everything source identity mismatch: $name" }
-}
-if((Get-Item -LiteralPath (Join-Path $EverythingDir 'Everything.exe')).VersionInfo.ProductVersion -ne $enginePin.version) { throw 'Everything resource version differs from its manifest' }
-if($enginePin.executable_sha256 -ne $enginePin.files['Everything.exe'].sha256) { throw 'Everything executable hash declaration differs' }
-}
 foreach ($path in @($WorkDir,$TargetDir,$OutputDir)) { [IO.Directory]::CreateDirectory($path) | Out-Null }
 $lock = [IO.File]::Open((Join-Path $TargetDir 'aura-package.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 $env:CARGO_TARGET_DIR=$TargetDir
@@ -155,7 +136,7 @@ try {
             $flags += '--no-default-features'
             if ($definition.Features.Count) { $flags += @('--features',($definition.Features -join ',')) }
         }
-        $state=[ordered]@{project='AuraExplorer';version=$version;edition=$edition;source=$root;target=$TargetDir;profile='release';features=$definition.Features;runtime_source=$RuntimeDir;everything_source=$EverythingDir;everything_version=$enginePin.version;pid=$PID;state='running';started=[DateTimeOffset]::Now.ToString('o')}
+        $state=[ordered]@{project='AuraExplorer';version=$version;edition=$edition;source=$root;target=$TargetDir;profile='release';features=$definition.Features;runtime_source=$RuntimeDir;pid=$PID;state='running';started=[DateTimeOffset]::Now.ToString('o')}
         Write-Json (Join-Path $WorkDir 'package-state.current.json') $state
         if (-not $SkipBuild) {
             & cargo @flags --message-format=json-render-diagnostics 1>(Join-Path $WorkDir "cargo.$edition.current.jsonl")
@@ -195,12 +176,6 @@ try {
             Copy-Item -LiteralPath (Join-Path $root 'native\listary\Prepare-Listary7.ps1') -Destination (Join-Path $listaryStage 'Prepare-Listary7.ps1')
             Copy-Item -LiteralPath (Join-Path $root 'native\listary\README.md') -Destination (Join-Path $listaryStage 'README.md')
         }
-        if (-not $definition.DesktopOnly) {
-        $engineStage=Join-Path $stage 'engines\everything'
-        [IO.Directory]::CreateDirectory($engineStage) | Out-Null
-        foreach($file in $engineFiles) { Copy-Item -LiteralPath (Join-Path $EverythingDir $file) -Destination (Join-Path $engineStage $file) }
-        Copy-Item -LiteralPath $enginePinPath -Destination (Join-Path $engineStage 'manifest.json')
-        }
         if ($RoutingDir -and -not $definition.DesktopOnly) {
             $routingFiles=@('ShellRoutingControl.exe','AuraExplorerRevealRouter.dll','manifest.json','MinHook-LICENSE.txt')
             [IO.Directory]::CreateDirectory((Join-Path $stage 'routing')) | Out-Null
@@ -222,13 +197,10 @@ try {
         if($definition.Themed){$readme+=@('','主题版支持亚克力、Mica 和纯色深浅主题；配置独立存放在 AppData\Roaming\AuraExplorer-Theme。')}
         elseif(-not $definition.DesktopOnly){$readme+=@('','配置默认保存在用户 AppData\Roaming\AuraExplorer。')}
         if(-not $definition.DesktopOnly){
-        $readme += @('','≡ → 搜索：选择自带搜索或 Everything 搜索；新配置默认使用自带搜索，已有配置保留原来的选择。',
+        $readme += @('','≡ → 搜索：自带搜索，没有别的引擎可选。',
             '自带搜索使用共享的内存索引和本地快照；普通权限下遍历目录，管理员权限下使用只读 MFT 枚举。',
             '可用的 USN 日志用于增量更新；默认空闲 5 分钟保存快照并释放内存，再次搜索时恢复并补齐变更。',
-            '开发和缓存目录内容默认不收录，可在搜索设置中开启；文件大小、修改时间索引和拼音首字母匹配默认关闭。',
-            ('随附的 Everything '+$enginePin.version+' 是可选搜索后端，也可复用已运行的 Everything；只有选中此后端才会按需连接或启动。'),
-            'Everything 快速全盘索引需要兼容服务或管理员权限；未配置可用索引时会显示设置提示。',
-            'Everything 版权与完整许可位于 engines\everything\License.txt。')
+            '开发和缓存目录内容默认不收录，可在搜索设置中开启；文件大小、修改时间索引和拼音首字母匹配默认关闭。')
         }
         $readme+=@('配置目录菜单可为下次普通启动指定位置，空目录从初始设置开始。','portable.flag 使用程序旁 data 目录；--profile-dir 指定独立配置。','安装包与便携包不包含用户路径、桌面布局、搜索索引或系统接管记录。','源码与许可证：https://github.com/qiu7824/aura')
         $readme -join "`r`n" | Set-Content -LiteralPath (Join-Path $stage '说明.txt') -Encoding utf8BOM
@@ -254,11 +226,10 @@ try {
             $relative=$file.FullName.Substring($stage.Length+1).Replace('\','/')
             $files[$relative]=[ordered]@{bytes=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
         }
-        $searchEngine=if($definition.DesktopOnly){$null}else{[ordered]@{product='Everything';version=$enginePin.version;manifest='engines/everything/manifest.json';manifest_sha256=(Get-FileHash -LiteralPath $enginePinPath).Hash.ToLowerInvariant()}}
         $defaultSearchBackend=if($definition.DesktopOnly){$null}else{'native_ntfs'}
-        $searchBackends=@();if(-not $definition.DesktopOnly){$searchBackends=@('native_ntfs','everything')}
+        $searchBackends=@();if(-not $definition.DesktopOnly){$searchBackends=@('native_ntfs')}
         $manifest=[ordered]@{product='AuraExplorer';version=$version;edition=$edition;edition_name=$definition.Name;platform='windows-x64';features=$definition.Features;desktop_only=[bool]$definition.DesktopOnly;
-            search_engine=$searchEngine;search_default_backend=$defaultSearchBackend;search_backends=@($searchBackends);files=$files}
+            search_default_backend=$defaultSearchBackend;search_backends=@($searchBackends);files=$files}
         Write-Json (Join-Path $stage 'manifest.json') $manifest
         Assert-Payload $stage $manifest
         $zip=Join-Path $WorkDir "$name.zip"

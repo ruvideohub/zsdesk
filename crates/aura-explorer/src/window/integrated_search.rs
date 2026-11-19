@@ -4,19 +4,12 @@ use crate::fast_search::SearchSort;
 use aura_windows::shell::commands::Column;
 #[path="font_scope.rs"]pub(super) mod font_scope;
 
-pub(super) struct SettingsJob{
-    result:std::sync::mpsc::Receiver<anyhow::Result<()>>,
-    thread:Option<std::thread::JoinHandle<()>>,
-}
-impl Drop for SettingsJob{fn drop(&mut self){if let Some(thread)=self.thread.take(){if thread.is_finished(){let _=thread.join();}}}}
-
 #[derive(Clone,Debug,PartialEq,Eq)]
 pub(super) struct SubmittedSearch{
     tab:u64,
     expression:String,
     offset:u32,
     sort:SearchSort,
-    executable:Option<PathBuf>,
     backend:crate::fast_search::SearchOptions,
 }
 
@@ -64,31 +57,6 @@ impl WindowState{
         let _ = unsafe { KillTimer(Some(self.hwnd), TIMER_SEARCH) };
     }
 
-    pub(super) fn launch_search_settings(&mut self,service:bool){
-        self.sync_search_preferences();
-        if self.session.ui.search_backend.is_builtin(){self.show_message(aura_core::i18n::text("当前使用自带搜索，可在搜索设置中调整索引选项").into());return;}
-        self.poll_search_settings();
-        if self.search_settings_job.is_some(){self.show_message(aura_core::i18n::text("正在打开搜索设置…").into());return;}
-        let profile=self.config_path.clone();let(sender,receiver)=std::sync::mpsc::sync_channel(1);
-        match std::thread::Builder::new().name("aura-search-settings".into()).spawn(move||{
-            let result=(||{
-                unsafe{OleInitialize(None)}?;
-                struct Apartment;impl Drop for Apartment{fn drop(&mut self){unsafe{OleUninitialize();}}}let _apartment=Apartment;
-                if service{crate::fast_search::everything::enable_service(&profile)}else{crate::fast_search::everything::open_settings(&profile)}
-            })();let _=sender.send(result);
-        }){
-            Ok(thread)=>self.search_settings_job=Some(SettingsJob{result:receiver,thread:Some(thread)}),
-            Err(error)=>self.show_message(aura_core::tr_format!("无法打开搜索设置：{error}", error=error)),
-        }
-    }
-    pub(super) fn poll_search_settings(&mut self){
-        use std::sync::mpsc::TryRecvError;
-        let result=self.search_settings_job.as_ref().map(|job|job.result.try_recv());
-        match result{
-            Some(Ok(result))=>{self.search_settings_job=None;if let Err(error)=result{self.show_message(aura_core::tr_format!("搜索设置未完成：{error:#}", error=error));}},
-            Some(Err(TryRecvError::Disconnected))=>{self.search_settings_job=None;self.show_message(aura_core::i18n::text("搜索设置任务已结束，请重试").into());},_=>{},
-        }
-    }
     pub(super) unsafe fn open_integrated_search(&mut self){
         self.end_address_edit();
         unsafe { self.sync_search_tab_edit(); }
@@ -173,7 +141,7 @@ impl WindowState{
     pub(super) fn submitted_search(&self,raw:&str)->SubmittedSearch{
         let controls=self.search_controls();
         SubmittedSearch{tab:self.session.active_tab().id,expression:expression(raw,&controls),offset:controls.offset,
-            sort:controls.sort,executable:self.session.ui.everything_executable.clone(),backend:crate::fast_search::SearchOptions::from_ui(&self.session.ui)}
+            sort:controls.sort,backend:crate::fast_search::SearchOptions::from_ui(&self.session.ui)}
     }
     unsafe fn leave_integrated_results(&mut self,target:ShellLocation){
         if self.pending.is_some(){

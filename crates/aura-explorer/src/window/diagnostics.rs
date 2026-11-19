@@ -28,10 +28,10 @@ enum LogMessage {
     Entry(String),Flush(mpsc::SyncSender<()>),
     Snapshot{window:isize,token:usize,sequence:u64,kind:ReportKind,result:Weak<ReportMailbox>},
 }
-#[derive(Clone)]enum ReportKind{Diagnostics,Search(PathBuf)}
+#[derive(Clone)]enum ReportKind{Diagnostics}
 impl ReportKind{
-    fn title(&self)->&'static str{match self{Self::Diagnostics=>aura_core::i18n::text("AuraExplorer 诊断日志"),Self::Search(_)=>aura_core::i18n::text("搜索引擎状态")}}
-    fn loading(&self)->&'static str{match self{Self::Diagnostics=>aura_core::i18n::text("正在读取本地诊断日志…"),Self::Search(_)=>aura_core::i18n::text("正在检查搜索引擎配置、连接和索引服务…")}}
+    fn title(&self)->&'static str{aura_core::i18n::text("AuraExplorer 诊断日志")}
+    fn loading(&self)->&'static str{aura_core::i18n::text("正在读取本地诊断日志…")}
 }
 #[derive(Default)]
 struct ReportMailbox {alive:AtomicBool,latest:AtomicU64,pending:AtomicBool,reply:Mutex<Option<(u64,String)>>}
@@ -90,7 +90,7 @@ pub(crate) fn initialize() {
             LogMessage::Flush(done)=>{let _=done.try_send(());},
             LogMessage::Snapshot{window,token,sequence,kind,result}=>{
                 if !result.upgrade().is_some_and(|mailbox|mailbox.alive.load(Ordering::Acquire)&&mailbox.latest.load(Ordering::Acquire)==sequence){continue;}
-                let text=match kind{ReportKind::Diagnostics=>report(&root),ReportKind::Search(profile)=>crate::fast_search::everything::status_report(&profile)};
+                let text=match kind{ReportKind::Diagnostics=>report(&root)};
                 let Some(mailbox)=result.upgrade().filter(|mailbox|mailbox.alive.load(Ordering::Acquire)&&mailbox.latest.load(Ordering::Acquire)==sequence)else{continue;};
                 *mailbox.reply.lock().unwrap_or_else(|error|error.into_inner())=Some((sequence,text));
                 mailbox.pending.store(false,Ordering::Release);
@@ -165,7 +165,6 @@ fn request_report(hwnd:HWND,pointer:*mut DiagnosticWindow) {
     }
 }
 pub(super) fn show(owner:HWND)->Result<()> {show_report(owner,ReportKind::Diagnostics)}
-pub(super) fn show_search(owner:HWND,profile:&Path)->Result<()> {show_report(owner,ReportKind::Search(profile.into()))}
 fn show_report(owner:HWND,kind:ReportKind)->Result<()> {
     initialize();
     if let Some(hwnd)=WINDOWS.with(|windows|windows.borrow().get(&(owner.0 as isize)).copied()) {
@@ -198,13 +197,13 @@ fn configure_report(hwnd:HWND,pointer:*mut DiagnosticWindow){
     let(kind,edit,copy)=unsafe{((*pointer).kind.clone(),(*pointer).edit,(*pointer).buttons[1])};
     let _=unsafe{SetWindowTextW(hwnd,PCWSTR(wide(kind.title()).as_ptr()))};
     if !live_window(hwnd,pointer){return;}
-    let label=match kind{ReportKind::Search(_)=>aura_core::i18n::text("复制状态"),ReportKind::Diagnostics=>aura_core::i18n::text("复制日志")};
+    let label=match kind{ReportKind::Diagnostics=>aura_core::i18n::text("复制日志")};
     let _=unsafe{SetWindowTextW(copy,PCWSTR(wide(label).as_ptr()))};
     if !live_window(hwnd,pointer){return;}
     let loading=kind.loading().to_owned();unsafe{(*pointer).text=loading.clone();}
     let _=unsafe{SetWindowTextW(edit,PCWSTR(wide(&loading).as_ptr()))};
     if !live_window(hwnd,pointer){return;}
-    if matches!(kind,ReportKind::Search(_)){unsafe{SetTimer(Some(hwnd),REPORT_TIMER,2000,None);}}else{let _=unsafe{KillTimer(Some(hwnd),REPORT_TIMER)};}
+    let _=unsafe{KillTimer(Some(hwnd),REPORT_TIMER)};
 }
 /// Queue-latency watchdog. `MSG::time` is the tick at which the event was posted, so the
 /// difference at dequeue time is exactly how long this thread failed to pump its queue —
@@ -328,55 +327,6 @@ mod tests {
         mailbox.latest.store(2,Ordering::Release);
         assert!(!Arc::downgrade(&mailbox).upgrade().is_some_and(|value|value.latest.load(Ordering::Acquire)==1));
         let weak=Arc::downgrade(&mailbox);drop(mailbox);assert!(weak.upgrade().is_none());
-    }
-    #[test]
-    #[ignore="Read-only engine status on a private desktop; requires AURA_NATIVE_TEST_OUTPUT"]
-    fn native_search_engine_status_shows_saved_source_without_launch()->anyhow::Result<()>{
-        use anyhow::{Context,ensure};use std::ffi::c_void;
-        #[link(name="user32")]unsafe extern "system"{
-            fn CreateDesktopW(name:*const u16,device:*const u16,mode:*const c_void,flags:u32,access:u32,attributes:*const c_void)->*mut c_void;
-            fn SetThreadDesktop(desktop:*mut c_void)->i32;fn CloseDesktop(desktop:*mut c_void)->i32;
-        }
-        let root=PathBuf::from(std::env::var_os("AURA_NATIVE_TEST_OUTPUT").context("isolated output")?).join("search-engine-status");
-        ensure!(root.is_absolute(),"absolute fixture required");fs::create_dir_all(&root)?;
-        let first=root.join("specified A");let second=root.join("specified B");fs::create_dir_all(&first)?;fs::create_dir_all(&second)?;
-        let first=first.join("Everything.exe");let second=second.join("Everything.exe");
-        // Deliberately non-executable files: a status probe must only observe
-        // saved choices, not attempt to run or validate them by launching.
-        fs::write(&first,b"status fixture")?;fs::write(&second,b"status fixture")?;
-        let profile=root.join("explorer-session.json");let mut session=crate::storage::default_session();
-        session.ui.search_backend=aura_core::model::explorer::SearchBackendPreference::Everything;session.ui.everything_executable=Some(first.clone());crate::storage::save(&profile,&session)?;
-        let name=wide(&format!("AuraExplorer.SearchStatus.{}",std::process::id()));let desktop=unsafe{CreateDesktopW(name.as_ptr(),std::ptr::null(),std::ptr::null(),0,0x000f00ff,std::ptr::null())};
-        ensure!(!desktop.is_null(),"private desktop creation failed");let raw=desktop as usize;let output=root.clone();
-        let result=std::thread::spawn(move||->anyhow::Result<()>{
-            ensure!(unsafe{SetThreadDesktop(raw as*mut c_void)}!=0,"private desktop attach failed");
-            struct Owner(HWND);impl Drop for Owner{fn drop(&mut self){close(self.0);let _=unsafe{DestroyWindow(self.0)};}}
-            let owner=Owner(unsafe{CreateWindowExW(WS_EX_NOACTIVATE,windows::core::w!("STATIC"),PCWSTR::null(),WS_POPUP,0,0,1,1,None,None,None,None)}?);
-            show_search(owner.0,&profile)?;
-            let window=WINDOWS.with(|windows|windows.borrow().get(&(owner.0.0 as isize)).copied()).context("status window")?;
-            let edit=unsafe{GetDlgItem(Some(window),TEXT_ID as i32)}?;
-            let read=|window:HWND|{let mut text=vec![0u16;32768];let n=unsafe{GetWindowTextW(window,&mut text)}.max(0)as usize;String::from_utf16_lossy(&text[..n])};
-            let wait=|edit:HWND,needle:&str|->anyhow::Result<String>{let end=Instant::now()+Duration::from_secs(8);loop{
-                let mut message=MSG::default();for _ in 0..64{if !unsafe{PeekMessageW(&mut message,None,0,0,PM_REMOVE)}.as_bool(){break;}unsafe{let _=TranslateMessage(&message);DispatchMessageW(&message);}}
-                let text=read(edit);if text.contains(needle){return Ok(text);}ensure!(Instant::now()<end,"status did not update: {text}");std::thread::sleep(Duration::from_millis(10));
-            }};
-            let first_text=wait(edit,"specified A")?;ensure!(first_text.contains("尚未连接")&&!first_text.contains("索引已就绪"),"saved path was reported as a connection");
-            ensure!(read(window)=="搜索引擎状态","wrong report title");
-            let copy=unsafe{GetDlgItem(Some(window),COPY_ID as i32)}?;ensure!(read(copy)=="复制状态"&&unsafe{IsWindowVisible(copy)}.as_bool(),"status copy control missing");
-            session.ui.everything_executable=Some(second.clone());crate::storage::save(&profile,&session)?;
-            unsafe{SendMessageW(window,WM_COMMAND,Some(WPARAM(REFRESH_ID)),None);}
-            let second_text=wait(edit,"specified B")?;ensure!(!second_text.contains("specified A")&&second_text.contains("尚未连接"),"old source survived refresh");
-            session.ui.search_backend=aura_core::model::explorer::SearchBackendPreference::NativeNtfs;crate::storage::save(&profile,&session)?;
-            let builtin=wait(edit,"未使用（当前选择自带搜索）")?;ensure!(builtin.contains("specified B"),"saved external choice was lost");
-            close(owner.0);show_search(owner.0,&profile)?;
-            let reopened=WINDOWS.with(|windows|windows.borrow().get(&(owner.0.0 as isize)).copied()).context("reopened status")?;
-            ensure!(reopened!=HWND::default(),"reopened window missing");
-            let reopened_edit=unsafe{GetDlgItem(Some(reopened),TEXT_ID as i32)}?;
-            ensure!(wait(reopened_edit,"未使用（当前选择自带搜索）")?.contains("specified B"),"reopened status reused old settings");
-            fs::write(output.join("verification.current.json"),serde_json::to_vec_pretty(&serde_json::json!({"saved_choice_is_not_connection":true,"full_program_path_visible":true,"refresh_reads_new_source":true,"automatic_refresh_observes_backend_change":true,"reopened_window":true,"fixture_programs_not_executable":true}))?)?;
-            Ok(())
-        }).join().map_err(|_|anyhow::anyhow!("search status test panicked")).and_then(|value|value);
-        let closed=unsafe{CloseDesktop(desktop)}!=0;result?;ensure!(closed,"private desktop retained");Ok(())
     }
     #[test]
     #[ignore="Owned helper for the concurrent-process diagnostic rotation test"]

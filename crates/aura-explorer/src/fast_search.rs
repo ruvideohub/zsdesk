@@ -9,12 +9,11 @@ pub(crate) mod query;
 mod native;
 pub(crate) mod network;
 #[cfg(test)]#[path="fast_search/runtime_regression.rs"]mod runtime_regression;
-pub(crate) mod everything;
 pub use aura_core::model::explorer::SearchBackendPreference as BackendPreference;
 use std::{collections::HashMap,ffi::{OsStr,OsString},fs,os::windows::ffi::{OsStrExt,OsStringExt},path::{Path,PathBuf},
-    sync::{Arc,Weak,Mutex,Condvar,OnceLock,RwLock,atomic::{AtomicBool,AtomicU64,Ordering},mpsc::{self,Receiver,SyncSender,TrySendError}},
+    sync::{Arc,Weak,Mutex,Condvar,OnceLock,atomic::{AtomicBool,AtomicU64,Ordering},mpsc::{self,Receiver,SyncSender,TrySendError}},
     thread::{self,JoinHandle},time::{Duration,Instant}};
-use anyhow::{Result,Context,bail,ensure};
+use anyhow::{Result,Context};
 use windows::{core::PCWSTR,Win32::{Foundation::{HWND,LPARAM,WPARAM},Storage::FileSystem::{GetDriveTypeW,GetLogicalDriveStringsW},UI::WindowsAndMessaging::PostMessageW}};
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
@@ -23,14 +22,11 @@ impl Default for SearchOptions{fn default()->Self{Self{backend:BackendPreference
 impl SearchOptions{
     pub fn from_ui(ui:&aura_core::model::explorer::ExplorerUi)->Self{Self{backend:ui.search_backend,include_development:ui.search_include_development,index_metadata:ui.search_index_metadata,pinyin_initials:ui.search_pinyin_initials,idle_seconds:ui.search_idle_seconds.clamp(30,3600)}}
     fn effective(self,profile:&Path)->Result<Self>{crate::storage::load(profile).map(|session|Self::from_ui(&session.ui)).context("无法读取搜索后端设置，请重新保存搜索设置")}
-    fn with_external_available(mut self,available:bool)->Self{
-        if !self.backend.is_builtin()&&!available{self.backend=BackendPreference::NativeNtfs;}self
-    }
 }
 #[derive(Clone,Copy,Debug,Default,serde::Serialize,PartialEq,Eq)]#[serde(rename_all="snake_case")]
 pub enum MaintenanceRole{#[default]Pending,Writer,Reader}
 #[derive(Clone,Copy,Debug,Default,serde::Serialize,serde::Deserialize,PartialEq,Eq)]#[serde(rename_all="snake_case")]
-pub enum BackendKind{NativeNtfs,#[default]DirectoryScan,Mixed,Everything}
+pub enum BackendKind{NativeNtfs,#[default]DirectoryScan,Mixed}
 #[derive(Clone,Copy,Debug,Default,serde::Serialize,serde::Deserialize,PartialEq,Eq)]#[serde(rename_all="snake_case")]
 pub enum IndexPhase{#[default]Starting,Snapshot,CatchingUp,Scanning,Attributes,Ready,Paused}
 #[derive(Clone,Debug,serde::Serialize,serde::Deserialize,PartialEq,Eq)]
@@ -72,25 +68,12 @@ impl Shared{
 }
 type Registry=HashMap<PathBuf,Vec<Weak<Shared>>>;
 static CLIENTS:OnceLock<Mutex<Registry>>=OnceLock::new();
-static EVERYTHING_ACTIVITY:RwLock<()>=RwLock::new(());
-pub(super) fn everything_activity()->std::sync::RwLockReadGuard<'static,()>{EVERYTHING_ACTIVITY.read().unwrap_or_else(|e|e.into_inner())}
-pub fn require_everything(profile:&Path)->Result<()>{
-    ensure!(crate::storage::load(profile)?.ui.search_backend==BackendPreference::Everything,"当前选择自带搜索；Everything 不会自动启动，请在搜索设置中切换后端");Ok(())
-}
 pub fn settings_changed(profile:&Path){
     if let Some(clients)=CLIENTS.get(){let mut clients=clients.lock().unwrap_or_else(|e|e.into_inner());
         if let Some(clients)=clients.get_mut(&profile.to_path_buf()){clients.retain(|client|{let Some(client)=client.upgrade()else{return false;};
             client.engine_stop.store(true,Ordering::Release);client.generation.fetch_add(1,Ordering::AcqRel);
             let mut control=client.control.lock().unwrap_or_else(|e|e.into_inner());client.query_active.store(false,Ordering::Release);client.clear_page();control.request=None;control.settings_changed=true;control.release_idle=true;drop(control);client.wake.notify_all();true});}
     }
-    let profile=profile.to_path_buf();
-    let _=thread::Builder::new().name("aura-search-release".into()).spawn(move||{
-        let _activity=EVERYTHING_ACTIVITY.write().unwrap_or_else(|e|e.into_inner());
-        if require_everything(&profile).is_ok(){return;}
-        let peers=CLIENTS.get().map(|clients|clients.lock().unwrap_or_else(|e|e.into_inner()).iter().filter(|(_,clients)|clients.iter().any(|c|c.strong_count()>0)).map(|(path,_)|path.clone()).collect::<Vec<_>>()).unwrap_or_default();
-        if peers.iter().any(|path|require_everything(path).is_ok()){return;}
-        let _=everything::shutdown_managed_if_unused();
-    });
 }
 
 pub struct FastSearch{shared:Arc<Shared>,events:Receiver<SearchEvent>,worker:Option<JoinHandle<()>>}
@@ -155,7 +138,6 @@ fn failure(generation:u64,backend:BackendKind,error:String)->SearchEvent{SearchE
 fn worker_loop(path:PathBuf,profile:PathBuf,initial:SearchOptions,roots:Option<Vec<PathBuf>>,shared:Arc<Shared>,sender:SyncSender<SearchEvent>){
     let mut core:Option<native::Core>=None;
     let mut background=false;
-    let mut external_available=true;
     let mut native_generation=None;
     let mut released_at:Option<Instant>=None;
     loop{
@@ -168,36 +150,31 @@ fn worker_loop(path:PathBuf,profile:PathBuf,initial:SearchOptions,roots:Option<V
         };
         if core.is_none()&&control.request.is_none()&&control.action==ScanAction::None&&!control.settings_changed{continue;}
         let options=if roots.is_some(){initial}else{match initial.effective(&profile){Ok(options)=>options,Err(error)=>{
-            core=None;if let Some(request)=control.request{emit(&shared,&sender,failure(request.generation,if initial.backend.is_builtin(){BackendKind::DirectoryScan}else{BackendKind::Everything},format!("{error:#}")));}continue;
+            core=None;if let Some(request)=control.request{emit(&shared,&sender,failure(request.generation,BackendKind::DirectoryScan,format!("{error:#}")));}continue;
         }}};
-        if !options.backend.is_builtin()&&(control.request.is_some()||control.action!=ScanAction::None||control.settings_changed){
-            let configured=crate::storage::load(&profile).ok().and_then(|session|session.ui.everything_executable);
-            external_available=everything::available(configured.as_deref());
-        }
-        let options=options.with_external_available(external_available);
         if control.request.is_some()||control.action!=ScanAction::None{released_at=None;}
         else if control.release_idle{released_at.get_or_insert_with(Instant::now);}
-        if options.backend.is_builtin()!=background{
-            use windows::Win32::System::Threading::{GetCurrentThread,SetThreadPriority,THREAD_MODE_BACKGROUND_BEGIN,THREAD_MODE_BACKGROUND_END};
-            let _=unsafe{SetThreadPriority(GetCurrentThread(),if options.backend.is_builtin(){THREAD_MODE_BACKGROUND_BEGIN}else{THREAD_MODE_BACKGROUND_END})};background=options.backend.is_builtin();
+        if !background{
+            use windows::Win32::System::Threading::{GetCurrentThread,SetThreadPriority,THREAD_MODE_BACKGROUND_BEGIN};
+            let _=unsafe{SetThreadPriority(GetCurrentThread(),THREAD_MODE_BACKGROUND_BEGIN)};background=true;
         }
-        if !options.backend.is_builtin(){core=None;}else if control.request.is_none()&&control.action==ScanAction::None{if let Some(core)=&core{let detached=released_at.is_some_and(|at|at.elapsed()>=Duration::from_secs(30))&&!any_active_query(&profile);
+        if control.request.is_none()&&control.action==ScanAction::None{if let Some(core)=&core{let detached=released_at.is_some_and(|at|at.elapsed()>=Duration::from_secs(30))&&!any_active_query(&profile);
             native::evict_if_idle(core,if detached{options.idle_seconds.min(30)}else{options.idle_seconds});}}
         if control.settings_changed{core=None;}
         let Some(request)=control.request else{
-            if control.action!=ScanAction::None&&options.backend.is_builtin(){
+            if control.action!=ScanAction::None{
                 let generation=shared.generation.load(Ordering::Acquire);shared.maintenance_role.store(1,Ordering::Release);
                 let core=core.get_or_insert_with(||native::shared(&path));
                 if control.action==ScanAction::Rebuild{native::invalidate(core);}else{native::refresh(core);}
                 let result=native::prepare(core,&options,roots.as_deref(),&shared,&sender);shared.maintenance_role.store(0,Ordering::Release);
                 let mut event=failure(generation,BackendKind::DirectoryScan,String::new());event.error=result.err().map(|e|format!("{e:#}"));
                 if event.error.is_none(){event.phase=IndexPhase::Ready;}emit(&shared,&sender,event);
-            }else if options.backend.is_builtin()&&!shared.cancelled(){if let Some(core)=core.as_ref().filter(|core|native::pending(core)){
+            }else if !shared.cancelled(){if let Some(core)=core.as_ref().filter(|core|native::pending(core)){
                 let _=native::prepare(core,&options,roots.as_deref(),&shared,&sender);
             }}continue;
         };
         if !shared.current(request.generation){continue;}
-        if let Some(error)=&request.invalid{emit(&shared,&sender,failure(request.generation,if options.backend.is_builtin(){BackendKind::DirectoryScan}else{BackendKind::Everything},error.clone()));continue;}
+        if let Some(error)=&request.invalid{emit(&shared,&sender,failure(request.generation,BackendKind::DirectoryScan,error.clone()));continue;}
         if let Some(root)=request.preferred.as_deref().filter(|root|network::is_remote(root)){
             if let Some(local)=core.take(){native::persist(&local);}
             shared.maintenance_role.store(1,Ordering::Release);
@@ -206,7 +183,7 @@ fn worker_loop(path:PathBuf,profile:PathBuf,initial:SearchOptions,roots:Option<V
             }
             shared.maintenance_role.store(0,Ordering::Release);continue;
         }
-        if options.backend.is_builtin(){
+        {
             shared.maintenance_role.store(1,Ordering::Release);let core=core.get_or_insert_with(||native::shared(&path));
             if control.action==ScanAction::Rebuild{native::invalidate(core);}
             let refresh=native_generation!=Some(request.generation)||native::pending(core);
@@ -222,9 +199,6 @@ fn worker_loop(path:PathBuf,profile:PathBuf,initial:SearchOptions,roots:Option<V
                     }
                 },
             }
-        }else{
-            shared.maintenance_role.store(2,Ordering::Release);
-            everything::execute(&shared,&sender,&request,&profile,crate::storage::load(&profile).ok().and_then(|s|s.ui.everything_executable));
         }
         shared.maintenance_role.store(0,Ordering::Release);
     }
@@ -240,16 +214,6 @@ fn fixed_roots()->Vec<PathBuf>{let mut buffer=[0u16;512];let length=unsafe{GetLo
 
 #[cfg(test)]mod tests{
     use super::*;
-    #[test]fn missing_optional_engine_falls_back_without_rewriting_preference(){
-        let preferred=SearchOptions{backend:BackendPreference::Everything,index_metadata:true,..Default::default()};
-        assert_eq!(preferred.with_external_available(false).backend,BackendPreference::NativeNtfs);
-        assert!(preferred.with_external_available(false).index_metadata);
-        assert_eq!(preferred.with_external_available(true).backend,BackendPreference::Everything);
-        assert_eq!(preferred.backend,BackendPreference::Everything);
-        assert!(SearchOptions::default().with_external_available(true).backend.is_builtin());
-    }
-    #[test]fn selected_backend_survives_normalization(){
-        let mut session=aura_core::model::explorer::ExplorerSession::default();
-        for backend in [BackendPreference::NativeNtfs,BackendPreference::Everything]{session.ui.search_backend=backend;session.normalize();assert_eq!(session.ui.search_backend,backend);}
-    }
+        }
+        shared.maintenance_role.store(0,Ordering::Release);
 }

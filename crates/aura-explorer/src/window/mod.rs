@@ -479,7 +479,6 @@ struct WindowState {
     fast_reset_pending:bool,
     fast_clearing:Option<std::time::Instant>,
     fast_restore:Option<global_search::SelectionRestore>,
-    search_settings_job:Option<integrated_search::SettingsJob>,
     fullscreen_restore: Option<window_actions::FullscreenRestore>,
     wheel_remainder: i32,
     secondary_window: bool,
@@ -510,7 +509,6 @@ impl WindowState {
             launch_selection, launch_selections:Vec::new(), deferred_selection:None, open_requests: Default::default(), search_scope: None, search_result: None,
             browser_role:BrowserRole::Fresh,native_theme_dark:None,fast_search:None,fast_generation:0,fast_submitted:None,fast_found:0,search_progress:None,fast_events:Default::default(),
             fast_reset_pending:false,fast_clearing:None,fast_restore:None,
-            search_settings_job:None,
             fullscreen_restore:None,wheel_remainder:0,
             secondary_window:false,
             session_ownership:None,
@@ -1399,7 +1397,7 @@ impl WindowState {
             WM_TIMER => {
                 if wp.0==deferred_selection::TIMER{self.poll_pane_selections();}
                 if wp.0==TIMER_PLACEMENT{let _=unsafe{KillTimer(Some(self.hwnd),TIMER_PLACEMENT)};self.remember_placement();self.save();}
-                if wp.0 == TIMER_STATUS { self.update_shell_registry();self.refresh_status();self.poll_search_settings();self.poll_pane_searches();self.poll_folder_sizes(); }
+                if wp.0 == TIMER_STATUS { self.update_shell_registry();self.refresh_status();self.poll_pane_searches();self.poll_folder_sizes(); }
                 if wp.0 == TIMER_FOLDER_SIZES{self.poll_folder_sizes_inner();}
                 if wp.0 == TIMER_SEARCH { let _ = unsafe { KillTimer(Some(self.hwnd), TIMER_SEARCH) }; unsafe { self.live_search(); } }
                 if wp.0 == TIMER_FAST_SEARCH { let _=unsafe{KillTimer(Some(self.hwnd),TIMER_FAST_SEARCH)};self.poll_pane_searches(); }

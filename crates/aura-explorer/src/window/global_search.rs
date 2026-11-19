@@ -164,7 +164,6 @@ impl WindowState{
     }
     pub(super) fn rebuild_search_index(&mut self){
         self.sync_search_preferences();
-        if !self.session.ui.search_backend.is_builtin(){self.launch_search_settings(false);return;}
         let query=match self.current_location(){ShellLocation::Search{query,..}=>Some(query.clone()),_=>None};
         self.cancel_all_search_backends();
         match crate::fast_search::FastSearch::for_profile(&self.config_path,self.hwnd,WM_FAST_SEARCH,crate::fast_search::SearchOptions::from_ui(&self.session.ui)){
@@ -381,15 +380,11 @@ impl WindowState{
 }
 fn progress_text(event:&crate::fast_search::SearchEvent,found:usize)->String{
     use crate::fast_search::BackendKind;
-    if event.backend==BackendKind::Everything{
-        if event.scanning&&!event.finished&&event.error.is_none(){return aura_core::i18n::text("Everything 正在准备文件名索引，完成后自动显示结果…").into();}
-        return event.error.as_ref().map_or_else(||aura_core::tr_format!("共 {} 项 · 当前页 {found} 项 · Everything", event.indexed, found=found),|error|aura_core::tr_format!("搜索未完成：{error}", error=error));
-    }
     if !event.scanning&&event.error.is_none(){
         let mut text=aura_core::tr_format!("共 {} 项 · 当前页 {found} 项 · 自带搜索", event.indexed, found=found);
         if let Some(warning)=event.volumes.iter().find_map(|v|v.warning.as_ref()){text.push_str(" · ");text.extend(warning.chars().take(72));}return text;
     }
-    let backend=match event.backend{BackendKind::NativeNtfs=>aura_core::i18n::text("NTFS 元数据"),BackendKind::DirectoryScan=>aura_core::i18n::text("目录索引"),BackendKind::Mixed=>aura_core::i18n::text("NTFS + 目录补全"),BackendKind::Everything=>"Everything"};
+    let backend=match event.backend{BackendKind::NativeNtfs=>aura_core::i18n::text("NTFS 元数据"),BackendKind::DirectoryScan=>aura_core::i18n::text("目录索引"),BackendKind::Mixed=>aura_core::i18n::text("NTFS + 目录补全")};
     let mut text=if let Some(error)=&event.error{aura_core::tr_format!("搜索未完成：{error}", error=error)}
         else if event.truncated{aura_core::tr_format!("已显示前 {found} 条结果，请补充关键字", found=found)}
         else{aura_core::tr_format!("找到 {found} 条", found=found)};

@@ -161,7 +161,7 @@ impl WindowState {
                     SearchPanelHit::Clear => (aura_core::i18n::text("清空搜索内容").into(), panel.clear),
                     SearchPanelHit::Close => (aura_core::i18n::text("关闭搜索并返回原文件夹 (Esc)").into(), panel.close),
                     SearchPanelHit::Submit => (aura_core::i18n::text("开始搜索 (Enter)").into(), panel.submit),
-                    SearchPanelHit::IndexSettings => (aura_core::i18n::text("打开 Everything 索引设置").into(), panel.index_settings),
+                    SearchPanelHit::IndexSettings => (aura_core::i18n::text("重建文件名索引").into(), panel.index_settings),
                     SearchPanelHit::Retry => if let Some(error) = self.search_controls().error {
                         (aura_core::tr_format!("重试搜索：{error}", error=error), panel.retry)
                     } else { (String::new(), LayoutRect::default()) },
@@ -756,14 +756,6 @@ impl WindowState {
             },
             Some("search-rebuild-index") => self.rebuild_search_index(),
             Some("dual-pane") => self.toggle_dual_pane(),
-            Some(id) if self.search_engine_menu_action(id) => {},
-            Some("search-everything-program") => {
-                if self.session.ui.search_backend.is_builtin(){return;}
-                match crate::fast_search::everything::choose_executable(self.hwnd){
-                    Ok(Some(path))=>{self.session.ui.everything_executable=Some(path);self.session.ui.search_backend=aura_core::model::explorer::SearchBackendPreference::Everything;if self.persist_search_preferences(){self.search_backend_changed();if let Err(error)=super::diagnostics::show_search(self.hwnd,&self.config_path){self.show_message(aura_core::tr_format!("无法显示搜索引擎状态：{error:#}", error=error));}}},
-                    Ok(None)=>{},Err(error)=>self.show_message(error.to_string()),
-                }
-            },
             Some(id) if id.starts_with("appearance-") => if crate::edition::THEMED { self.apply_appearance_choice(id); },
             Some(id) if id.starts_with("context-menu-") || id.starts_with("context-action-") => {
                 if menus::apply_context_menu_setting(&mut self.session.ui.context_menu,id){
@@ -849,7 +841,7 @@ impl WindowState {
         if !menus::apply_interface_setting(&mut self.session.ui,id) { return; }
         if id.starts_with("tab-placement-"){self.side_tab_first=None;self.side_tab_wheel=0;}
         aura_windows::shell::set_open_archives_externally(self.session.ui.archives_open_externally);
-        if (id.starts_with("search-backend-")||id.starts_with("search-native-")||id=="everything-folder-sizes"||id=="search-everything-auto")&&!self.persist_search_preferences(){return;}
+        if (id.starts_with("search-backend-")||id.starts_with("search-native-")||id=="everything-folder-sizes")&&!self.persist_search_preferences(){return;}
         if id=="everything-folder-sizes" {self.cancel_folder_sizes();}
         if id=="navigation-recycle-bin" || id=="navigation-network" || id.starts_with("navigation-this-pc-") {self.rebuild_navigation_tree();}
         self.crumbs_for=None;
@@ -864,7 +856,7 @@ impl WindowState {
         if id=="explorer-tray"{crate::runtime::refresh_tray();}
         self.measure_commands();self.measure_bookmarks();self.relayout();self.position_children();
         if id=="everything-folder-sizes" {self.poll_folder_sizes();}
-        if id.starts_with("search-backend-")||id.starts_with("search-native-")||id=="search-everything-auto"{self.search_backend_changed();}
+        if id.starts_with("search-backend-")||id.starts_with("search-native-"){self.search_backend_changed();}
         if (id=="navigation-auto-expand" || id=="navigation-expand-system" || id=="interface-navigation") && self.pending.is_none() && self.session.ui.show_tree {
             if let Some(tree)=&self.tree {
                 let location=self.current_location();
@@ -872,17 +864,6 @@ impl WindowState {
             }
         }
         unsafe{self.update_address();}self.invalidate();
-    }
-
-    /// Index administration is reached only through explicit menu actions.
-    fn search_engine_menu_action(&mut self, id: &str) -> bool {
-        match id {
-            "search-engine-status"=>{self.sync_search_preferences();if let Err(error)=super::diagnostics::show_search(self.hwnd,&self.config_path){self.show_message(aura_core::tr_format!("无法显示搜索引擎状态：{error:#}", error=error));}},
-            "search-index-settings" => self.launch_search_settings(false),
-            "search-everything-service" => self.launch_search_settings(true),
-            _ => return false,
-        };
-        true
     }
 
     /// 规划 §6.1.8: per-user takeover with backup and one-click restore.

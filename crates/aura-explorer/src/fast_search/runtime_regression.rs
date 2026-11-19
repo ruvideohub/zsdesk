@@ -19,7 +19,7 @@ impl Drop for Fixture{fn drop(&mut self){
 }}
 fn shared()->Shared{Shared{control:Mutex::new(Control::default()),wake:Condvar::new(),stop:AtomicBool::new(false),engine_stop:AtomicBool::new(false),generation:AtomicU64::new(1),
     notified:AtomicBool::new(false),hwnd:0,message:0,notifier:None,maintenance_role:AtomicU64::new(0),query_active:AtomicBool::new(false),native_page:Mutex::new(None),network_io:Mutex::new(None)}}
-fn direct(core:&native::Core,fixture:&Fixture,options:SearchOptions,text:&str,offset:u32,limit:u32,sort:everything::SearchSort)->Result<(Vec<PathBuf>,SearchEvent)>{
+fn direct(core:&native::Core,fixture:&Fixture,options:SearchOptions,text:&str,offset:u32,limit:u32,sort:SearchSort)->Result<(Vec<PathBuf>,SearchEvent)>{
     let shared=shared();let(sender,receiver)=mpsc::sync_channel(128);let request=Request{generation:1,query:text.into(),preferred:None,invalid:None,offset,limit,sort};
     let deadline=Instant::now()+Duration::from_secs(30);let mut paths=Vec::new();
     loop{native::execute(core,&options,Some(std::slice::from_ref(&fixture.files)),&shared,&sender,&request)?;
@@ -38,7 +38,7 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
     let fixture=Fixture::new(&std::env::temp_dir())?;
     for index in 0..96{fixture.write(&format!("dir-{index}/resume-marker.txt"),b"resumable")?;}
     let core=native::shared(&fixture.index);let state=shared();let(sender,_receiver)=mpsc::sync_channel(128);
-    let request=Request{generation:1,query:"resume-marker".into(),preferred:None,invalid:None,offset:0,limit:200,sort:everything::SearchSort::NameAsc};
+    let request=Request{generation:1,query:"resume-marker".into(),preferred:None,invalid:None,offset:0,limit:200,sort:SearchSort::NameAsc};
     native::cancel_after_directory_for_test();
     assert!(native::execute(&core,&SearchOptions::default(),Some(std::slice::from_ref(&fixture.files)),&state,&sender,&request).is_err());
     assert!(native::inspect(&core).0>1,"cancel discarded the catalog taken out of Store");
@@ -47,7 +47,7 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
     assert!(!saved[0].pending_dirs.is_empty(),"unfinished directory cursor was not persisted");drop(saved);
     native::evict_if_idle(&core,0);assert_eq!(native::inspect(&core).0,0,"paused partial catalog ignored idle memory limit");assert!(!native::pending(&core));drop(core);
     let resumed=native::shared(&fixture.index);
-    let(paths,_)=direct(&resumed,&fixture,SearchOptions::default(),"resume-marker",0,200,everything::SearchSort::NameAsc)?;
+    let(paths,_)=direct(&resumed,&fixture,SearchOptions::default(),"resume-marker",0,200,SearchSort::NameAsc)?;
     assert_eq!(paths.len(),96);assert_eq!(native::inspect(&resumed).2,0,"restart bootstrapped a volume instead of resuming it");
     assert!(!native::pending(&resumed));Ok(())
 }
@@ -55,14 +55,14 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
 #[test]fn directory_refresh_reuses_catalog_and_failed_save_keeps_memory()->Result<()>{
     let fixture=Fixture::new(&std::env::temp_dir())?;let old=fixture.write("old.txt",b"old")?;
     let core=native::shared(&fixture.index);let options=SearchOptions::default();
-    direct(&core,&fixture,options,"*",0,200,everything::SearchSort::NameAsc)?;let builds=native::inspect(&core).2;
+    direct(&core,&fixture,options,"*",0,200,SearchSort::NameAsc)?;let builds=native::inspect(&core).2;
     fs::remove_file(old)?;let added=fixture.write("new.txt",b"new")?;native::disable_journal_for_test(&core);native::refresh(&core);
-    let(paths,_)=direct(&core,&fixture,options,"*.txt",0,200,everything::SearchSort::NameAsc)?;
+    let(paths,_)=direct(&core,&fixture,options,"*.txt",0,200,SearchSort::NameAsc)?;
     assert_eq!(paths,vec![added]);assert_eq!(native::inspect(&core).2,builds,"fallback refresh recreated the catalog");
     native::dirty_for_test(&core);fs::remove_file(&fixture.index)?;fs::create_dir(&fixture.index)?;
     native::evict_if_idle(&core,0);
     assert!(native::inspect(&core).0>0,"failed snapshot save discarded the only current catalog");
-    let(retained,event)=direct(&core,&fixture,options,"*.txt",0,200,everything::SearchSort::NameAsc)?;
+    let(retained,event)=direct(&core,&fixture,options,"*.txt",0,200,SearchSort::NameAsc)?;
     assert_eq!(retained,paths,"failed save changed the searchable live rows");
     assert!(event.volumes.iter().any(|volume|volume.warning.as_ref().is_some_and(|warning|warning.contains("未能保存"))));
     assert_eq!(native::inspect(&core).2,builds,"failed save silently rebuilt the catalog");
@@ -74,7 +74,7 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
     let fixture=Fixture::new(&std::env::temp_dir())?;let expected=fixture.write("ready-marker.txt",b"ready")?;
     for index in 0..96{fixture.write(&format!("dir-{index}/supplement.txt"),b"later")?;}
     let core=native::shared(&fixture.index);let state=shared();let(sender,receiver)=mpsc::sync_channel(128);
-    let mut request=Request{generation:1,query:"ready-marker".into(),preferred:None,invalid:None,offset:0,limit:200,sort:everything::SearchSort::NameAsc};
+    let mut request=Request{generation:1,query:"ready-marker".into(),preferred:None,invalid:None,offset:0,limit:200,sort:SearchSort::NameAsc};
     native::change_query_after_directory_for_test();
     assert!(native::execute(&core,&SearchOptions::default(),Some(std::slice::from_ref(&fixture.files)),&state,&sender,&request).is_err());
     assert!(!state.cancelled());assert_eq!(state.generation.load(Ordering::Acquire),2);assert!(native::pending(&core));
@@ -82,7 +82,7 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
     native::execute_cached(&core,&SearchOptions::default(),Some(std::slice::from_ref(&fixture.files)),&state,&sender,&request)?;
     let paths:Vec<_>=receiver.try_iter().flat_map(|event|event.paths).collect();assert_eq!(paths,[expected]);
     assert_eq!(native::inspect(&core).0,rows,"cached query waited for directory supplementation");
-    assert_eq!(direct(&core,&fixture,SearchOptions::default(),"supplement",0,200,everything::SearchSort::NameAsc)?.0.len(),96);
+    assert_eq!(direct(&core,&fixture,SearchOptions::default(),"supplement",0,200,SearchSort::NameAsc)?.0.len(),96);
     assert_eq!(native::inspect(&core).2,1,"query interruption restarted volume bootstrap");Ok(())
 }
 
@@ -99,14 +99,14 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
     let fixture=Fixture::new(&std::env::temp_dir())?;fixture.write("alpha.txt",b"a")?;let beta=fixture.write("beta.pdf",b"bbbb")?;
     fixture.write("中国人.txt",b"cc")?;let child=fixture.write("sub/child.pdf",b"123456789")?;fixture.write("node_modules/hidden.pdf",b"ignored")?;
     let core=native::shared(&fixture.index);let options=SearchOptions::default();
-    let (paths,page)=direct(&core,&fixture,options,"ext:pdf",0,1,everything::SearchSort::NameAsc)?;assert_eq!(paths,vec![beta.clone()]);assert_eq!(page.indexed,2);assert!(page.truncated);
-    let (paths,page)=direct(&core,&fixture,options,"ext:pdf",1,1,everything::SearchSort::NameAsc)?;assert_eq!(paths,vec![child.clone()]);assert!(!page.truncated);
-    let (paths,_)=direct(&core,&fixture,options,"ext:pdf",0,200,everything::SearchSort::SizeDesc)?;assert_eq!(paths,vec![child.clone(),beta]);
+    let (paths,page)=direct(&core,&fixture,options,"ext:pdf",0,1,SearchSort::NameAsc)?;assert_eq!(paths,vec![beta.clone()]);assert_eq!(page.indexed,2);assert!(page.truncated);
+    let (paths,page)=direct(&core,&fixture,options,"ext:pdf",1,1,SearchSort::NameAsc)?;assert_eq!(paths,vec![child.clone()]);assert!(!page.truncated);
+    let (paths,_)=direct(&core,&fixture,options,"ext:pdf",0,200,SearchSort::SizeDesc)?;assert_eq!(paths,vec![child.clone(),beta]);
     assert!(!native::inspect(&core).3,"disabled metadata allocated full columns");
-    let scope=format!("\"{}\\\" ext:pdf",fixture.files.join("sub").display());assert_eq!(direct(&core,&fixture,options,&scope,0,200,everything::SearchSort::NameAsc)?.0,vec![child]);
-    assert!(direct(&core,&fixture,options,"zgr",0,200,everything::SearchSort::NameAsc)?.0.is_empty());
-    let pinyin=SearchOptions{pinyin_initials:true,..options};assert_eq!(direct(&core,&fixture,pinyin,"zgr",0,200,everything::SearchSort::NameAsc)?.0.len(),1);
-    let all=SearchOptions{include_development:true,index_metadata:true,..options};assert_eq!(direct(&core,&fixture,all,"ext:pdf",0,200,everything::SearchSort::NameAsc)?.1.indexed,3);assert!(native::inspect(&core).3);
+    let scope=format!("\"{}\\\" ext:pdf",fixture.files.join("sub").display());assert_eq!(direct(&core,&fixture,options,&scope,0,200,SearchSort::NameAsc)?.0,vec![child]);
+    assert!(direct(&core,&fixture,options,"zgr",0,200,SearchSort::NameAsc)?.0.is_empty());
+    let pinyin=SearchOptions{pinyin_initials:true,..options};assert_eq!(direct(&core,&fixture,pinyin,"zgr",0,200,SearchSort::NameAsc)?.0.len(),1);
+    let all=SearchOptions{include_development:true,index_metadata:true,..options};assert_eq!(direct(&core,&fixture,all,"ext:pdf",0,200,SearchSort::NameAsc)?.1.indexed,3);assert!(native::inspect(&core).3);
     Ok(())
 }
 
@@ -127,7 +127,7 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
 #[test]fn native_incremental_survives_deleted_and_unreadable_directories()->Result<()>{
     let fixture=Fixture::new(&std::env::temp_dir())?;fixture.write("keep.txt",b"k")?;
     let core=native::shared(&fixture.index);let options=SearchOptions::default();
-    let all=|core:&native::Core|direct(core,&fixture,options,"*",0,200,everything::SearchSort::NameAsc).map(|(paths,_)|paths);
+    let all=|core:&native::Core|direct(core,&fixture,options,"*",0,200,SearchSort::NameAsc).map(|(paths,_)|paths);
     all(&core)?;
     // Without a readable journal every search rescans; there is no incremental pass to verify.
     if !native::checkpoints(&core).iter().all(|c|c.2){return Ok(());}
@@ -152,19 +152,12 @@ fn collect(service:&FastSearch,generation:u64)->Result<(Vec<PathBuf>,SearchEvent
 #[test]fn native_failed_build_is_not_retried_by_every_search()->Result<()>{
     let fixture=Fixture::new(&std::env::temp_dir())?;let late=fixture.root.join("late");let core=native::shared(&fixture.index);
     let search=||{let shared=shared();let(sender,_receiver)=mpsc::sync_channel(128);
-        let request=Request{generation:1,query:"*".into(),preferred:None,invalid:None,offset:0,limit:10,sort:everything::SearchSort::NameAsc};
+        let request=Request{generation:1,query:"*".into(),preferred:None,invalid:None,offset:0,limit:10,sort:SearchSort::NameAsc};
         native::execute(&core,&SearchOptions::default(),Some(std::slice::from_ref(&late)),&shared,&sender,&request)};
     assert!(search().is_err());fs::create_dir(&late)?;fs::write(late.join("a.txt"),b"a")?;
     assert!(search().is_err(),"a failed location was walked again by the next search");
     // An explicit refresh is the user's way to retry at once.
     native::refresh(&core);search()?;assert_eq!(native::inspect(&core).2,1);Ok(())
-}
-
-#[test]fn builtin_preference_blocks_everything_entry_points()->Result<()>{
-    let fixture=Fixture::new(&std::env::temp_dir())?;let profile=fixture.root.join("explorer-session.json");let session=crate::storage::default_session();crate::storage::save(&profile,&session)?;
-    assert!(require_everything(&profile).is_err());assert!(everything::open_settings(&profile).is_err());assert!(everything::enable_service(&profile).is_err());
-    assert!(everything::query_folder_sizes(&profile,&[],1,||false).is_err());assert!(everything::query_page(&profile,&everything::QueryOptions::default(),1,||false).is_err());
-    assert!(!fixture.index.exists());Ok(())
 }
 
 struct TestToken(windows::Win32::Foundation::HANDLE);
@@ -231,18 +224,18 @@ fn native_builtin_unprivileged_usn_snapshot_resume()->Result<()>{
         error.code()==windows::core::HRESULT::from_win32(windows::Win32::Foundation::ERROR_ACCESS_DENIED.0));
     ensure!(raw_denied,"raw volume failed for a reason other than access denied: {raw_error:#}");
     let core=native::shared(&fixture.index);let options=SearchOptions::default();
-    direct(&core,&fixture,options,"*",0,200,everything::SearchSort::NameAsc)?;ensure!(native::checkpoints(&core).iter().all(|c|c.2),"USN unavailable; directory refresh is not an incremental pass");
+    direct(&core,&fixture,options,"*",0,200,SearchSort::NameAsc)?;ensure!(native::checkpoints(&core).iter().all(|c|c.2),"USN unavailable; directory refresh is not an incremental pass");
     let builds=native::inspect(&core).2;let before=native::checkpoints(&core);
     fs::rename(fixture.files.join("docs"),fixture.files.join("renamed"))?;fs::remove_file(fixture.files.join("removed.txt"))?;
     let renamed=fixture.files.join("renamed/甲.txt");fs::hard_link(&renamed,fixture.files.join("alias.txt"))?;
-    let (paths,_)=direct(&core,&fixture,options,"*",0,200,everything::SearchSort::NameAsc)?;let paths:HashSet<_>=paths.into_iter().collect();
+    let (paths,_)=direct(&core,&fixture,options,"*",0,200,SearchSort::NameAsc)?;let paths:HashSet<_>=paths.into_iter().collect();
     ensure!(paths.contains(&renamed)&&paths.contains(&fixture.files.join("alias.txt"))&&!paths.contains(&source)&&!paths.contains(&fixture.files.join("removed.txt")),"incremental identities/aliases incorrect");
     ensure!(native::inspect(&core).2==builds,"ordinary USN update rebuilt the catalog");ensure!(native::checkpoints(&core)!=before,"checkpoint did not advance");
     native::evict_if_idle(&core,0);ensure!(native::inspect(&core).0==0,"idle retained the index");
-    let after_idle=fixture.write("after-idle.txt",b"new")?;let (paths,_)=direct(&core,&fixture,options,"after-idle",0,200,everything::SearchSort::NameAsc)?;
+    let after_idle=fixture.write("after-idle.txt",b"new")?;let (paths,_)=direct(&core,&fixture,options,"after-idle",0,200,SearchSort::NameAsc)?;
     ensure!(paths==vec![after_idle]&&native::inspect(&core).2==builds,"snapshot resume did not use ordinary USN catchup");
     native::expire_journal_for_test(&core);let after_reset=fixture.write("after-journal-reset.txt",b"rescan")?;
-    let(paths,_)=direct(&core,&fixture,options,"*",0,200,everything::SearchSort::NameAsc)?;
+    let(paths,_)=direct(&core,&fixture,options,"*",0,200,SearchSort::NameAsc)?;
     ensure!(paths.contains(&after_reset)&&native::inspect(&core).2==builds,"journal reset discarded the catalog instead of refreshing it");
     let report=json!({"state":"passed","ordinary_token":true,"token_mode":token.mode,"standard_user_logon_tested":token.mode!="restricted-token-without-admin-or-privileges",
         "raw_volume_open_denied":raw_denied,"initial_build":"directory traversal","incremental":"FSCTL_READ_UNPRIVILEGED_USN_JOURNAL",
@@ -281,50 +274,16 @@ fn native_mft_transport_bounded_read()->Result<()>{
 }
 
 #[test]
-#[ignore="Backend isolation with a deliberately unavailable private Everything instance; no engine is launched"]
-fn native_backend_choice_does_not_cross_start()->Result<()>{
-    struct Environment(&'static str,Option<OsString>);
-    impl Environment{fn set(key:&'static str,value:&OsStr)->Self{let old=std::env::var_os(key);std::env::set_var(key,value);Self(key,old)}}
-    impl Drop for Environment{fn drop(&mut self){if let Some(value)=&self.1{std::env::set_var(self.0,value);}else{std::env::remove_var(self.0);}}}
-    fn failed(service:&FastSearch,generation:u64)->Result<String>{let deadline=Instant::now()+Duration::from_secs(10);
-        loop{for event in service.poll(){if event.generation==generation&&event.finished{return event.error.context("query unexpectedly succeeded");}}
-            ensure!(Instant::now()<deadline,"backend decision timeout");thread::sleep(Duration::from_millis(5));}}
-    let output=PathBuf::from(std::env::var_os("AURA_NATIVE_TEST_OUTPUT").context("isolated output")?).join("backend-choice");let fixture=Fixture::new(&output)?;
-    let instance=OsString::from(format!("AuraExplorer.NoEngine.{}-{}",std::process::id(),SERIAL.fetch_add(1,Ordering::Relaxed)));
-    let _instance=Environment::set("AURA_EVERYTHING_INSTANCE",&instance);let _bundle=Environment::set("AURA_EVERYTHING_BUNDLE",fixture.root.join("missing/Everything.exe").as_os_str());
-    let _data=Environment::set("AURA_EVERYTHING_DATA_ROOT",fixture.root.join("everything-data").as_os_str());
-    let profile=fixture.root.join("explorer-session.json");let mut session=crate::storage::default_session();session.ui.search_backend=BackendPreference::Everything;crate::storage::save(&profile,&session)?;
-    let service=FastSearch::new_with_options(fixture.index.clone(),HWND::default(),0,SearchOptions::default())?;
-    let first=service.start("regex:^AuraExplorerBackendIsolation$",None);let error=failed(&service,first)?;
-    ensure!(error.contains("自带搜索支持"),"missing optional Everything did not use the native parser");ensure!(!fixture.index.exists(),"invalid query created an index");
-    session.ui.search_backend=BackendPreference::NativeNtfs;crate::storage::save(&profile,&session)?;
-    let second=service.start("regex:^AuraExplorerBackendIsolation$",None);let error=failed(&service,second)?;
-    ensure!(error.contains("自带搜索支持"),"persisted native choice was overwritten by Everything");
-    fs::remove_file(&profile)?;let third=service.start("AuraExplorerBackendIsolation",None);let error=failed(&service,third)?;
-    ensure!(error.contains("无法读取搜索后端设置"),"missing preferences silently selected another engine");stop(service);
-    session.ui.search_backend=BackendPreference::Everything;crate::storage::save(&profile,&session)?;
-    let expected=fixture.write("builtin-fallback-marker.txt",b"fallback")?;
-    let scoped=FastSearch::create(fixture.index.clone(),HWND::default(),0,SearchOptions{backend:BackendPreference::Everything,..Default::default()},Some(vec![fixture.files.clone()]),None,Some(profile.clone()))?;
-    let generation=scoped.start("builtin-fallback-marker",None);let(paths,event)=collect(&scoped,generation)?;
-    ensure!(paths==[expected]&&event.backend!=BackendKind::Everything,"missing engine did not return native results");
-    ensure!(crate::storage::load(&profile)?.ui.search_backend==BackendPreference::Everything,"fallback rewrote the preferred engine");
-    stop(scoped);ensure!(!fixture.root.join("everything-data").exists(),"fallback started an external engine workspace");
-    let report=json!({"state":"passed","persisted_selection_respected":true,"missing_everything_uses_builtin":true,"native_syntax_no_everything_fallback":true,
-        "missing_preferences_fail_closed":true,"scoped_native_fallback_returned_file":true,"native_snapshot_created":true,"engine_process_started":false});
-    fs::write(output.join("verification.current.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");Ok(())
-}
-
-#[test]
 fn background_maintenance_does_not_renew_query_idle_lifetime()->Result<()>{
     let fixture=Fixture::new(&std::env::temp_dir())?;let expected=fixture.write("idle-needle.txt",b"kept")?;
     let options=SearchOptions{backend:BackendPreference::DirectoryScan,..Default::default()};let core=native::shared(&fixture.index);
-    let(paths,_)=direct(&core,&fixture,options,"idle-needle",0,20,everything::SearchSort::NameAsc)?;assert_eq!(paths,vec![expected.clone()]);
+    let(paths,_)=direct(&core,&fixture,options,"idle-needle",0,20,SearchSort::NameAsc)?;assert_eq!(paths,vec![expected.clone()]);
     let builds=native::inspect(&core).2;let used=native::set_idle_for_test(&core,Duration::from_secs(31));
     let shared=shared();let(sender,_receiver)=mpsc::sync_channel(128);
     native::prepare(&core,&options,Some(std::slice::from_ref(&fixture.files)),&shared,&sender)?;
     assert_eq!(native::last_use_for_test(&core),used,"background maintenance renewed the user activity clock");
     native::evict_if_idle(&core,30);assert_eq!(native::inspect(&core).0,0);assert!(fixture.index.is_file());
-    let(paths,_)=direct(&core,&fixture,options,"idle-needle",0,20,everything::SearchSort::NameAsc)?;
+    let(paths,_)=direct(&core,&fixture,options,"idle-needle",0,20,SearchSort::NameAsc)?;
     assert_eq!(paths,vec![expected]);assert_eq!(native::inspect(&core).2,builds,"idle release forced a full index rebuild");Ok(())
 }
 
@@ -334,7 +293,7 @@ fn scoped_directory_search_uses_names_without_a_local_volume_catalog()->Result<(
     let one=fixture.write("folder/网络合同.txt",b"one")?;let two=fixture.write("other/网络合同2.txt",b"two")?;
     fixture.write("excluded/无关.txt",b"other")?;
     let shared=shared();let(sender,receiver)=mpsc::sync_channel(128);
-    let request=Request{generation:1,query:"网络合同".into(),preferred:Some(fixture.files.clone()),invalid:None,offset:0,limit:1,sort:everything::SearchSort::NameAsc};
+    let request=Request{generation:1,query:"网络合同".into(),preferred:Some(fixture.files.clone()),invalid:None,offset:0,limit:1,sort:SearchSort::NameAsc};
     network::execute(&shared,&sender,&request,&fixture.files,false)?;
     let events=receiver.try_iter().collect::<Vec<_>>();let paths=events.iter().flat_map(|event|event.paths.clone()).collect::<Vec<_>>();
     assert_eq!(paths,vec![one]);let last=events.last().unwrap();assert!(last.finished&&last.truncated);assert_eq!(last.indexed,2);
@@ -347,7 +306,7 @@ fn scoped_directory_search_uses_names_without_a_local_volume_catalog()->Result<(
 
 #[test]
 fn broad_queries_keep_the_correct_page_after_pruning() -> Result<()> {
-    use everything::SearchSort::*;
+    use SearchSort::*;
     use metadata::{Index,VolumeIndex};
     let fixture=Fixture::new(&std::env::temp_dir())?;
     let mut index=Index::new(1,true);

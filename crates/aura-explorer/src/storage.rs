@@ -307,13 +307,13 @@ mod tests {
     fn stale_navigation_save_cannot_reenable_an_unselected_backend(){
         use aura_core::model::explorer::SearchBackendPreference;
         let root=std::env::temp_dir().join(format!("aura-search-preference-{}-{}",std::process::id(),SAVE_SERIAL.fetch_add(1,Ordering::Relaxed)));
-        fs::create_dir(&root).unwrap();let path=root.join("explorer-session.json");let mut original=default_session();original.ui.search_backend=SearchBackendPreference::Everything;
+        fs::create_dir(&root).unwrap();let path=root.join("explorer-session.json");let mut original=default_session();original.ui.search_backend=SearchBackendPreference::DirectoryScan;
         save(&path,&original).unwrap();let baseline=original.ui.search_preferences();let mut chosen=original.clone();chosen.ui.search_backend=SearchBackendPreference::NativeNtfs;
         save_window_with_search(&path,&chosen,false,&baseline).unwrap();
         let restored=save_window_with_search(&path,&original,true,&baseline).unwrap();assert_eq!(restored.backend,SearchBackendPreference::NativeNtfs);
         assert_eq!(load(&path).unwrap().ui.search_backend,SearchBackendPreference::NativeNtfs);
-        let mut explicit=original;explicit.ui.search_backend=SearchBackendPreference::Everything;
-        save_window_with_search(&path,&explicit,true,&restored).unwrap();assert_eq!(load(&path).unwrap().ui.search_backend,SearchBackendPreference::Everything);
+        let mut explicit=original;explicit.ui.search_backend=SearchBackendPreference::DirectoryScan;
+        save_window_with_search(&path,&explicit,true,&restored).unwrap();assert_eq!(load(&path).unwrap().ui.search_backend,SearchBackendPreference::DirectoryScan);
         fs::remove_file(path).unwrap();fs::remove_dir(root).unwrap();
     }
     #[test]

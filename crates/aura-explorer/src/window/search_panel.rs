@@ -99,13 +99,11 @@ impl WindowState {
             menus::item(aura_core::i18n::text("重新搜索"),"search-refresh"),
             menus::item(aura_core::i18n::text("关闭搜索\tEsc"),"search-close"),
             menus::MenuItemSpec::Separator,
-            if self.session.ui.search_backend.is_builtin(){menus::item(aura_core::i18n::text("重建自带索引"),"search-native-rebuild")}else{menus::item(aura_core::i18n::text("Everything 索引设置…"),"search-settings")},
-            menus::item(aura_core::i18n::text("搜索引擎状态…"),"search-engine-status"),
+            menus::item(aura_core::i18n::text("重建自带索引"),"search-native-rebuild"),
         ])
     }
 
     pub(super) unsafe fn apply_search_option(&mut self,id:&str)->bool {
-        if id=="search-engine-status"{self.sync_search_preferences();if let Err(error)=super::diagnostics::show_search(self.hwnd,&self.config_path){self.show_message(aura_core::tr_format!("无法显示搜索引擎状态：{error:#}", error=error));}return true;}
         if id=="search-native-rebuild"{self.rebuild_search_index();return true;}
         let hit=match id {
             "search-scope"=>SearchPanelHit::Scope,"search-order"=>SearchPanelHit::Sort,
@@ -197,7 +195,7 @@ impl WindowState {
         } else if is_query {
             aura_core::i18n::text("没有匹配项目 · 尝试其他关键词或搜索范围").to_owned()
         } else {
-            if self.session.ui.search_backend.is_builtin(){aura_core::i18n::text("自带搜索：输入文件名、路径或类型筛选").to_owned()}else{aura_core::i18n::text("Everything 搜索：输入文件名、路径或搜索语法").to_owned()}
+            aura_core::i18n::text("自带搜索：输入文件名、路径或类型筛选").to_owned()
         };
         let status_color = if controls.error.is_some() {
             if self.dark { Color::rgba8(255, 180, 171, 255) } else { Color::rgba8(165, 38, 44, 255) }
@@ -266,9 +264,7 @@ impl WindowState {
                 let controls = self.search_controls();
                 if controls.error.is_some() && !controls.busy { unsafe { self.request_integrated_search(true); } }
             }
-            SearchPanelHit::IndexSettings => {
-                self.launch_search_settings(false);
-            }
+            SearchPanelHit::IndexSettings => { self.rebuild_search_index(); }
         }
         self.invalidate();
     }

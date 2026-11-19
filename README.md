@@ -46,7 +46,7 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 
 ## 搜索、预览和右键
 
-- **搜索**：可选择自带搜索或 Everything；网络共享及已有映射网络目录使用限定目录遍历搜索。首次建立本地索引需要时间，可在搜索设置中查看引擎、索引就绪状态和范围。
+- **搜索**：只有一个引擎——自带搜索（共享内存索引与本地快照）；网络共享及已有映射网络目录使用限定目录遍历搜索。首次建立本地索引需要时间，索引就绪状态显示在搜索结果里。
 - **预览**：内置预览与 QuickLook 可选择。Office 文档预览需要相应的已安装组件；图片、音视频格式取决于系统解码器。
 - **右键**：Windows 10 使用经典系统菜单；Windows 11 按系统能力选择已验证的原生呈现或公共 Shell 命令兼容呈现。Shift 右键可直接使用经典菜单。
 - **Listary**：安装和连接方式见[详细使用说明](docs/user-guide.md)及 `integrations/listary`。

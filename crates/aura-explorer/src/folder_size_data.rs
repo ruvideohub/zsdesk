@@ -69,8 +69,7 @@ fn valid_name(name:&OsString)->bool{let mut components=Path::new(name).component
 pub(crate) fn calculate(profile:&Path,directory:&Path,items:&[Item],cancel:&impl Fn()->bool,
     mut emit:impl FnMut(usize,Value)->bool)->Result<()>{
     ensure!(directory.is_absolute()&&items.iter().all(|item|valid_name(&item.name)),"大小查询路径无效");
-    let ui=crate::storage::load(profile)?.ui;
-    let external=!ui.search_backend.is_builtin()&&crate::fast_search::everything::available(ui.everything_executable.as_deref());
+    crate::storage::load(profile)?;
     let root=fs::canonicalize(directory).context("无法访问文件夹大小查询目录")?;
     let mut directories=Vec::new();
     for (index,item) in items.iter().enumerate(){
@@ -84,21 +83,7 @@ pub(crate) fn calculate(profile:&Path,directory:&Path,items:&[Item],cancel:&impl
         else if !emit(index,Value::default()){return Ok(());}
     }
     let mut pending=VecDeque::new();
-    if external{
-        let mut unavailable=false;
-        for (batch,chunk) in directories.chunks(64).enumerate(){
-            if cancel(){return Ok(());}
-            let paths:Vec<_>=chunk.iter().map(|index|root.join(&items[*index].name)).collect();
-            let queried=if unavailable{None}else{crate::fast_search::everything::query_folder_sizes(profile,&paths,
-                0x5a53b000u32.wrapping_add(batch as u32*64),cancel).ok()};
-            if queried.is_none(){unavailable=true;}
-            for (index,path) in chunk.iter().zip(&paths){
-                let value=queried.as_ref().and_then(|values|values.iter().find(|(found,_)|crate::explorer_forwarder::same_path(found,path))).and_then(|(_,value)|*value);
-                if let Some(value)=value{if !emit(*index,Value::known(value)){return Ok(());}}
-                else{pending.push_back(*index);}
-            }
-        }
-    }else{pending.extend(directories);}
+    pending.extend(directories);
     if pending.is_empty(){return Ok(());}
     let Some(_permit)=Permit::acquire(cancel)else{return Ok(());};
     let mut active=VecDeque::new();
