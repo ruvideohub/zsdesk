@@ -102,6 +102,39 @@ impl Placement {
 /// fully shown, `panel - sliver` when only the strip at the bottom edge is
 /// visible. The panel is transformed, never resized, so the icons keep their
 /// relative positions during the animation.
+/// Columns and rows of the all-applications grid for `area`.
+///
+/// A fixed 7×4 grid turns into thumbnails on a 4K screen and into cramped
+/// tiles on a small laptop, so the page is derived from the space instead:
+/// tiles keep their pitch, and the result stays inside sane bounds. Paging is
+/// the scroll direction; nothing else changes with resolution.
+pub fn grid_metrics(area: Rect, icon: f32, factor: f32) -> (usize, usize) {
+    let scale = factor.max(0.5);
+    let icon = icon.max(16.0) * scale;
+    // A tile is one icon plus the two-line label underneath and its padding.
+    let pitch_x = icon * 1.55 + 26.0 * scale;
+    let pitch_y = icon * 1.32 + 34.0 * scale;
+    let columns = (area.w / pitch_x).floor() as usize;
+    let rows = (area.h / pitch_y).floor() as usize;
+    (columns.clamp(3, 10), rows.clamp(2, 6))
+}
+
+/// How many tiles fit on one page of the grid.
+pub fn page_size(columns: usize, rows: usize) -> usize {
+    columns.max(1) * rows.max(1)
+}
+
+/// Page that holds `selection`; one page is one screen of the grid.
+pub fn page_of(selection: usize, columns: usize, rows: usize) -> usize {
+    selection / page_size(columns, rows)
+}
+
+/// Number of pages for `count` applications, and `scroll` brought inside them.
+pub fn clamp_page(scroll: usize, columns: usize, rows: usize, count: usize) -> (usize, usize) {
+    let pages = count.div_ceil(page_size(columns, rows)).max(1);
+    (scroll.min(pages - 1), pages)
+}
+
 pub fn hidden_offset(reveal: f32, panel: f32, sliver: f32) -> f32 {
     let hidden = (panel - sliver.max(0.0)).max(0.0);
     hidden * (1.0 - reveal.clamp(0.0, 1.0))
@@ -178,6 +211,30 @@ pub fn place(count: usize, area: Rect, metrics: Metrics, pointer_x: Option<f32>,
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_grid_follows_the_screen_instead_of_a_fixed_page() {
+        let laptop = grid_metrics(Rect::new(0.0, 0.0, 900.0, 520.0), 48.0, 1.0);
+        let monitor = grid_metrics(Rect::new(0.0, 0.0, 2400.0, 1200.0), 48.0, 1.0);
+        assert_eq!(laptop, (8, 5));
+        assert_eq!(monitor, (10, 6));
+        assert!(laptop.0 < monitor.0 && laptop.1 < monitor.1, "{laptop:?} {monitor:?}");
+        // A 150 % screen shows the same number of tiles per inch of glass.
+        assert_eq!(grid_metrics(Rect::new(0.0, 0.0, 2560.0, 1400.0), 48.0, 1.5), (10, 6));
+        // Tiny windows still get a usable grid instead of zero columns.
+        assert_eq!(grid_metrics(Rect::new(0.0, 0.0, 80.0, 80.0), 48.0, 1.0), (3, 2));
+    }
+
+    #[test]
+    fn paging_keeps_the_selection_on_screen() {
+        assert_eq!(page_size(7, 4), 28);
+        assert_eq!(page_of(0, 7, 4), 0);
+        assert_eq!(page_of(27, 7, 4), 0);
+        assert_eq!(page_of(28, 7, 4), 1);
+        assert_eq!(clamp_page(9, 7, 4, 30), (1, 2));
+        assert_eq!(clamp_page(0, 7, 4, 28), (0, 1));
+        assert_eq!(clamp_page(0, 7, 4, 0), (0, 1));
+    }
+
     use super::*;
 
     const METRICS: Metrics = Metrics { icon: 48.0, gap: 8.0, padding: 10.0, panel: 64.0 };

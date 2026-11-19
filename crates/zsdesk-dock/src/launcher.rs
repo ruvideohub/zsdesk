@@ -38,8 +38,6 @@ use crate::{
 pub const CLASS: &str = "ZSDesk.Dock.Launcher";
 const WM_ICON_READY: u32 = WM_APP + 502;
 const TIMER_TICK: usize = 2;
-const COLUMNS: usize = 7;
-const ROWS_VISIBLE: usize = 4;
 
 thread_local! {
     static LAUNCHER: RefCell<Option<Launcher>> = const { RefCell::new(None) };
@@ -144,8 +142,8 @@ impl Launcher {
                 Some(LRESULT(0))
             }
             WM_KEYDOWN => {
-                use windows::Win32::UI::Input::KeyboardAndMouse::{VK_BACK, VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN,
-                    VK_RIGHT, VK_UP};
+                use windows::Win32::UI::Input::KeyboardAndMouse::{VK_BACK, VK_DOWN, VK_END, VK_ESCAPE, VK_HOME,
+                    VK_LEFT, VK_RETURN, VK_RIGHT, VK_UP};
                 let key = wparam.0 as u16;
                 match key {
                     key if key == VK_BACK.0 => { self.query.pop(); self.refilter(); }
@@ -153,8 +151,10 @@ impl Launcher {
                     key if key == VK_RETURN.0 => self.launch_selected(),
                     key if key == VK_LEFT.0 => self.move_selection(-1),
                     key if key == VK_RIGHT.0 => self.move_selection(1),
-                    key if key == VK_UP.0 => self.move_selection(-(COLUMNS as isize)),
-                    key if key == VK_DOWN.0 => self.move_selection(COLUMNS as isize),
+                    key if key == VK_UP.0 => self.move_selection(-(self.metrics().0 as isize)),
+                    key if key == VK_DOWN.0 => self.move_selection(self.metrics().0 as isize),
+                    key if key == VK_HOME.0 => self.move_selection(isize::MIN / 2),
+                    key if key == VK_END.0 => self.move_selection(isize::MAX / 2),
                     _ => {}
                 }
                 self.last_input = Instant::now();
@@ -179,10 +179,9 @@ impl Launcher {
             }
             WM_MOUSEWHEEL => {
                 let delta = ((wparam.0 >> 16) & 0xFFFF) as u16 as i16;
-                let step = if delta < 0 { 1 } else { 0 };
-                let rows = self.matches.len().div_ceil(COLUMNS);
-                self.scroll = if delta < 0 { (self.scroll + step).min(rows.saturating_sub(ROWS_VISIBLE)) }
-                    else { self.scroll.saturating_sub(1) };
+                let (columns, rows) = self.metrics();
+                let (scroll, pages) = crate::layout::clamp_page(self.scroll, columns, rows, self.matches.len());
+                self.scroll = if delta < 0 { (scroll + 1).min(pages - 1) } else { scroll.saturating_sub(1) };
                 self.dirty = true;
                 Some(LRESULT(0))
             }
@@ -216,8 +215,10 @@ impl Launcher {
 
     fn request_icons(&mut self) {
         let pixels = (self.icon_size * 1.4).round() as i32;
+        let (columns, rows) = self.metrics();
         let mut requests = Vec::new();
-        for (position, index) in self.matches.iter().enumerate().skip(self.scroll * COLUMNS).take(COLUMNS * ROWS_VISIBLE) {
+        for (position, index) in self.matches.iter().enumerate().skip(self.scroll * crate::layout::page_size(columns, rows))
+            .take(crate::layout::page_size(columns, rows)) {
             let _ = position;
             let entry = &self.entries[*index];
             if self.icons.want(&entry.path) { requests.push((entry.path.clone(), entry.path.clone())); }
@@ -227,11 +228,10 @@ impl Launcher {
 
     fn move_selection(&mut self, delta: isize) {
         if self.matches.is_empty() { return; }
-        let current = self.selection as isize + delta;
+        let (columns, rows) = self.metrics();
+        let current = (self.selection as isize).saturating_add(delta);
         self.selection = current.clamp(0, self.matches.len() as isize - 1) as usize;
-        let row = self.selection / COLUMNS;
-        if row < self.scroll { self.scroll = row; }
-        if row >= self.scroll + ROWS_VISIBLE { self.scroll = row + 1 - ROWS_VISIBLE; }
+        self.scroll = crate::layout::page_of(self.selection, columns, rows);
     }
 
     fn launch_selected(&mut self) {
@@ -239,6 +239,11 @@ impl Launcher {
         let Some(entry) = self.entries.get(index) else { return };
         let _ = apps::launch(&entry.path);
         self.close();
+    }
+
+    /// Columns and rows this screen can show at the current icon size.
+    fn metrics(&self) -> (usize, usize) {
+        crate::layout::grid_metrics(self.grid_area(), self.icon_size, self.dpi.max(96) as f32 / 96.0)
     }
 
     /// Client-space rectangle of the tile grid.
@@ -250,19 +255,20 @@ impl Launcher {
             ((self.area.bottom - self.area.top) as f32 - 200.0 * factor).max(120.0))
     }
 
-    fn tile_size(&self) -> (f32, f32) {
+    fn tile_size(&self, columns: usize, rows: usize) -> (f32, f32) {
         let grid = self.grid_area();
-        (grid.w / COLUMNS as f32, grid.h / ROWS_VISIBLE as f32)
+        (grid.w / columns.max(1) as f32, grid.h / rows.max(1) as f32)
     }
 
     fn tile_at(&self, point: POINT) -> Option<usize> {
         let grid = self.grid_area();
         if !grid.contains(point.x as f32, point.y as f32) { return None; }
-        let (tile_w, tile_h) = self.tile_size();
+        let (columns, rows) = self.metrics();
+        let (tile_w, tile_h) = self.tile_size(columns, rows);
         let column = ((point.x as f32 - grid.x) / tile_w) as usize;
         let row = ((point.y as f32 - grid.y) / tile_h) as usize;
-        if column >= COLUMNS || row >= ROWS_VISIBLE { return None; }
-        let position = (self.scroll + row) * COLUMNS + column;
+        if column >= columns || row >= rows { return None; }
+        let position = self.scroll * crate::layout::page_size(columns, rows) + row * columns + column;
         (position < self.matches.len()).then_some(position)
     }
 
@@ -282,18 +288,21 @@ impl Launcher {
         let secondary = text.with_alpha(0.55);
         let selection = Color::rgba8(accent[0], accent[1], accent[2], 56);
         let grid = self.grid_area();
-        let (tile_w, tile_h) = self.tile_size();
+        let (columns, rows) = self.metrics();
+        let (tile_w, tile_h) = self.tile_size(columns, rows);
+        let page = crate::layout::page_size(columns, rows);
+        let (scroll, pages) = crate::layout::clamp_page(self.scroll, columns, rows, self.matches.len());
         let query = self.query.clone();
         let empty = zsdesk_core::i18n::text("没有匹配的应用").to_string();
         let placeholder = zsdesk_core::i18n::text("搜索应用").to_string();
         let scale = self.icon_size * factor;
         let tiles: Vec<(usize, Rect, String, String)> = self.matches.iter().enumerate()
-            .skip(self.scroll * COLUMNS).take(COLUMNS * ROWS_VISIBLE)
+            .skip(scroll * page).take(page)
             .filter_map(|(position, index)| {
                 let entry = self.entries.get(*index)?;
-                let slot = position - self.scroll * COLUMNS;
-                let column = (slot % COLUMNS) as f32;
-                let row = (slot / COLUMNS) as f32;
+                let slot = position - scroll * page;
+                let column = (slot % columns) as f32;
+                let row = (slot / columns) as f32;
                 Some((position, Rect::new(grid.x + column * tile_w, grid.y + row * tile_h, tile_w, tile_h),
                     entry.name.clone(), entry.path.clone()))
             })
@@ -315,6 +324,13 @@ impl Launcher {
             if tiles.is_empty() {
                 canvas.text(&empty, RectF::new(0.0, (height as f32) / 2.0 - 12.0 * factor, width as f32,
                     24.0 * factor), &TextStyle::ui(15.0 * factor).align(Align::Center), secondary);
+            }
+            if pages > 1 {
+                // One quiet line instead of paging controls: it only appears
+                // when the catalogue does not fit on a single screen.
+                let counter = format!("{} / {}", scroll + 1, pages);
+                canvas.text(&counter, RectF::new(grid.x, grid.bottom() + 10.0 * factor, grid.w, 20.0 * factor),
+                    &TextStyle::ui(12.0 * factor).align(Align::Center), secondary);
             }
             for (position, tile, name, path) in &tiles {
                 if selection_index == *position {
