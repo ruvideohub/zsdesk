@@ -17,6 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_APP};
 
 pub const WM_APP_SVC: u32 = WM_APP + 10;
 
+/// How warm night light makes the screen (0..1; 0.6 is a comfortable sunset).
+pub const NIGHT_LIGHT_WARMTH: f32 = 0.6;
+
 pub enum Media {
     PlayPause,
     Next,
@@ -46,6 +49,12 @@ pub enum Req {
     WifiConnect(String),
     SetBluetooth(bool),
     SetDark(bool),
+    /// Warm the screen (a gamma ramp) or put the user's ramp back.
+    NightLight(bool),
+    /// Airplane mode: both radios off (or back on).
+    Airplane(bool),
+    /// Banners off — Windows' own "do not disturb" switch.
+    Dnd(bool),
     Media(Media),
     Power(Power),
     /// Extract icons for these app ids into the icon cache folder.
@@ -185,6 +194,17 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
                 Req::SetDark(on) => {
                     laminar_sys::theme::set_dark_mode(on);
                     post(Reply::Control(control_state()));
+                }
+                Req::NightLight(on) => {
+                    laminar_sys::night::set_night_light(on, NIGHT_LIGHT_WARMTH);
+                }
+                Req::Airplane(on) => {
+                    laminar_sys::radios::set_wifi(!on);
+                    laminar_sys::radios::set_bluetooth(!on);
+                    post(Reply::Control(control_state()));
+                }
+                Req::Dnd(on) => {
+                    laminar_sys::night::set_notifications_enabled(!on);
                 }
                 Req::Media(m) => {
                     match m {

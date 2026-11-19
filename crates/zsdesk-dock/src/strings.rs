@@ -53,6 +53,12 @@ pub fn tr(text: &str) -> String {
 
 /// Labels that carry a number: "Close All 3 Windows", "All Apps   12".
 fn patterned(text: &str) -> Option<String> {
+    // The control centre's network count: "4 available".
+    if let Some(count) = text.strip_suffix(" available") {
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            return Some(format!("{count} доступно"));
+        }
+    }
     if let Some(rest) = text.strip_prefix("Close All ") {
         if let Some(count) = rest.strip_suffix(" Windows") {
             return Some(format!("Закрыть все окна ({count})"));
@@ -101,6 +107,24 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Now Playing Compact" => "Сейчас играет",
         "Network" => "Сеть",
         "Quick Controls" => "Быстрые действия",
+
+        // ------------------------------------------------- control centre
+        "Control Center" => "Центр управления",
+        "Airplane Mode" => "Режим полёта",
+        "Night Light" => "Ночной свет",
+        "Do Not Disturb" => "Не беспокоить",
+        "Dark Mode" => "Тёмная тема",
+        "Light Mode" => "Светлая тема",
+        "Microphone" => "Микрофон",
+        "Brightness" => "Яркость",
+        "Muted" => "Без звука",
+        "Off" => "Выкл",
+        "Connected" => "Подключено",
+        "No networks" => "Нет сетей",
+        "Nothing playing" => "Ничего не играет",
+        "Plugged in" => "Питание от сети",
+        "No networks in range" => "Нет доступных сетей",
+        "Turn on Location access to see networks" => "Включите доступ к геопозиции, чтобы видеть сети",
 
         // ---------------------------------------------------------------- dock menu
         "Open" => "Открыть",

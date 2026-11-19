@@ -7,6 +7,7 @@
 
 mod apps;
 mod config;
+mod control_center;
 mod desktop_clock;
 mod displays;
 mod dock;

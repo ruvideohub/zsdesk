@@ -163,6 +163,11 @@ pub struct Hub {
     pub timers: HashMap<TimerKind, Countdown>,
     pub stopwatch: Stopwatch,
     pub keep_awake: bool,
+    /// Night light (a warm gamma ramp), airplane mode and do-not-disturb: the panel's own
+    /// switches, kept here so every face and the control centre read one place.
+    pub night_light: bool,
+    pub airplane: bool,
+    pub dnd: bool,
     pub mic_muted: Option<bool>,
     pub brightness: Option<f32>,
     pub output_name: Option<String>,
@@ -193,6 +198,9 @@ impl Hub {
             timers,
             stopwatch: Stopwatch::default(),
             keep_awake: false,
+            night_light: false,
+            airplane: false,
+            dnd: false,
             mic_muted: None,
             brightness: None,
             output_name: None,

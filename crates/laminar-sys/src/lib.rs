@@ -45,6 +45,7 @@ pub mod files;
 pub mod history;
 pub mod http;
 pub mod media;
+pub mod night;
 pub mod power;
 pub mod radios;
 pub mod search;

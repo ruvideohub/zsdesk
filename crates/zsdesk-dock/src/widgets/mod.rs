@@ -202,6 +202,14 @@ pub enum WAct {
     Power,
     /// A tray icon (left click; right click is handled by the host).
     Tray(u64),
+    /// Night light: a warm gamma ramp on the desktop.
+    NightLight,
+    /// Airplane mode: both radios off.
+    Airplane,
+    /// Do not disturb: notification banners off.
+    Dnd,
+    /// Join this Wi-Fi network.
+    JoinWifi(String),
 }
 
 /// Clickable areas (logical px inside the widget) and app icons the host draws on top.

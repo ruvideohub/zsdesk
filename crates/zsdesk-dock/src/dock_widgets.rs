@@ -162,6 +162,27 @@ impl Dock {
                     t.reset(total);
                 }
             }
+            WAct::NightLight => {
+                let on = !self.hub.night_light;
+                self.hub.night_light = on;
+                self.services.send(Req::NightLight(on));
+            }
+            WAct::Airplane => {
+                let on = !self.hub.airplane;
+                self.hub.airplane = on;
+                // The radios follow at once so the tiles don't lag a second behind.
+                self.control.wifi = Some(!on);
+                self.control.bluetooth = Some(!on);
+                self.services.send(Req::Airplane(on));
+            }
+            WAct::Dnd => {
+                let on = !self.hub.dnd;
+                self.hub.dnd = on;
+                self.services.send(Req::Dnd(on));
+            }
+            WAct::JoinWifi(ssid) => {
+                self.services.send(Req::WifiConnect(ssid));
+            }
             WAct::Wifi => self.lp_act(Act::Wifi),
             WAct::WifiMenu => {
                 if !self.launchpad.open {
@@ -233,6 +254,7 @@ impl Dock {
         if self.launchpad.open {
             self.lp_render("live");
         }
+        self.cc_render();
     }
 
     /// Once a second: timers, screen time, live widgets, connector refreshes.

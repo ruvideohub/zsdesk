@@ -16,7 +16,7 @@ use windows::Win32::UI::WindowsAndMessaging::{SendMessageTimeoutW, HWND_BROADCAS
 
 const PERSONALIZE: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize";
 
-fn read_dword(key: &str, value: &str) -> Option<u32> {
+pub(crate) fn read_dword(key: &str, value: &str) -> Option<u32> {
     let (k, v) = (wide(key), wide(value));
     let mut data = 0u32;
     let mut size = 4u32;
@@ -24,7 +24,7 @@ fn read_dword(key: &str, value: &str) -> Option<u32> {
     (r == ERROR_SUCCESS).then_some(data)
 }
 
-fn write_dword(key: &str, value: &str, data: u32) -> bool {
+pub(crate) fn write_dword(key: &str, value: &str, data: u32) -> bool {
     let (k, v) = (wide(key), wide(value));
     let r = unsafe { RegSetKeyValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), PCWSTR(v.as_ptr()), REG_DWORD.0, Some(&data as *const u32 as *const _), 4) };
     r == ERROR_SUCCESS

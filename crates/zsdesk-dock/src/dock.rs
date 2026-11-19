@@ -162,6 +162,8 @@ const CMD_POWER_SLEEP: usize = 42;
 const CMD_POWER_RESTART: usize = 43;
 const CMD_POWER_SHUTDOWN: usize = 44;
 const CMD_LP_OPEN: usize = 50;
+/// Open the control centre (the drop-down above the panel).
+const CMD_CONTROL_CENTER: usize = 49;
 const CMD_LP_ADMIN: usize = 51;
 const CMD_LP_DOCK: usize = 52;
 const CMD_LP_PIN: usize = 53;
@@ -537,6 +539,8 @@ struct Dock {
     menu_stack: Option<usize>,
     /// Launchpad and the data it shows (fetched by the services worker).
     launchpad: Launchpad,
+    /// The control centre: one glass drop-down above the panel, split into sections.
+    control_center: crate::control_center::ControlCenter,
     services: Services,
     lp_apps: Vec<AppEntry>,
     control: ControlState,
@@ -991,6 +995,10 @@ impl Dock {
             }
         }
         self.update_indicators();
+        if self.control_center.open {
+            let anchor = self.cc_anchor();
+            self.control_center.reposition(self.monitor, anchor);
+        }
     }
 
     // ---------------------------------------------------------------- visual tree
@@ -1855,6 +1863,10 @@ impl Dock {
         let app = item.clone().filter(|it| it.kind == Kind::App);
         let wins = app.as_ref().map(|it| self.item_windows(it)).unwrap_or_default();
         let mut m: Vec<MenuItem> = Vec::new();
+        if app.is_none() {
+            m.push(MenuItem::item("Control Center", CMD_CONTROL_CENTER));
+            m.push(MenuItem::sep());
+        }
         if let Some(it) = &app {
             let name = self.names.get(&it.key).cloned().unwrap_or_else(|| it.key.clone());
             m.push(MenuItem::header(name));
@@ -2280,6 +2292,7 @@ impl Dock {
         }
         let (item, wins) = self.menu_ctx.take().unwrap_or((None, Vec::new()));
         match cmd {
+            CMD_CONTROL_CENTER => self.toggle_control_center(),
             CMD_NEW => {
                 if let Some(it) = &item {
                     apps::launch(&it.key);
@@ -2520,6 +2533,46 @@ impl Dock {
 
     /// Messages for pop-up windows (menus, previews, stacks, Launchpad, Settings).
     fn popup_message(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+        if hwnd == self.control_center.hwnd() {
+            let (x, y) = lparam_xy(lp);
+            match msg {
+                WM_MOUSEMOVE => {
+                    if self.control_center.dragging() {
+                        self.cc_drag(x, y);
+                    } else if self.control_center.on_move(x, y) {
+                        self.cc_render();
+                    }
+                }
+                WM_LBUTTONDOWN => {
+                    self.cc_click(x, y);
+                    if self.control_center.dragging() {
+                        unsafe {
+                            SetCapture(hwnd);
+                        }
+                    }
+                }
+                WM_LBUTTONUP => {
+                    self.control_center.end_drag();
+                    unsafe {
+                        let _ = ReleaseCapture();
+                    }
+                }
+                WM_MOUSEWHEEL => {}
+                WM_KEYDOWN => {
+                    if wp.0 as u16 == windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 {
+                        self.close_control_center();
+                    }
+                }
+                WM_ACTIVATE => {
+                    if (wp.0 & 0xFFFF) as u32 == WA_INACTIVE && self.control_center.open {
+                        // Clicked elsewhere: close, without taking focus back from whatever it was.
+                        self.close_control_center();
+                    }
+                }
+                _ => return None,
+            }
+            return Some(LRESULT(0));
+        }
         if hwnd == self.launchpad.hwnd() {
             let (x, y) = lparam_xy(lp);
             match msg {
@@ -3092,6 +3145,7 @@ impl Dock {
     }
 
     fn open_launchpad(&mut self) {
+        self.close_control_center();
         self.hide_preview();
         self.stack_view.hide();
         let _ = self.show_label(None);
@@ -3511,6 +3565,8 @@ impl Dock {
                 }
             }
         }
+        // The control centre follows the same replies (volume, radios, networks, media).
+        self.cc_render();
         let busy = self.lp_drag.is_some() || self.launchpad.dragging();
         if render && self.launchpad.open && !busy {
             self.lp_render("all");
@@ -5112,6 +5168,7 @@ impl Dock {
             if self.launchpad.open {
                 self.close_launchpad();
             }
+            self.close_control_center();
             self.menu.hide(false);
             self.menu_open = false;
             self.preview.hide();
@@ -5273,6 +5330,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         let preview = Preview::new(&compositor)?;
         let stack_view = StackView::new(&compositor)?;
         let launchpad = Launchpad::new(&compositor)?;
+        let control_center = crate::control_center::ControlCenter::new(&compositor)?;
 
         let mut dock = Dock {
             hwnd,
@@ -5326,6 +5384,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             stack_view,
             menu_stack: None,
             launchpad,
+            control_center,
             services: Services::start(hwnd),
             lp_apps: Vec::new(),
             control: ControlState::default(),
@@ -5410,6 +5469,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         dock.hub.ask_mic();
         dock.hub.ask_output();
         dock.hub.ask_brightness();
+        // Banners off is Windows' own switch: start the tile where Windows is.
+        dock.hub.dnd = laminar_sys::night::notifications_enabled().map(|on| !on).unwrap_or(false);
         let main_dock = integrate && opts.monitor.is_none();
         dock.restart_clock();
         let _kb = if main_dock { crate::winkey::install(hwnd, dock.cfg.win_key_launchpad) } else { None };
@@ -5490,3 +5551,6 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
 // Widgets (after the trace! macro, which the module uses).
 #[path = "dock_widgets.rs"]
 mod dock_widgets;
+
+#[path = "dock_control.rs"]
+mod dock_control;
