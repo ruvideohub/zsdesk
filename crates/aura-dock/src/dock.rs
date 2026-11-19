@@ -5540,7 +5540,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             hwnd,
             opts: opts.clone(),
             started,
-            geo: Geo::new(&[], &cfg, scale, (monitor.right - monitor.left) as f32),
+            geo: Geo::new(&[], &cfg, scale, (monitor.right - monitor.left) as f32, false),
             cfg,
             monitor,
             scale,
