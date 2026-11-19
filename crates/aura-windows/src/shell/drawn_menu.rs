@@ -60,11 +60,23 @@ fn palette(dark:bool)->Palette{
         secondary:Color::rgba8(0,0,0,158),disabled:Color::rgba8(0,0,0,92),hover:Color::rgba8(0,0,0,11),pressed:Color::rgba8(0,0,0,16),divider:Color::rgba8(0,0,0,18),shadow:0.16}}
 }
 
-#[derive(Clone,Copy,Debug,PartialEq,Eq)]enum Action{Cut,Copy,Rename,Share,Delete}
+/// A command the menu knows by sight.
+///
+/// The Shell provides a bitmap for only some entries (and a handler may provide none at
+/// all), so the rows we recognise get a Segoe Fluent glyph instead of an empty 16-DIP slot:
+/// that is what makes our page look like one menu rather than a list of gaps. The five in
+/// `ORDER` are also the ones that form the strip at the top, like the Windows 11 menu.
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]enum Action{Open,Cut,Copy,Paste,Rename,Share,Delete,Properties,New}
 impl Action{
     const ORDER:[Self;5]=[Self::Cut,Self::Copy,Self::Rename,Self::Share,Self::Delete];
-    fn from_verb(verb:&str)->Option<Self>{match verb.to_ascii_lowercase().as_str(){"cut"=>Some(Self::Cut),"copy"=>Some(Self::Copy),"rename"=>Some(Self::Rename),"windows.modernshare"=>Some(Self::Share),"delete"=>Some(Self::Delete),_=>None}}
-    fn glyph(self)->&'static str{match self{Self::Cut=>"\u{E8C6}",Self::Copy=>"\u{E8C8}",Self::Rename=>"\u{E8AC}",Self::Share=>"\u{E72D}",Self::Delete=>"\u{E74D}"}}
+    fn from_verb(verb:&str)->Option<Self>{match verb.to_ascii_lowercase().as_str(){
+        "open"=>Some(Self::Open),"cut"=>Some(Self::Cut),"copy"=>Some(Self::Copy),"paste"=>Some(Self::Paste),
+        "rename"=>Some(Self::Rename),"windows.modernshare"|"share"=>Some(Self::Share),"delete"=>Some(Self::Delete),
+        "properties"=>Some(Self::Properties),"new"|"newfolder"=>Some(Self::New),_=>None}}
+    fn glyph(self)->&'static str{match self{
+        Self::Open=>"\u{E8E5}",Self::Cut=>"\u{E8C6}",Self::Copy=>"\u{E8C8}",Self::Paste=>"\u{E77F}",
+        Self::Rename=>"\u{E8AC}",Self::Share=>"\u{E72D}",Self::Delete=>"\u{E74D}",
+        Self::Properties=>"\u{E713}",Self::New=>"\u{E710}"}}
 }
 #[derive(Clone)]struct Item{
     position:u32,id:u32,raw_label:String,label:String,mnemonic:Option<char>,accelerator:String,kind:RowKind,enabled:bool,checked:bool,radio:bool,default:bool,

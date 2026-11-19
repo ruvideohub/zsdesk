@@ -245,15 +245,18 @@ impl CommandBarPreferences {
     }
 }
 
+/// Two menus, no third choice: our own (drawn by AuraExplorer: icons, our fonts, our dark
+/// theme) and the classic Windows one, drawn by the Shell itself.
+///
+/// The old profile values still read: `windows11` and `drawn-windows11` meant "the Windows 11
+/// menu", which is what our own page is; `original` was the classic menu.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ContextMenuMode {
-    #[serde(rename = "original")]
-    Original,
     #[default]
-    #[serde(rename = "windows11")]
-    Windows11,
-    #[serde(rename = "drawn-windows11")]
-    DrawnWindows11,
+    #[serde(rename = "own", alias = "windows11", alias = "drawn-windows11")]
+    Own,
+    #[serde(rename = "classic", alias = "original")]
+    Classic,
 }
 
 /// Menu visibility does not disable commands or keyboard shortcuts.
@@ -264,25 +267,16 @@ pub struct ContextMenuPreferences {
     /// first click. AuraExplorer's own short page is the default: it never loads a
     /// shell extension, so it opens immediately.
     pub full_menu_first:bool,
+    /// Commands the user hid from the full menu (the "manage this menu" catalog).
     pub hidden_commands:Vec<String>,
+    /// Commands the user deliberately brought back.
     pub shown_commands:Vec<String>,
     pub mode: ContextMenuMode,
-    pub show_cut_copy_paste: bool,
-    pub show_copy_path: bool,
-    pub show_rename: bool,
-    pub show_delete: bool,
-    pub show_properties: bool,
-    pub show_share: bool,
-    pub show_new: bool,
-    pub show_seven_zip: bool,
-    pub show_wps: bool,
 }
 
 impl Default for ContextMenuPreferences {
     fn default() -> Self {
-        Self { full_menu_first:false,hidden_commands:Vec::new(),shown_commands:Vec::new(),mode: ContextMenuMode::Windows11, show_cut_copy_paste: true, show_copy_path: true,
-            show_rename: true, show_delete: true, show_properties: true, show_share: true,
-            show_new: true, show_seven_zip: true, show_wps: true }
+        Self { full_menu_first:false,hidden_commands:Vec::new(),shown_commands:Vec::new(),mode: ContextMenuMode::default() }
     }
 }
 
@@ -704,8 +698,8 @@ mod tests {
         ui.command_bar.visible = false;
         ui.command_bar.set_item_visible(CommandBarItem::Share, false);
         ui.command_bar.set_item_visible(CommandBarItem::PreviewPane, false);
-        ui.context_menu.mode = ContextMenuMode::Original;
-        ui.context_menu.show_seven_zip = false;
+        ui.context_menu.mode = ContextMenuMode::Classic;
+        ui.context_menu.hidden_commands.push("label:7-Zip".into());
         ui.search_all_files = false;
         ui.space_preview = false;
         let restored: ExplorerUi = serde_json::from_str(&serde_json::to_string(&ui).unwrap()).unwrap();

@@ -686,7 +686,7 @@ impl WindowState {
     /// Applies a checkable preference from ≡ while the menu stays open.
     /// Actions (dialogs, windows, rebuilds) return false and close the menu.
     fn apply_menu_toggle(&mut self,id:&str)->bool{
-        if id.starts_with("context-menu-") || id.starts_with("context-action-") {
+        if id.starts_with("context-menu-") {
             if menus::apply_context_menu_setting(&mut self.session.ui.context_menu,id){
                 if !self.persist_context_menu(){return true;}
                 self.modern=crate::context_preferences::modern(&self.session.ui.context_menu);
@@ -764,7 +764,7 @@ impl WindowState {
             Some("search-rebuild-index") => self.rebuild_search_index(),
             Some("dual-pane") => self.toggle_dual_pane(),
             Some(id) if id.starts_with("appearance-") => if crate::edition::THEMED { self.apply_appearance_choice(id); },
-            Some(id) if id.starts_with("context-menu-") || id.starts_with("context-action-") => {
+            Some(id) if id.starts_with("context-menu-") => {
                 if menus::apply_context_menu_setting(&mut self.session.ui.context_menu,id){
                     if !self.persist_context_menu(){return;}
                     self.modern=crate::context_preferences::modern(&self.session.ui.context_menu);

@@ -288,11 +288,13 @@ pub struct ContextMenuOptions {
     pub hidden_verbs: Vec<String>,
     #[serde(default)]
     pub shown_verbs: Vec<String>,
-    pub show_seven_zip: bool,
-    pub show_wps: bool,
+    /// Colour scheme the menus are drawn in. Travelled to the isolated menu worker with the
+    /// options, because that process shows the menu and knows nothing else about the profile.
+    #[serde(default)]
+    pub scheme: aura_core::model::explorer::ColorScheme,
 }
 impl Default for ContextMenuOptions {
-    fn default() -> Self { Self { quick_first:false,modern: true,drawn:false, hidden_verbs: Vec::new(), shown_verbs:Vec::new(), show_seven_zip: true, show_wps: true } }
+    fn default() -> Self { Self { quick_first:false,modern: false,drawn:true, hidden_verbs: Vec::new(), shown_verbs:Vec::new(), scheme: aura_core::model::explorer::ColorScheme::System } }
 }
 /// SHA-256 of the only `Windows.UI.FileExplorer.dll` build whose private
 /// presenter ABI `native/shell_menu.cpp` supports (`kExpectedMenuSha256`).
@@ -367,6 +369,9 @@ pub fn set_context_menu_options(mut options: ContextMenuOptions) {
         for verb in rules.iter_mut(){verb.make_ascii_lowercase();}
         rules.sort();rules.dedup();rules.truncate(1024);
     }
+    // The menu is drawn by whichever process shows it, and the isolated worker starts with
+    // Windows' defaults: hand it the colour scheme instead of letting it guess.
+    crate::theme::configure_color_scheme(options.scheme);
     #[cfg(all(target_arch = "x86_64", target_env = "msvc"))]
     unsafe{zs_menu_set_hidden_features(modern_hidden_features(&options));zs_menu_set_original_callback(Some(show_expanded_view_menu));}
     OPTIONS.with(|current| *current.borrow_mut() = options);
@@ -433,8 +438,6 @@ pub fn report_failure(owner: HWND, error: windows::core::HRESULT) {
 fn modern_hidden_features(options: &ContextMenuOptions) -> u32 {
     let mut hidden = 0;
     for verb in &options.hidden_verbs { hidden |= command_feature(verb); }
-    if !options.show_seven_zip { hidden |= 1 << 10; }
-    if !options.show_wps { hidden |= 1 << 11; }
     hidden
 }
 fn command_feature(verb: &str) -> u32 {
@@ -847,9 +850,13 @@ fn legacy_should_hide(verb: Option<&str>, label: &str, options: &ContextMenuOpti
     if command_feature(&canonical) & modern_hidden_features(options) != 0 { return true; }
     let label = label.replace('&', "").to_lowercase();
     let group = label.split('(').next().unwrap_or(&label).trim();
+    // 7-Zip and WPS sit behind third-party handlers whose verbs are not stable, so their
+    // groups are matched by name; the flags themselves come from the same catalog now.
     if options.hidden_verbs.iter().any(|v| v == "new") && matches!(group, "新建" | "新增" | "new") { return true; }
-    (!options.show_seven_zip && (label.contains("7-zip") || label.contains("7zip") || canonical.starts_with("7-zip")))
-        || (!options.show_wps && (label.contains("wps") || canonical.starts_with("wps")))
+    (options.hidden_verbs.iter().any(|v| v == "7-zip" || v == "7zip")
+        && (label.contains("7-zip") || label.contains("7zip") || canonical.starts_with("7-zip")))
+        || (options.hidden_verbs.iter().any(|v| v == "wps")
+            && (label.contains("wps") || canonical.starts_with("wps")))
 }
 
 fn canonical_verb(context: &IContextMenu, id: u32) -> Option<String> {
@@ -871,7 +878,7 @@ fn filter_native_menu(menu: HMENU, context: &IContextMenu, options: &ContextMenu
     filter_native_menu_at(menu,context,options,&[],true);
 }
 fn filter_native_menu_at(menu: HMENU, context: &IContextMenu, options: &ContextMenuOptions,path:&[String],legacy:bool) {
-    if options.hidden_verbs.is_empty()&&options.shown_verbs.is_empty()&&options.show_seven_zip&&options.show_wps{return;}
+    if options.hidden_verbs.is_empty()&&options.shown_verbs.is_empty(){return;}
     let count = unsafe { GetMenuItemCount(Some(menu)) }.max(0);
     let has_dynamic=options.hidden_verbs.iter().chain(&options.shown_verbs).any(|key|key.starts_with("verb:")||key.starts_with("verb-")||key.starts_with("label:")||key.starts_with("label-"));
     let mut keys=std::collections::HashMap::<String,usize>::new();
@@ -1217,12 +1224,8 @@ mod policy_tests {
         options.hidden_verbs = ["cut", "copy", "paste", "pastelink", "copyaspath",
             "rename", "delete", "properties", "windows.modernshare", "new", "custom-third-party"]
             .map(str::to_string).to_vec();
-        options.show_seven_zip = false;
-        options.show_wps = false;
         assert_eq!(modern_hidden_features(&options), 0x0fff);
         options.hidden_verbs.clear();
-        options.show_seven_zip = true;
-        options.show_wps = true;
         assert_eq!(modern_hidden_features(&options), 0);
     }
     #[test]
@@ -1242,11 +1245,11 @@ mod policy_tests {
     }
     #[test]
     fn extension_groups_are_independent_and_restorable() {
-        let mut options = ContextMenuOptions { show_seven_zip:false, show_wps:false, ..Default::default() };
+        let mut options = ContextMenuOptions { hidden_verbs:vec!["7-zip".into(),"wps".into()], ..Default::default() };
         assert!(should_hide(None,"&7-Zip",&options));
         assert!(should_hide(None,"WPS 文件压缩",&options));
         assert!(!should_hide(None,"压缩为 ZIP 文件",&options));
-        options.show_seven_zip=true;options.show_wps=true;
+        options.hidden_verbs.clear();
         assert!(!should_hide(None,"7-Zip",&options));
         assert!(!should_hide(None,"WPS 文件压缩",&options));
     }

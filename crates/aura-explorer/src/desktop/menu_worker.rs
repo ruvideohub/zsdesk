@@ -324,21 +324,23 @@ fn run(shared:Arc<Shared>)->windows::core::Result<()>{
         std::fs::create_dir(&root)?;
         struct Fixture(PathBuf);impl Drop for Fixture{fn drop(&mut self){let _=std::fs::remove_dir_all(&self.0);}}
         let _fixture=Fixture(root.clone());let first=root.join("first.json");let second=root.join("second.json");
-        let mut session=crate::storage::default_session();session.ui.context_menu.show_wps=false;
+        // The catalog entry for one command is enough to tell two profiles apart.
+        let hidden=|options:&aura_windows::shell::menu::ContextMenuOptions|options.hidden_verbs.iter().any(|key|key=="wps");
+        let mut session=crate::storage::default_session();session.ui.context_menu.hidden_commands=vec!["wps".into()];
         crate::storage::save(&first,&session)?;
-        session.ui.context_menu.show_wps=true;crate::storage::save(&second,&session)?;
+        session.ui.context_menu.hidden_commands.clear();crate::storage::save(&second,&session)?;
         let mut cache=MenuPolicyCache::default();
-        let (initial,hit)=cache.options(&first);ensure!(!initial.show_wps&&!hit&&cache.reads==1,"initial policy was not loaded");
-        for _ in 0..4{let (options,hit)=cache.options(&first);ensure!(!options.show_wps&&hit,"unchanged menu policy was reparsed");}
+        let (initial,hit)=cache.options(&first);ensure!(hidden(&initial)&&!hit&&cache.reads==1,"initial policy was not loaded");
+        for _ in 0..4{let (options,hit)=cache.options(&first);ensure!(hidden(&options)&&hit,"unchanged menu policy was reparsed");}
         ensure!(cache.reads==1,"unchanged profile reparsed");
-        let (options,hit)=cache.options(&second);ensure!(options.show_wps&&!hit,"a different profile reused the first policy");
-        let (options,hit)=cache.options(&first);ensure!(!options.show_wps&&!hit,"bounded cache did not switch back");
+        let (options,hit)=cache.options(&second);ensure!(!hidden(&options)&&!hit,"a different profile reused the first policy");
+        let (options,hit)=cache.options(&first);ensure!(hidden(&options)&&!hit,"bounded cache did not switch back");
         crate::storage::save(&first,&session)?;
-        let (options,hit)=cache.options(&first);ensure!(options.show_wps&&!hit,"external preference edit was hidden by the cache");
+        let (options,hit)=cache.options(&first);ensure!(!hidden(&options)&&!hit,"external preference edit was hidden by the cache");
         std::fs::write(&first,b"invalid session")?;
-        let (options,hit)=cache.options(&first);ensure!(options.show_wps==aura_windows::shell::menu::ContextMenuOptions::default().show_wps&&!hit&&cache.entry.is_none(),"invalid configuration retained stale policy");
+        let (options,hit)=cache.options(&first);ensure!(!hidden(&options)&&!hit&&cache.entry.is_none(),"invalid configuration retained stale policy");
         crate::storage::save(&first,&session)?;
-        let (options,hit)=cache.options(&first);ensure!(options.show_wps&&!hit,"restored configuration was not reloaded");
+        let (options,hit)=cache.options(&first);ensure!(!hidden(&options)&&!hit,"restored configuration was not reloaded");
         Ok(())
     }
     #[link(name="user32")]unsafe extern "system"{

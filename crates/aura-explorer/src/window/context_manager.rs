@@ -80,7 +80,7 @@ impl WindowState{
     #[test]fn showing_a_discovered_child_makes_its_hidden_ancestors_visible(){
         let leaf=MenuCatalogItem{key:"verb:commit|path:test".into(),label:"提交".into(),verb:Some("commit".into()),path:vec!["label:tool".into()],enabled:false,submenu:false,manageable:true,truncated:false,children:Vec::new()};
         let parent=MenuCatalogItem{key:"label:tool".into(),label:"开发工具".into(),verb:None,path:Vec::new(),enabled:true,submenu:true,manageable:true,truncated:false,children:vec![leaf.clone()]};
-        for mode in [ContextMenuMode::Windows11,ContextMenuMode::DrawnWindows11,ContextMenuMode::Original]{
+        for mode in [ContextMenuMode::Own,ContextMenuMode::Classic]{
         let mut settings=ContextMenuPreferences{mode,..Default::default()};settings.hidden_commands.push(parent.key.clone());
         let (_,flat)=specification(&[parent.clone()],&settings);toggle(&mut settings,&leaf,&flat);
         let native=crate::context_preferences::native(&settings);

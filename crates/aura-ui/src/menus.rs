@@ -347,46 +347,27 @@ pub fn context_menu_settings_menu(options: &ContextMenuPreferences) -> MenuSpec 
     context_menu_settings_menu_for(options, true)
 }
 
-/// Both visual styles retain the same registered command sources and rules.
+/// Two menus and no third choice: our own page, and the classic Windows one. Which commands
+/// either of them offers is not a checklist any more — the catalog ("管理此处的完整右键菜单…")
+/// is the one place that hides or restores a command, and it touches what really exists.
 pub fn context_menu_settings_menu_for(options: &ContextMenuPreferences, _modern_available: bool) -> MenuSpec {
-    let original = options.mode == ContextMenuMode::Original;
-    let modern = entry(aura_core::i18n::text("Windows 11（自动兼容）"), "context-menu-windows11", true, options.mode==ContextMenuMode::Windows11);
     menu(vec![
-        modern,
-        entry(aura_core::i18n::text("自绘 Windows 11"), "context-menu-drawn-windows11", true, options.mode==ContextMenuMode::DrawnWindows11),
-        entry(aura_core::i18n::text("Windows 10 经典风格"), "context-menu-original", true, original),
+        entry(aura_core::i18n::text("Aura 自绘菜单"), "context-menu-own", true, options.mode == ContextMenuMode::Own),
+        entry(aura_core::i18n::text("Windows 经典菜单"), "context-menu-classic", true, options.mode == ContextMenuMode::Classic),
+        MenuItemSpec::Separator,
         entry(aura_core::i18n::text("优先显示完整菜单"), "context-menu-full-first", true, options.full_menu_first),
         item(aura_core::i18n::text("管理此处的完整右键菜单…"),"manage-context-commands"),
         MenuItemSpec::Separator,
-        submenu(aura_core::i18n::text("显示的命令"), vec![
-            entry(aura_core::i18n::text("剪切、复制和粘贴"), "context-action-cut-copy-paste", true, options.show_cut_copy_paste),
-            entry(aura_core::i18n::text("复制路径"), "context-action-copy-path", true, options.show_copy_path),
-            entry(aura_core::i18n::text("重命名"), "context-action-rename", true, options.show_rename),
-            entry(aura_core::i18n::text("删除"), "context-action-delete", true, options.show_delete),
-            entry(aura_core::i18n::text("属性"), "context-action-properties", true, options.show_properties),
-            entry(aura_core::i18n::text("共享"), "context-action-share", true, options.show_share),
-            entry(aura_core::i18n::text("新建"), "context-action-new", true, options.show_new),
-        ]),
         item(aura_core::i18n::text("恢复默认"), "context-menu-defaults"),
     ])
 }
 
 pub fn apply_context_menu_setting(options: &mut ContextMenuPreferences, choice: &str) -> bool {
     match choice {
-        "context-menu-original" => options.mode = ContextMenuMode::Original,
-        "context-menu-windows11" => options.mode = ContextMenuMode::Windows11,
+        "context-menu-own" => options.mode = ContextMenuMode::Own,
+        "context-menu-classic" => options.mode = ContextMenuMode::Classic,
         "context-menu-full-first" => options.full_menu_first = !options.full_menu_first,
-        "context-menu-drawn-windows11" => options.mode = ContextMenuMode::DrawnWindows11,
         "context-menu-defaults" => *options = ContextMenuPreferences::default(),
-        "context-action-cut-copy-paste" => options.show_cut_copy_paste = !options.show_cut_copy_paste,
-        "context-action-copy-path" => options.show_copy_path = !options.show_copy_path,
-        "context-action-rename" => options.show_rename = !options.show_rename,
-        "context-action-delete" => options.show_delete = !options.show_delete,
-        "context-action-properties" => options.show_properties = !options.show_properties,
-        "context-action-share" => options.show_share = !options.show_share,
-        "context-action-new" => options.show_new = !options.show_new,
-        "context-action-seven-zip" => options.show_seven_zip = !options.show_seven_zip,
-        "context-action-wps" => options.show_wps = !options.show_wps,
         _ => return false,
     }
     true
@@ -581,7 +562,7 @@ mod tests {
         ui.command_bar.visible = false;
         ui.command_bar.hidden_items = CommandBarItem::ALL.to_vec();
         let app = nested_ids(&app_menu_with_capabilities(AppMenuState::default(), &ui, false));
-        for id in ["command-bar-visible", "command-bar-defaults", "interface-bookmarks", "context-menu-windows11", "context-menu-defaults", "folder-options"] {
+        for id in ["command-bar-visible", "command-bar-defaults", "interface-bookmarks", "context-menu-own", "context-menu-defaults", "folder-options"] {
             assert!(app.contains(&id.to_string()), "{id} must stay reachable from ≡");
         }
         for id in nested_ids(&interface_settings_menu(&ui)) {
@@ -689,45 +670,42 @@ mod tests {
     }
 
     #[test]
-    fn every_context_setting_has_an_action_and_defaults_preserve_extensions() {
-        let options = ContextMenuPreferences { mode: ContextMenuMode::Original, ..Default::default() };
+    fn every_context_setting_has_an_action() {
+        let options = ContextMenuPreferences::default();
         for id in nested_ids(&context_menu_settings_menu(&options)) {
             if id=="manage-context-commands"{continue;}
             assert!(apply_context_menu_setting(&mut options.clone(), &id), "unhandled context setting {id}");
         }
-        assert!(options.show_wps);
-        assert!(options.show_seven_zip);
     }
 
     #[test]
-    fn native_windows11_default_and_optional_styles_keep_distinct_preferences() {
+    fn the_menu_offers_exactly_two_styles_and_our_own_is_the_default() {
         let options = ContextMenuPreferences::default();
+        assert_eq!(options.mode, ContextMenuMode::Own, "our own menu is the default");
         let spec = context_menu_settings_menu_for(&options, false);
         let checked: Vec<_> = spec.items.iter().filter_map(|item| match item {
             MenuItemSpec::Command { checked: true, command: UiCommand::Custom { id, .. }, .. } => Some(id.as_str()), _ => None }).collect();
-        assert_eq!(checked, ["context-menu-windows11"]);
-        assert_eq!(options.mode,ContextMenuMode::Windows11);
-        let available=nested_ids(&spec);
-        for style in ["context-menu-windows11","context-menu-drawn-windows11","context-menu-original"]{assert!(available.contains(&style.to_string()));}
+        assert_eq!(checked, ["context-menu-own"]);
+        let available = nested_ids(&spec);
+        for style in ["context-menu-own", "context-menu-classic"] { assert!(available.contains(&style.to_string())); }
+        let styles = available.iter().filter(|id| id.starts_with("context-menu-")
+            && !matches!(id.as_str(), "context-menu-full-first" | "context-menu-defaults")).count();
+        assert_eq!(styles, 2, "no third style: {available:?}");
         let mut customized=options.clone();customized.hidden_commands.push("keep-this-rule".into());
-        for (action,mode) in [("context-menu-drawn-windows11",ContextMenuMode::DrawnWindows11),("context-menu-original",ContextMenuMode::Original),("context-menu-windows11",ContextMenuMode::Windows11)]{
+        for (action,mode) in [("context-menu-classic",ContextMenuMode::Classic),("context-menu-own",ContextMenuMode::Own)]{
             assert!(apply_context_menu_setting(&mut customized,action));assert_eq!(customized.mode,mode);assert_eq!(customized.hidden_commands,["keep-this-rule"]);
         }
         assert!(nested_ids(&spec).contains(&"manage-context-commands".to_string()), "registered command visibility stays editable");
     }
 
     #[test]
-    fn windows11_mode_keeps_menu_customization_available() {
-        let mut options = ContextMenuPreferences::default();
-        options.mode=ContextMenuMode::Windows11;
-        let spec = context_menu_settings_menu(&options);
+    fn no_style_offers_the_per_item_checklist_that_never_applied() {
+        let spec = context_menu_settings_menu(&ContextMenuPreferences::default());
         let available = nested_ids(&spec);
-        assert!(available.contains(&"context-action-delete".into()));
-        assert!(apply_context_menu_setting(&mut options, "context-action-delete"));
-        assert!(!options.show_delete);
-        assert_eq!(options.mode, ContextMenuMode::Windows11);
-        assert!(spec.items.iter().any(|item| matches!(item,
-            MenuItemSpec::Submenu { label, enabled: true, .. } if label == "显示的命令")));
-        assert!(!available.contains(&"context-menu-windows11-hint".into()));
+        for gone in ["context-action-delete","context-action-rename","context-action-copy-path","context-action-wps","context-action-seven-zip"]{
+            assert!(!available.contains(&gone.to_string()), "{gone} still offered");
+        }
+        assert!(!spec.items.iter().any(|item| matches!(item,
+            MenuItemSpec::Submenu { label, .. } if label == "显示的命令")));
     }
 }

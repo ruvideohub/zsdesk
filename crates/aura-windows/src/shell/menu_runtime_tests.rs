@@ -37,7 +37,7 @@ fn exercise(output:&std::path::Path)->Result<serde_json::Value>{
     unsafe{RegisterClassW(&WNDCLASSW{hInstance:instance,lpfnWndProc:Some(procedure),lpszClassName:w!("AuraExplorer.MixedMenuRegression"),..Default::default()});}
     let owner=Owner(unsafe{CreateWindowExW(WINDOW_EX_STYLE::default(),w!("AuraExplorer.MixedMenuRegression"),w!("Mixed menu regression"),WS_OVERLAPPEDWINDOW,20,20,500,400,None,None,Some(instance),None)?});
     unsafe{let _=ShowWindow(owner.0,SW_SHOW);let _=SetActiveWindow(owner.0);let _=SetFocus(Some(owner.0));let _=SetForegroundWindow(owner.0);}
-    let prior=context_menu_options();let mut options=ContextMenuOptions::default();options.modern=true;options.show_wps=false;set_context_menu_options(options);
+    let prior=context_menu_options();let mut options=ContextMenuOptions::default();options.modern=true;options.drawn=true;options.hidden_verbs=vec!["wps".into()];set_context_menu_options(options);
     let result=(||->Result<serde_json::Value>{
         let previous=unsafe{OleGetClipboard()}.context("cannot preserve clipboard")?;
         let mut clipboard=Clipboard{previous,sequence:None};

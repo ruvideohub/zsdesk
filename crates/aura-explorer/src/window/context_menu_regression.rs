@@ -17,7 +17,7 @@ fn pump(ms:u64){let end=Instant::now()+Duration::from_millis(ms);while Instant::
 fn create(root:&Path,folder:&Path,modern:bool)->Result<Runner>{
     unsafe{InitCommonControlsEx(&INITCOMMONCONTROLSEX{dwSize:size_of::<INITCOMMONCONTROLSEX>()as u32,dwICC:ICC_STANDARD_CLASSES|ICC_BAR_CLASSES|ICC_LISTVIEW_CLASSES})}.ok()?;
     let mut session=storage::default_session();session.tabs=vec![ExplorerTab::new(1,ShellLocation::Path(folder.into()))];session.active_tab=0;session.next_id=2;
-    session.ui.context_menu.mode=if modern{aura_core::model::explorer::ContextMenuMode::Windows11}else{aura_core::model::explorer::ContextMenuMode::Original};
+    session.ui.context_menu.mode=if modern{aura_core::model::explorer::ContextMenuMode::Own}else{aura_core::model::explorer::ContextMenuMode::Classic};
     session.ui.show_preview=false;session.ui.hover_preview=false;session.ui.show_details=false;session.ui.show_tree=false;
     let slot=Box::new(RefCell::new(Some(WindowState::new(session,root.join("profile/explorer-session.json"),None,modern))));
     let instance=HINSTANCE(unsafe{GetModuleHandleW(None)?}.0);let class=windows::core::w!("AuraExplorer.Native.QuickMenuRegression");

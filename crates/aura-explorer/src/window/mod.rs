@@ -488,7 +488,7 @@ struct WindowState {
 
 impl WindowState {
     fn new(mut session: ExplorerSession, config_path: PathBuf, launch_selection: Option<std::ffi::OsString>, modern: bool) -> Self {
-        if !modern{session.ui.context_menu.mode=aura_core::model::explorer::ContextMenuMode::Original;}
+        if !modern{session.ui.context_menu.mode=aura_core::model::explorer::ContextMenuMode::Classic;}
         let modern=crate::context_preferences::modern(&session.ui.context_menu);
         crate::context_preferences::register(&config_path,&session.ui.context_menu);
         Self {
@@ -733,6 +733,9 @@ impl WindowState {
         let prefs=if crate::edition::THEMED {self.session.ui.appearance.clone()}
             else {aura_core::model::explorer::AppearancePreferences::default()};
         self.dark = theme::configure_color_scheme(prefs.color_scheme);
+        // Menus are shown by a separate worker process too; it learns the scheme with the
+        // menu options, and until then this process knows it here.
+        crate::context_preferences::set_scheme(prefs.color_scheme);
         aura_windows::flyout::refresh_system();
         self.palette = Palette::for_mode(if self.dark { Mode::Dark } else { Mode::Light });
         if let Some(accent) = theme::system_accent(self.dark) { self.palette = self.palette.with_accent(accent); }

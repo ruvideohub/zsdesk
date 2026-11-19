@@ -242,7 +242,7 @@ pub(super) fn popup_path(root:HMENU,target:HMENU,context:&IContextMenu)->Option<
     }
     #[test]fn explicit_show_wins_over_legacy_and_hidden_flags(){
         let key=identity_key(None,"WPS 文件压缩",&[]).unwrap();
-        let options=ContextMenuOptions{show_wps:false,shown_verbs:vec![key.clone()],hidden_verbs:vec![key],..Default::default()};
+        let options=ContextMenuOptions{shown_verbs:vec![key.clone()],hidden_verbs:vec![key],..Default::default()};
         assert_eq!(explicit_visibility(None,"WPS 文件压缩",&[],&options),Some(true));
         assert!(!super::super::should_hide(None,"WPS 文件压缩",&options));
     }
