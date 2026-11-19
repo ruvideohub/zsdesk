@@ -156,16 +156,21 @@ impl ControlCenter {
 
     // ------------------------------------------------------------------ open / close
 
-    /// Show the drop-down right-aligned above the panel. `dock_top` is the panel's top edge
-    /// in screen px.
-    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, dock_top: f32, scale: f32, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionSurfaceBrush)>) -> Result<()> {
+    /// Show the drop-down right-aligned against the panel. `edge` is the shelf's inner edge
+    /// in screen px; `below` puts the card under the panel (the panel at the top of the
+    /// screen) instead of over it.
+    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, edge: f32, below: bool, scale: f32, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionSurfaceBrush)>) -> Result<()> {
         self.scale = scale;
         self.size = (W, self.height(d));
         let (w, h) = ((W * scale).ceil(), (self.size.1 * scale).ceil());
         let right = monitor.right - (12.0 * scale) as i32;
         let left = right - w as i32;
-        let bottom = (dock_top - 8.0 * scale).round() as i32;
-        let top = bottom - h as i32;
+        let gap = (8.0 * scale).round() as i32;
+        let (top, bottom) = if below {
+            (edge as i32 + gap, edge as i32 + gap + h as i32)
+        } else {
+            (edge as i32 - gap - h as i32, edge as i32 - gap)
+        };
         self.render(c, gfx, backdrop, d, tray_brushes)?;
         self.popup.show(RECT { left, top, right, bottom }, true);
         // Rounded corners: the drop-down sits on a rounded card.
@@ -187,16 +192,21 @@ impl ControlCenter {
         }
     }
 
-    /// Move the drop-down back above the panel (the panel may have moved or resized).
-    pub fn reposition(&self, monitor: RECT, dock_top: f32) {
+    /// Move the drop-down back against the panel (the panel may have moved or resized).
+    pub fn reposition(&self, monitor: RECT, edge: f32, below: bool) {
         if !self.open {
             return;
         }
         let scale = self.scale;
         let (w, h) = ((self.size.0 * scale).ceil(), (self.size.1 * scale).ceil());
         let right = monitor.right - (12.0 * scale) as i32;
-        let bottom = (dock_top - 8.0 * scale).round() as i32;
-        self.popup.show(RECT { left: right - w as i32, top: bottom - h as i32, right, bottom }, false);
+        let gap = (8.0 * scale).round() as i32;
+        let (top, bottom) = if below {
+            (edge as i32 + gap, edge as i32 + gap + h as i32)
+        } else {
+            (edge as i32 - gap - h as i32, edge as i32 - gap)
+        };
+        self.popup.show(RECT { left: right - w as i32, top, right, bottom }, false);
     }
 
     // ------------------------------------------------------------------ paint

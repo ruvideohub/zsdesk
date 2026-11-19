@@ -126,7 +126,8 @@ impl StackView {
         name: &str,
         apps: &[StackApp],
         icon_x: i32,
-        bottom: i32,
+        edge: i32,
+        below: bool,
         scale: f32,
         monitor: RECT,
     ) -> Result<()> {
@@ -207,11 +208,12 @@ impl StackView {
 
         let (ww, wh) = ((w + 2.0 * m).ceil() as i32, (h + 2.0 * m).ceil() as i32);
         let left = icon_x - ww / 2;
-        let top = bottom - wh + m as i32;
+        let gap = 8.0 * s;
+        let top = if below { edge + gap as i32 + m as i32 } else { edge - gap as i32 - wh + m as i32 };
         let r = ui::clamp_rect(RECT { left, top, right: left + ww, bottom: top + wh }, monitor);
-        // Spring up out of the dock.
+        // Spring out of the dock, away from the edge the panel hangs from.
         let cx = (icon_x - r.left) as f32 - m;
-        panel.body.SetCenterPoint(v3(cx, h, 0.0))?;
+        panel.body.SetCenterPoint(v3(cx, if below { 0.0 } else { h }, 0.0))?;
         let body: CompositionObject = panel.body.cast()?;
         ui::animate_v3_from(c, &body, "Scale", v3(0.85, 0.85, 1.0), v3(1.0, 1.0, 1.0), 260)?;
         root.SetOpacity(0.0)?;

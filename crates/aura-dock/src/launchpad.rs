@@ -442,8 +442,9 @@ impl Launchpad {
     // ------------------------------------------------------------ open / close / layout
 
     /// Build the frame (backdrop + three glass panels) and show it over `monitor`,
-    /// leaving `bottom_reserve` pixels free for the dock.
-    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, bottom_reserve: f32, scale: f32, d: &Data) -> Result<()> {
+    /// leaving `reserve` pixels free for the dock — at the bottom of the screen, or at the
+    /// top when the panel sits there.
+    pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, reserve: f32, reserve_top: bool, scale: f32, d: &Data) -> Result<()> {
         let s = scale;
         self.scale = s;
         let (w, h) = ((monitor.right - monitor.left) as f32, (monitor.bottom - monitor.top) as f32);
@@ -475,10 +476,10 @@ impl Launchpad {
         // About 70% of the screen, never wider than 1180 pt, never so tall that it
         // reaches the dock: search on top, the app grid in the middle, nothing else.
         let m0 = 24.0 * s;
-        let avail_h = (h - bottom_reserve - 2.0 * m0).max(240.0 * s);
+        let avail_h = (h - reserve - 2.0 * m0).max(240.0 * s);
         let pw = (w * 0.70).clamp(640.0 * s, 1180.0 * s).min(w - 2.0 * m0);
         let ph = (avail_h * 0.86).clamp(360.0 * s, 820.0 * s).min(avail_h);
-        let top = m0 + ((avail_h - ph) / 2.0).max(0.0);
+        let top = m0 + if reserve_top { reserve } else { 0.0 } + ((avail_h - ph) / 2.0).max(0.0);
         let tint = theme::surface(0.52);
         let order = vec![(PanelId::Center, (w - pw) / 2.0, pw)];
         for (k, (id, px, pw)) in order.into_iter().enumerate() {

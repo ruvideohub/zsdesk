@@ -227,7 +227,6 @@ pub enum Kind {
     App,
     Separator,
     Stack,
-    Trash,
     /// A new Laminar version is downloaded and ready to install.
     Update,
     /// A widget pinned to the dock (key "::widget{pin index}:{widget id}").
@@ -250,6 +249,9 @@ fn widget_size(key: &str) -> crate::widgets::Size {
         _ => widget_of(key).map(|d| d.size).unwrap_or_default(),
     }
 }
+
+/// Widget id of the control centre button: it never leaves the right-hand end.
+const CONTROL_CENTER: &str = "control-center";
 
 /// How much wide widgets magnify, relative to icons: enough to read as "lifted" without
 /// shoving the rest of the dock aside. Icon-sized (small) widgets magnify like icons.
@@ -295,6 +297,9 @@ struct Geo {
     icon: Vec<bool>,
     /// Widget items.
     wid: Vec<bool>,
+    /// The panel hangs from the top edge of the monitor: the shelf sits at the top of the
+    /// window and items grow downwards. False on the bottom edge, where it grew upwards.
+    top: bool,
     /// Per item: drawn width before magnification (icon size, a widget's width, 0 for
     /// separators), magnification strength (0: never), and how far from its centre the
     /// pointer can be and still count as "on" it (half the extra width of a widget).
@@ -305,7 +310,7 @@ struct Geo {
 }
 
 impl Geo {
-    fn new(items: &[Item], cfg: &Config, scale: f32, win_w: f32) -> Self {
+    fn new(items: &[Item], cfg: &Config, scale: f32, win_w: f32, top: bool) -> Self {
         let b = cfg.icon_size * scale;
         let m = if cfg.magnify { cfg.magnified_size * scale } else { b };
         let (g, p) = (cfg.icon_spacing * scale, cfg.padding * scale);
@@ -336,11 +341,13 @@ impl Geo {
         }
         let shelf_w = x + 2.0 * p;
         let x0 = ((win_w - shelf_w) / 2.0).round();
-        let y0 = win_h - margin - shelf_h;
+        // The label room and the magnification headroom sit on the side the panel grows
+        // away from the screen edge: above the shelf at the bottom, below it at the top.
+        let y0 = if top { margin } else { win_h - margin - shelf_h };
         let mut geo = Geo {
             b, m, g, p, r, margin,
             range: cfg.magnify_range * (b + g),
-            sep_w, win_w, win_h, x0, y0, shelf_w, shelf_h, left, width,
+            sep_w, win_w, win_h, x0, y0, shelf_w, shelf_h, left, width, top,
             icon: items.iter().map(|i| i.is_icon()).collect(),
             wid: items.iter().map(|i| i.kind == Kind::Widget).collect(),
             vw,
@@ -366,16 +373,53 @@ impl Geo {
         self.x0 + self.p + self.left[i] + self.width[i] / 2.0
     }
 
+    /// The y a slot's scaling turns around: the bottom edge of an icon when the shelf sits
+    /// at the bottom (icons grow up), the top edge when the panel is at the top (grow down).
+    fn pivot_y(&self) -> f32 {
+        if self.top { 0.0 } else { self.b }
+    }
+
+    /// The drawn vertical box of an item at scale `s`.
+    fn item_box(&self, s: f32) -> (f32, f32) {
+        if self.top {
+            (self.y0 + self.p, self.y0 + self.p + self.b * s)
+        } else {
+            (self.y0 + self.p + self.b - self.b * s, self.y0 + self.p + self.b)
+        }
+    }
+
+    /// Vertical band a pointer can be in and still touch the shelf: from the far edge of a
+    /// fully magnified item out to the window's edge on the other side.
+    fn band(&self) -> (f32, f32) {
+        if self.top {
+            (0.0, self.y0 + self.p + self.m + self.g)
+        } else {
+            (self.y0 + self.p + self.b - self.m - self.g, self.win_h)
+        }
+    }
+
+    /// Is y within the shelf's strip (plus `slack` past its inner edge)?
+    fn in_shelf_band(&self, y: f32, slack: f32) -> bool {
+        if self.top {
+            y < self.y0 + self.shelf_h + slack
+        } else {
+            y > self.y0 - slack
+        }
+    }
+
     /// Which item is under (x, y), measured in the unmagnified layout: hovering must not
     /// depend on where the animation happens to be this frame.
     fn hit_base(&self, x: f32, y: f32) -> Option<usize> {
-        let top = self.y0 + self.p + self.b - self.m - self.g;
+        let (lo, hi) = self.band();
+        if y < lo || y >= hi {
+            return None;
+        }
         for i in 0..self.left.len() {
             if !(self.icon[i] || self.wid[i]) {
                 continue;
             }
             let l = self.x0 + self.p + self.left[i];
-            if x >= l && x < l + self.width[i] && y >= top {
+            if x >= l && x < l + self.width[i] {
                 return Some(i);
             }
         }
@@ -414,7 +458,7 @@ impl Geo {
         let (dx, scales) = self.layout(px, amount);
         let acc: f32 = (0..i).map(|j| (scales[j] - 1.0) * self.vw[j]).sum();
         let s = scales[i];
-        (dx + self.p + self.left[i] + acc + self.g / 2.0, self.y0 + self.p + self.b - self.b * s, s)
+        (dx + self.p + self.left[i] + acc + self.g / 2.0, self.item_box(s).0, s)
     }
 
     /// Which icon is under (x, y)?
@@ -422,14 +466,13 @@ impl Geo {
         let (dx, scales) = self.layout(x, amount);
         let mut acc = 0.0;
         for i in 0..self.left.len() {
-            let w = if self.icon[i] { self.b * scales[i] } else { 0.0 };
             let l = dx + self.p + self.left[i] + acc;
             let slot = self.width[i] + (scales[i] - 1.0) * self.vw[i];
-            if self.icon[i] && x >= l && x < l + slot && y >= self.y0 + self.p + self.b - w - self.g {
+            let (top, bottom) = self.item_box(scales[i]);
+            if self.icon[i] && x >= l && x < l + slot && y >= top - self.g && y <= bottom {
                 return Some(i);
             }
-            let top = self.y0 + self.p + self.b - self.b * scales[i];
-            if self.wid[i] && x >= l + self.g / 2.0 && x < l + slot - self.g / 2.0 && y >= top - 6.0 && y < self.y0 + self.p + self.b + 6.0 {
+            if self.wid[i] && x >= l + self.g / 2.0 && x < l + slot - self.g / 2.0 && y >= top - 6.0 && y < bottom + 6.0 {
                 return Some(i);
             }
             acc += (scales[i] - 1.0) * self.vw[i];
@@ -640,6 +683,9 @@ struct Dock {
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
     floor_y: i32,
+    /// The panel hangs from the top edge of the monitor, because Explorer's taskbar keeps
+    /// the bottom one. Everything that pops out of the panel follows this.
+    panel_top: bool,
     start_panes: Vec<StartPane>,
     start_open: bool,
 }
@@ -896,6 +942,9 @@ impl Dock {
     fn compute_items(&mut self) -> Vec<Item> {
         let mut v = vec![Item { kind: Kind::Launch, key: "::launch".into(), pinned: true }];
         let pins = self.cfg.pins.clone();
+        // The control centre is a pinned widget, but it belongs at the right-hand end of
+        // the panel (where the Recycle Bin used to sit), after the running apps.
+        let mut cc_item: Option<Item> = None;
         for (n, p) in pins.iter().enumerate() {
             match p {
                 Pin::Id(id) if id == SEPARATOR => v.push(Item { kind: Kind::Separator, key: format!("::sep{n}"), pinned: true }),
@@ -908,7 +957,12 @@ impl Dock {
                         crate::widgets::Size::Medium => "m",
                         crate::widgets::Size::Large => "l",
                     };
-                    v.push(Item { kind: Kind::Widget, key: format!("::widget{n}:{widget}:{code}"), pinned: true })
+                    let item = Item { kind: Kind::Widget, key: format!("::widget{n}:{widget}:{code}"), pinned: true };
+                    if widget == CONTROL_CENTER {
+                        cc_item = Some(item);
+                    } else {
+                        v.push(item);
+                    }
                 }
             }
         }
@@ -930,7 +984,9 @@ impl Dock {
         if self.update_icon_visible() {
             v.push(Item { kind: Kind::Update, key: "::update".into(), pinned: true });
         }
-        v.push(Item { kind: Kind::Trash, key: "::trash".into(), pinned: true });
+        if let Some(it) = cc_item {
+            v.push(it);
+        }
         v
     }
 
@@ -975,10 +1031,6 @@ impl Dock {
                 self.names.insert(it.key.clone(), "Update AuraDock".into());
                 self.gfx.update_surface(px).ok()
             }
-            Kind::Trash => self.icons.get(&self.gfx.wic, apps::RECYCLE_BIN).and_then(|(n, src)| {
-                self.names.insert(it.key.clone(), n);
-                self.gfx.icon_surface(&src, px).ok()
-            }),
             _ => {
                 let exe = self.windows.iter().find(|w| w.app == it.key).map(|w| w.exe.clone());
                 let got = self.icons.get(&self.gfx.wic, &it.key).or_else(|| exe.and_then(|e| self.icons.get(&self.gfx.wic, &e)));
@@ -1009,9 +1061,6 @@ impl Dock {
             if it.kind == Kind::Separator && clean.last().map(|l| l.kind == Kind::Separator || l.kind == Kind::Launch).unwrap_or(true) {
                 continue;
             }
-            if it.kind == Kind::Trash && clean.last().map(|l| l.kind == Kind::Separator).unwrap_or(false) {
-                // keep the separator before the trash
-            }
             clean.push(it);
         }
         self.icons.flush();
@@ -1024,7 +1073,7 @@ impl Dock {
         self.update_indicators();
         if self.control_center.open {
             let anchor = self.cc_anchor();
-            self.control_center.reposition(self.monitor, anchor);
+            self.control_center.reposition(self.monitor, anchor, self.panel_top);
         }
     }
 
@@ -1032,13 +1081,13 @@ impl Dock {
 
     fn rebuild(&mut self) -> Result<()> {
         trace!("rebuild: {} items on monitor ({}, {})-({}, {}) scale {}", self.items.len(), self.monitor.left, self.monitor.top, self.monitor.right, self.monitor.bottom, self.scale);
-        self.geo = Geo::new(&self.items, &self.cfg, self.scale, (self.monitor.right - self.monitor.left) as f32);
+        self.geo = Geo::new(&self.items, &self.cfg, self.scale, (self.monitor.right - self.monitor.left) as f32, self.panel_top);
         unsafe {
             SetWindowPos(
                 self.hwnd,
                 Some(HWND_TOPMOST),
                 self.monitor.left,
-                self.floor_y - self.geo.win_h as i32,
+                self.win_top(),
                 self.geo.win_w as i32,
                 self.geo.win_h as i32,
                 SWP_NOACTIVATE,
@@ -1071,7 +1120,7 @@ impl Dock {
             let slot = c.CreateContainerVisual()?;
             if it.kind == Kind::Launch {
                 slot.SetSize(v2(geo.b, geo.b))?;
-                slot.SetCenterPoint(v3(0.0, geo.b, 0.0))?;
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
                 let (tile, panes) = start_tile(&c, geo.b)?;
                 slot.Children()?.InsertAtTop(&tile)?;
                 self.tiles.push(Some(tile.cast()?));
@@ -1080,7 +1129,7 @@ impl Dock {
                 let ww = crate::widgets::dock_width(def, widget_size(&it.key), geo.b);
                 slot.SetSize(v2(ww, geo.b))?;
                 // Grow up and to the right from the bottom-left corner, like an icon.
-                slot.SetCenterPoint(v3(0.0, geo.b, 0.0))?;
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
                 let tile = c.CreateContainerVisual()?;
                 tile.SetSize(v2(ww, geo.b))?;
                 slot.Children()?.InsertAtTop(&tile)?;
@@ -1088,7 +1137,7 @@ impl Dock {
                 widget_tiles.push((idx, def, tile, ww));
             } else if it.kind == Kind::Stack {
                 slot.SetSize(v2(geo.b, geo.b))?;
-                slot.SetCenterPoint(v3(0.0, geo.b, 0.0))?;
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
                 // A frosted tile with up to four mini icons.
                 let tile = c.CreateContainerVisual()?;
                 tile.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
@@ -1113,7 +1162,7 @@ impl Dock {
                 self.tiles.push(Some(tile.cast()?));
             } else if it.is_icon() {
                 slot.SetSize(v2(geo.b, geo.b))?;
-                slot.SetCenterPoint(v3(0.0, geo.b, 0.0))?; // grow up and to the right
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?; // grow up and to the right
                 let tile = c.CreateSpriteVisual()?;
                 tile.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
                 tile.SetBrush(&self.brushes[&it.key])?;
@@ -1315,7 +1364,7 @@ impl Dock {
         self.paint_dock_widgets(true);
         self.apply_region();
         if tracing() {
-            let top = self.floor_y - self.geo.win_h as i32;
+            let top = self.win_top();
             for (i, it) in self.items.iter().enumerate() {
                 trace!("item {i} at ({}, {}) {:?} {}", self.monitor.left + self.geo.center_abs(i) as i32, top + (self.geo.y0 + self.geo.shelf_h / 2.0) as i32, it.kind, it.key);
             }
@@ -1562,22 +1611,32 @@ impl Dock {
 
     fn region_rect(&self, hover: bool) -> RECT {
         let g = &self.geo;
+        let reveal = (self.cfg.reveal_zone * self.scale).round() as i32;
         if self.tucked {
-            return RECT {
-                left: 0,
-                top: (g.win_h - self.cfg.reveal_zone * self.scale).round() as i32,
-                right: g.win_w as i32,
-                bottom: g.win_h as i32,
+            // Tucked away, only the strip along the screen edge still takes the pointer.
+            return if self.panel_top {
+                RECT { left: 0, top: 0, right: g.win_w as i32, bottom: reveal }
+            } else {
+                RECT { left: 0, top: (g.win_h as i32 - reveal).max(0), right: g.win_w as i32, bottom: g.win_h as i32 }
             };
         }
-        // When auto-hiding, include the margin below the shelf so the pointer resting
-        // on the screen edge still counts as "on the dock".
-        let bottom = if self.cfg.auto_hide { g.win_h } else { g.y0 + g.shelf_h } as i32;
-        if hover {
-            RECT { left: g.hover_lr.0, top: 0, right: g.hover_lr.1, bottom }
+        let (shelf_top, shelf_bottom) = (g.y0 as i32, (g.y0 + g.shelf_h) as i32);
+        let win_h = g.win_h as i32;
+        // The part of the window the icons never reach is the magnification headroom; it
+        // lies above the shelf at the bottom of the screen and below it at the top. While
+        // auto-hiding, the margin towards the screen edge counts too, so the pointer
+        // resting on that edge still counts as "on the dock".
+        let (top, bottom) = if self.panel_top {
+            (if self.cfg.auto_hide { 0 } else { shelf_top }, if hover { win_h } else { shelf_bottom })
         } else {
-            RECT { left: g.x0 as i32, top: g.y0 as i32, right: (g.x0 + g.shelf_w) as i32, bottom }
-        }
+            (if hover { 0 } else { shelf_top }, if self.cfg.auto_hide { win_h } else { shelf_bottom })
+        };
+        let (left, right) = if hover {
+            (g.hover_lr.0, g.hover_lr.1)
+        } else {
+            (g.x0 as i32, (g.x0 + g.shelf_w) as i32)
+        };
+        RECT { left, top, right, bottom }
     }
 
     fn apply_region(&self) {
@@ -1615,7 +1674,8 @@ impl Dock {
         // headroom for magnified icons; sliding that too made the visible part vanish
         // in the first ~100 ms). Each keyframe is relative to the starting value, so an
         // interrupted hide/show continues smoothly from wherever the dock is.
-        let distance = (self.geo.shelf_h + self.geo.margin + 10.0 * self.scale).ceil();
+        let distance = (self.geo.shelf_h + self.geo.margin + 10.0 * self.scale).ceil()
+            * if self.panel_top { -1.0 } else { 1.0 };
         let to = if tucked { distance } else { 0.0 };
         if let (Ok(a), Ok(lin)) = (c.CreateVector3KeyFrameAnimation(), c.CreateLinearEasingFunction()) {
             let n = 48;
@@ -1710,23 +1770,35 @@ impl Dock {
             return false;
         }
         let g = &self.geo;
-        if y >= g.y0 {
+        // Inside the shelf's own strip the panel keeps the pointer.
+        if g.top {
+            if y <= g.y0 + g.shelf_h {
+                return false;
+            }
+        } else if y >= g.y0 {
             return false;
         }
-        // Top edge of whatever is drawn at x (magnified item, or the shelf).
+        // The far edge of whatever is drawn at x (magnified item, or the shelf).
         let (dx, scales) = g.layout(if self.hovering { self.anchor_x } else { x }, if self.hovering { 1.0 } else { 0.0 });
         let mut acc = 0.0;
         let mut top = g.y0;
+        let mut bottom = g.y0 + g.shelf_h;
         for i in 0..g.left.len() {
             let l = dx + g.p + g.left[i] + acc;
             let slot = g.width[i] + (scales[i] - 1.0) * g.vw[i];
             if x >= l && x < l + slot && (g.icon[i] || g.wid[i]) {
-                top = top.min(g.y0 + g.p + g.b - g.b * scales[i]);
+                let (t, b) = g.item_box(scales[i]);
+                top = top.min(t);
+                bottom = bottom.max(b);
             }
             acc += (scales[i] - 1.0) * g.vw[i];
         }
-        // Same margin above an item as `Geo::hit` gives it.
-        y < top - g.g
+        // Same margin past an item as `Geo::hit` gives it.
+        if g.top {
+            y > bottom + g.g
+        } else {
+            y < top - g.g
+        }
     }
 
     fn on_leave(&mut self) {
@@ -1759,7 +1831,7 @@ impl Dock {
     fn resync_hover(&mut self) {
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.floor_y - self.geo.win_h as i32;
+        let win_top = self.win_top();
         let (x, y) = (p.x - self.monitor.left, p.y - win_top);
         let r = self.region_rect(true);
         let inside = !self.tucked
@@ -1782,9 +1854,10 @@ impl Dock {
             let _ = KillTimer(Some(self.hwnd), T_REVEAL);
             let mut p = POINT::default();
             let _ = get_cursor_pos(&mut p);
-            let edge = self.floor_y - (self.cfg.reveal_zone * self.scale).round() as i32 - 1;
-            if p.y >= edge && p.x >= self.monitor.left && p.x < self.monitor.right {
-                trace!("reveal: pointer rested at the bottom edge ({}, {})", p.x, p.y);
+            let zone = (self.cfg.reveal_zone * self.scale).round() as i32 + 1;
+            let at_edge = if self.panel_top { p.y <= self.floor_y + zone } else { p.y >= self.floor_y - zone };
+            if at_edge && p.x >= self.monitor.left && p.x < self.monitor.right {
+                trace!("reveal: pointer rested at the screen edge ({}, {})", p.x, p.y);
                 self.set_tucked(false);
                 // If the pointer never reaches the shelf, hide again.
                 SetTimer(Some(self.hwnd), T_HIDE, self.cfg.hide_delay_ms + 900, None);
@@ -1820,11 +1893,16 @@ impl Dock {
         self.label.SetSize(v2(lw, lh))?;
         self.label_geom.SetSize(v2(lw, lh))?;
         let b = self.geo.b;
+        // Below the icon when the shelf sits at the top, above it when it sits at the bottom.
+        let ly = if self.panel_top {
+            format!("d.Offset.Y + t.Offset.Y + {b} * t.Scale.Y + {gap}", gap = 10.0 * s)
+        } else {
+            format!("d.Offset.Y + t.Offset.Y + {b} - {b} * t.Scale.Y - {lh} - {gap}", gap = 10.0 * s)
+        };
         let e = self.expr(
             &format!(
-                "Vector3(d.Offset.X + t.Offset.X + {iw} * t.Scale.X / 2 - {hw}, d.Offset.Y + t.Offset.Y + {b} - {b} * t.Scale.Y - {lh} - {gap}, 0)",
-                hw = lw / 2.0,
-                gap = 10.0 * s
+                "Vector3(d.Offset.X + t.Offset.X + {iw} * t.Scale.X / 2 - {hw}, {ly}, 0)",
+                hw = lw / 2.0
             ),
             &[("d", &self.dock.cast()?), ("t", &self.slots[i].cast()?)],
         )?;
@@ -1856,12 +1934,11 @@ impl Dock {
         let it = self.items[i].clone();
         // Opening or switching to something from the dock leaves Launchpad. (Clicking the
         // dock doesn't take focus from Launchpad, so it wouldn't close on its own.)
-        if self.launchpad.open && matches!(it.kind, Kind::App | Kind::Trash | Kind::Stack) {
+        if self.launchpad.open && matches!(it.kind, Kind::App | Kind::Stack) {
             self.close_launchpad();
         }
         match it.kind {
             Kind::Launch => self.toggle_launchpad(),
-            Kind::Trash => apps::launch(apps::RECYCLE_BIN),
             Kind::Update => self.update_menu(),
             Kind::Separator => {}
             Kind::Widget => self.widget_click(i),
@@ -1966,9 +2043,6 @@ impl Dock {
             m.push(MenuItem::sep());
             m.push(MenuItem::item("Remove from Dock", CMD_WIDGET_REMOVE).danger());
             m.push(MenuItem::sep());
-        } else if item.as_ref().map(|it| it.kind == Kind::Trash).unwrap_or(false) {
-            m.push(MenuItem::item("Open Recycle Bin", CMD_TRASH_OPEN));
-            m.push(MenuItem::sep());
         } else if item.as_ref().map(|it| it.kind == Kind::Update).unwrap_or(false) {
             m.extend(self.update_menu_items());
             m.push(MenuItem::sep());
@@ -2012,7 +2086,7 @@ impl Dock {
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
         let p = anchor.unwrap_or(p);
-        if let Err(e) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, p, true, self.scale, self.monitor) {
+        if let Err(e) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, p, !self.panel_top, self.scale, self.monitor) {
             trace!("menu failed: {e:?}");
             self.menu_open = false;
         }
@@ -2048,7 +2122,7 @@ impl Dock {
         let g = &self.geo;
         let i = 4.min(g.left.len().saturating_sub(1));
         let (x, y) = (g.center_abs(i), g.y0 + g.shelf_h / 2.0);
-        let anchor = POINT { x: self.monitor.left + x as i32, y: self.floor_y - g.win_h as i32 + g.y0 as i32 };
+        let anchor = POINT { x: self.monitor.left + x as i32, y: self.shelf_inner_y() };
         match name {
             "menu" => {
                 self.on_move(x, y);
@@ -2181,7 +2255,7 @@ impl Dock {
         self.menu_open = true;
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        if let Err(e) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, p, true, self.scale, self.monitor) {
+        if let Err(e) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, p, !self.panel_top, self.scale, self.monitor) {
             trace!("menu failed: {e:?}");
             self.menu_open = false;
         }
@@ -2953,13 +3027,12 @@ impl Dock {
             .collect();
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.floor_y - self.geo.win_h as i32;
         let cx_px = if self.hovering { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
-        let (cx, sc) = self.geo.slot_center(cx_px, if self.hovering { 1.0 } else { 0.0 }, i);
-        let icon_top = self.geo.y0 + self.geo.p + self.geo.b - self.geo.b * sc;
-        let bottom = win_top + (icon_top - 8.0 * self.scale) as i32;
+        let (cx, _sc) = self.geo.slot_center(cx_px, if self.hovering { 1.0 } else { 0.0 }, i);
+        let edge = self.shelf_inner_y();
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
-        if let Err(e) = self.stack_view.show(&c, gfx, &bd, pin, &name, &list, self.monitor.left + cx as i32, bottom, self.scale, self.monitor) {
+        let below = self.panel_top;
+        if let Err(e) = self.stack_view.show(&c, gfx, &bd, pin, &name, &list, self.monitor.left + cx as i32, edge, below, self.scale, self.monitor) {
             trace!("stack failed: {e:?}");
         }
     }
@@ -3242,7 +3315,7 @@ impl Dock {
             history: &self.history,
         };
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
-        if let Err(e) = self.launchpad.show(&c, gfx, &bd, self.monitor, reserve, self.scale, &data) {
+        if let Err(e) = self.launchpad.show(&c, gfx, &bd, self.monitor, reserve, self.panel_top, self.scale, &data) {
             trace!("launchpad failed: {e:?}");
             return;
         }
@@ -3396,7 +3469,7 @@ impl Dock {
                 let _ = get_cursor_pos(&mut p);
                 self.menu_ctx = None;
                 self.menu_open = true;
-                let _ = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, items, p, true, self.scale, self.monitor);
+                let _ = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, items, p, !self.panel_top, self.scale, self.monitor);
             }
             Act::Wifi => {
                 let on = !self.control.wifi.unwrap_or(false);
@@ -3697,7 +3770,7 @@ impl Dock {
                     _ => Target::None,
                 };
                 // The pointer is still over the dock: resume normal hover tracking.
-                let win_top = self.floor_y - self.geo.win_h as i32;
+                let win_top = self.win_top();
                 self.hovering = false;
                 self.on_move((sx - self.monitor.left) as f32, (sy - win_top) as f32);
                 result
@@ -3730,7 +3803,7 @@ impl Dock {
             self.apply_region();
         }
         let _ = self.animate_amount(0.0, 120);
-        let win_top = self.floor_y - self.geo.win_h as i32;
+        let win_top = self.win_top();
         let (x, y) = ((sx - self.monitor.left) as f32, (sy - win_top) as f32);
         let Some(fd) = &self.file_drag else { return Target::None };
         let old = fd.insert;
@@ -3746,13 +3819,12 @@ impl Dock {
                     }
             };
             let n = self.items.len();
-            let in_band = y > self.geo.y0 - 30.0 * self.scale;
+            let in_band = self.geo.in_shelf_band(y, 30.0 * self.scale);
             let mut out = (Target::None, None, None);
             let pin_mode = fd.pinnable || fd.alt;
             if in_band && !fd.files.is_empty() && n > 0 {
                 let item = (0..n).find(|&j| (x - vc(j)).abs() < self.geo.width[j] / 2.0);
                 match item {
-                    Some(j) if self.items[j].kind == Kind::Trash => out = (Target::Trash, None, Some(j)),
                     Some(j) if !pin_mode && self.items[j].kind == Kind::App => out = (Target::App, None, Some(j)),
                     _ if pin_mode && x > vc(0) - w && x < vc(n - 1) + w => {
                         let boundary = self.pinned_boundary();
@@ -3786,7 +3858,7 @@ impl Dock {
                 Some(_) => -w / 2.0,
                 None => 0.0,
             };
-            let in_band = y > self.geo.y0 - 30.0 * self.scale;
+            let in_band = self.geo.in_shelf_band(y, 30.0 * self.scale);
             (0..self.items.len()).find(|&j| in_band && (x - self.geo.center_abs(j) - shift(j)).abs() < self.geo.width[j] / 2.0)
         };
         self.drag_hover(under);
@@ -3964,14 +4036,13 @@ impl Dock {
         }
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
-        let win_top = self.floor_y - self.geo.win_h as i32;
         // Drags don't magnify the icons.
         let amount = if self.hovering && self.file_drag.is_none() { 1.0 } else { 0.0 };
         let local_x = if amount > 0.0 { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
-        let (cx, sc) = self.geo.slot_center(local_x, amount, i);
+        let (cx, _sc) = self.geo.slot_center(local_x, amount, i);
         self.drag_preview = self.file_drag.is_some();
-        let icon_top = self.geo.y0 + self.geo.p + self.geo.b - self.geo.b * sc;
-        let bottom = win_top + (icon_top - 8.0 * self.scale) as i32;
+        let edge = self.shelf_inner_y();
+        let below = self.panel_top;
         let brush = self.brushes.get(&it.key).cloned();
         let _ = self.show_label(None);
         if let Err(e) = self.preview.show(
@@ -3982,7 +4053,8 @@ impl Dock {
             &wins,
             brush.as_ref(),
             self.monitor.left + cx as i32,
-            bottom,
+            edge,
+            below,
             self.scale,
             self.monitor,
         ) {
@@ -4166,10 +4238,15 @@ impl Dock {
         let i = d.index;
         let external = d.ext.is_some();
         let pinned = !external && self.items[i].pinned;
-        let removing = pinned && y < self.geo.y0 - 90.0 * self.scale;
+        // Dragged far past the shelf, towards the middle of the screen: unpin it.
+        let removing = pinned && if self.panel_top {
+            y > self.geo.y0 + self.geo.shelf_h + 90.0 * self.scale
+        } else {
+            y < self.geo.y0 - 90.0 * self.scale
+        };
         let is_app = if external { d.ext_widget.is_none() } else { self.items[i].kind == Kind::App };
         // Holding an app over the middle of another pinned app or a stack makes/extends a stack.
-        if is_app && !removing && y > self.geo.y0 - 20.0 * self.scale {
+        if is_app && !removing && self.geo.in_shelf_band(y, 20.0 * self.scale) {
             let boundary = self.pinned_boundary();
             let over = (1..boundary).find(|&j| {
                 j != i
@@ -4215,7 +4292,11 @@ impl Dock {
         }
         // Landing back where it started means "no change"; an external icon only lands
         // when the pointer is down at the dock.
-        let over_dock = y > self.geo.y0 - 70.0 * self.scale && y < self.geo.win_h + 40.0 * self.scale;
+        let over_dock = if self.panel_top {
+            y > -40.0 * self.scale && y < self.geo.y0 + self.geo.shelf_h + 70.0 * self.scale
+        } else {
+            y > self.geo.y0 - 70.0 * self.scale && y < self.geo.win_h + 40.0 * self.scale
+        };
         let insert = if removing || (pinned && (k == i || k == i + 1)) || (external && !over_dock) { None } else { Some(k) };
         let (old_insert, old_removing) = (d.insert, d.removing);
         if insert == old_insert && removing == old_removing {
@@ -4426,9 +4507,26 @@ impl Dock {
         if !self.integrate {
             return;
         }
+        // The panel takes the edge the Windows taskbar leaves free. With the taskbar on
+        // screen (the "Hide the Windows Taskbar" switch off) it keeps the bottom, so the
+        // panel goes to the top of the monitor instead of sitting on top of it.
+        let panel_top = !self.cfg.hide_windows_taskbar || !self.taskbar_hidden && taskbar::tray_visible();
+        if panel_top != self.panel_top {
+            trace!("panel edge: bottom -> {}", if panel_top { "top" } else { "bottom" });
+            self.panel_top = panel_top;
+            // Land on the monitor's own edge first, so the rebuild below doesn't draw the
+            // panel where the other edge used to be; the appbar refines it in a moment.
+            self.floor_y = if panel_top { self.monitor.top } else { self.monitor.bottom };
+            // The whole layout mirrors: shelf position, growth direction, pop-up anchors.
+            if self.geo.win_w > 0.0 {
+                if let Err(e) = self.rebuild() {
+                    trace!("rebuild after the edge change failed: {e:?}");
+                }
+            }
+        }
         if self.helper {
             let h = self.reserve_height();
-            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar);
             self.use_floor(assigned);
             return;
         }
@@ -4443,14 +4541,32 @@ impl Dock {
             self.taskbar_hidden = false;
         }
         let h = self.reserve_height();
-        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, &mut self.appbar);
+        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar);
         self.use_floor(assigned);
     }
 
-    /// Move the panel onto the strip Windows reserved for it. Explorer's taskbar keeps the
-    /// bottom of the screen when it is visible, so the panel sits on top of it.
+    /// Screen y of the panel window's top edge. `floor_y` is the shelf's outer edge: the
+    /// window hangs above it at the bottom of the screen and below it at the top.
+    fn win_top(&self) -> i32 {
+        if self.panel_top {
+            self.floor_y
+        } else {
+            self.floor_y - self.geo.win_h as i32
+        }
+    }
+
+    /// Screen y of the shelf's inner edge — the side pop-ups hang off.
+    fn shelf_inner_y(&self) -> i32 {
+        self.win_top() + (if self.panel_top { self.geo.y0 + self.geo.shelf_h } else { self.geo.y0 }) as i32
+    }
+
+    /// Move the panel onto the strip Windows reserved for it: the bottom edge normally, the
+    /// top edge when Explorer's taskbar keeps the bottom one.
     fn use_floor(&mut self, assigned: Option<RECT>) {
-        let floor = assigned.map(|r| r.bottom).unwrap_or(self.monitor.bottom);
+        let floor = match assigned {
+            Some(r) => if self.panel_top { r.top } else { r.bottom },
+            None => if self.panel_top { self.monitor.top } else { self.monitor.bottom },
+        };
         if floor == self.floor_y {
             return;
         }
@@ -4464,7 +4580,7 @@ impl Dock {
                 self.hwnd,
                 Some(HWND_TOPMOST),
                 self.monitor.left,
-                self.floor_y - self.geo.win_h as i32,
+                self.win_top(),
                 self.geo.win_w as i32,
                 self.geo.win_h as i32,
                 SWP_NOACTIVATE,
@@ -4472,7 +4588,7 @@ impl Dock {
         }
         // Everything that hangs off the panel follows it.
         let anchor = self.cc_anchor();
-        self.control_center.reposition(self.monitor, anchor);
+        self.control_center.reposition(self.monitor, anchor, self.panel_top);
     }
 
     /// The hover label: a glass pill holding the label text, above everything else.
@@ -4607,7 +4723,7 @@ impl Dock {
         self.helpers.stop();
         crate::tray::stop();
         if self.integrate {
-            taskbar::appbar(self.hwnd, self.monitor, 0, false, &mut self.appbar);
+            taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar);
             if self.taskbar_hidden {
                 taskbar::restore(self.tray_original.take());
                 self.taskbar_hidden = false;
@@ -4698,7 +4814,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_NCHITTEST => {
             let (sx, sy) = lparam_xy(lp);
             let through = with_dock_ret(|d| {
-                let top = (d.floor_y - d.geo.win_h as i32) as f32;
+                let top = d.win_top() as f32;
                 d.headroom_passes_through(sx - d.monitor.left as f32, sy - top)
             })
             .unwrap_or(false);
@@ -5523,11 +5639,14 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             wtick: 0,
             clock: None,
             floor_y: 0,
+            panel_top: false,
             start_panes: Vec::new(),
             start_open: false,
         };
-        // Until the appbar answers, the panel sits on the monitor's own bottom edge.
-        dock.floor_y = dock.monitor.bottom;
+        // Until the appbar answers, the panel sits on the monitor's own edge: the bottom
+        // when the Windows taskbar is hidden, the top when the taskbar keeps the bottom.
+        dock.panel_top = !dock.cfg.hide_windows_taskbar;
+        dock.floor_y = if dock.panel_top { dock.monitor.top } else { dock.monitor.bottom };
         dock.update_theme();
         dock.update_glass();
         dock.build_label()?;

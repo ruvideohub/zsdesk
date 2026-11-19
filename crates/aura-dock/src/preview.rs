@@ -60,8 +60,9 @@ impl Preview {
         self.thumbs.clear();
     }
 
-    /// Show previews for `wins` above the icon centred at `icon_x` (screen px);
-    /// `bottom` is the screen y the panel's bottom edge should sit at.
+    /// Show previews for `wins` centred on `icon_x` (screen px), hanging off the shelf's
+    /// inner edge (`edge`, screen y). `below` places them under the panel — the case when
+    /// the panel sits at the top of the screen — instead of above it.
     #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
@@ -72,7 +73,8 @@ impl Preview {
         wins: &[Win],
         app_icon: Option<&CompositionSurfaceBrush>,
         icon_x: i32,
-        bottom: i32,
+        edge: i32,
+        below: bool,
         scale: f32,
         monitor: RECT,
     ) -> Result<()> {
@@ -98,7 +100,8 @@ impl Preview {
 
         let (ww, wh) = ((w + 2.0 * m).ceil() as i32, (h + 2.0 * m).ceil() as i32);
         let left = icon_x - ww / 2;
-        let top = bottom - wh + m as i32;
+        let gap = 8.0 * s;
+        let top = if below { edge + gap as i32 + m as i32 } else { edge - gap as i32 - wh + m as i32 };
         let r = ui::clamp_rect(RECT { left, top, right: left + ww, bottom: top + wh }, monitor);
 
         for (i, win) in wins.iter().enumerate() {
@@ -205,9 +208,10 @@ impl Preview {
             });
         }
         root.Children()?.InsertAtTop(&panel.root)?;
-        // Rise in from just below.
+        // Rise in from just beyond the panel's edge.
         let body: CompositionObject = panel.body.cast()?;
-        ui::animate_v3_from(c, &body, "Offset", v3(m, m + 8.0 * s, 0.0), v3(m, m, 0.0), 200)?;
+        let start = if below { m - 8.0 * s } else { m + 8.0 * s };
+        ui::animate_v3_from(c, &body, "Offset", v3(m, start, 0.0), v3(m, m, 0.0), 200)?;
         root.SetOpacity(0.0)?;
         ui::animate_scalar(c, &root.cast()?, "Opacity", 1.0, 140)?;
         self.popup.show(r, false);

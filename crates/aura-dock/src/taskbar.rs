@@ -13,10 +13,10 @@ use windows::core::w;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
 use windows::Win32::UI::Shell::{
-    SHAppBarMessage, ABE_BOTTOM, ABM_GETSTATE, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, ABM_SETSTATE, ABS_AUTOHIDE,
-    APPBARDATA,
+    SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_GETSTATE, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, ABM_SETSTATE,
+    ABS_AUTOHIDE, APPBARDATA,
 };
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, ShowWindow, SW_HIDE, SW_SHOWNA};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA};
 
 use crate::dock::WM_APP_APPBAR;
 
@@ -34,6 +34,13 @@ fn trays() -> Vec<HWND> {
         }
     }
     v
+}
+
+/// Is Explorer's own taskbar on screen right now? The panel takes the edge the taskbar
+/// does not use: hidden taskbar, the panel keeps the bottom; taskbar on screen, the panel
+/// moves to the top of the monitor instead of stacking on top of it.
+pub fn tray_visible() -> bool {
+    trays().first().map(|h| unsafe { IsWindowVisible(*h).as_bool() }).unwrap_or(false)
 }
 
 pub fn set_visible(visible: bool) {
@@ -111,16 +118,19 @@ pub fn run_watchdog(pid: u32, original_state: Option<u32>) {
     restore(original_state);
 }
 
-/// Reserve (or release) a strip at the bottom of the monitor for the dock.
-/// Reserves a strip of `height` px at the bottom of `monitor` and returns the rect Windows
-/// actually gave it (or `None` when nothing is reserved). When Explorer's taskbar is on
-/// screen it already owns the bottom strip, so the rect we get back sits *above* it — that
-/// is where the panel has to go, otherwise the taskbar covers it.
-pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, registered: &mut bool) -> Option<RECT> {
+/// Reserve (or release) a strip of the monitor for the dock, on the bottom edge or — when
+/// Explorer's taskbar keeps the bottom one — on the top edge. Returns the rect Windows
+/// actually gave it (or `None` when nothing is reserved). Whatever comes back, the panel
+/// goes inside it, so a visible taskbar can never end up on top of the panel.
+pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut bool) -> Option<RECT> {
     let mut d = abd(Some(hwnd));
     d.uCallbackMessage = WM_APP_APPBAR;
-    d.uEdge = ABE_BOTTOM;
-    d.rc = RECT { left: monitor.left, top: monitor.bottom - height, right: monitor.right, bottom: monitor.bottom };
+    d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
+    d.rc = if at_top {
+        RECT { left: monitor.left, top: monitor.top, right: monitor.right, bottom: monitor.top + height }
+    } else {
+        RECT { left: monitor.left, top: monitor.bottom - height, right: monitor.right, bottom: monitor.bottom }
+    };
     unsafe {
         if reserve {
             if !*registered {
@@ -128,7 +138,12 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, registered:
                 *registered = true;
             }
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
-            d.rc.top = d.rc.bottom - height;
+            // Windows may have shrunk the strip; keep our own height on the edge we asked for.
+            if at_top {
+                d.rc.bottom = d.rc.top + height;
+            } else {
+                d.rc.top = d.rc.bottom - height;
+            }
             SHAppBarMessage(ABM_SETPOS, &mut d);
             return Some(d.rc);
         } else if *registered {

@@ -19,9 +19,9 @@ impl Dock {
         Some((percent, charging, feed.extra.get("time_left").cloned().unwrap_or_default()))
     }
 
-    /// The panel's top edge in screen px — the drop-down's anchor.
+    /// The shelf's inner edge in screen px — the drop-down's anchor.
     pub(super) fn cc_anchor(&self) -> f32 {
-        self.floor_y as f32 - self.geo.win_h + self.geo.margin
+        self.shelf_inner_y() as f32
     }
 
     /// Repaint the drop-down when it is open (it follows the system state).
@@ -80,7 +80,7 @@ impl Dock {
         };
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
         let anchor = self.cc_anchor();
-        match self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.scale, &data, &self.tray_brushes) {
+        match self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.panel_top, self.scale, &data, &self.tray_brushes) {
             Ok(()) => trace!("control centre open at {anchor:.0}"),
             Err(e) => trace!("control centre failed: {e:?}"),
         }
@@ -146,7 +146,7 @@ impl Dock {
         };
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
         let anchor = self.cc_anchor();
-        if let Err(e) = self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.scale, &data, &self.tray_brushes) {
+        if let Err(e) = self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.panel_top, self.scale, &data, &self.tray_brushes) {
             trace!("control centre reflow failed: {e:?}");
         }
     }
