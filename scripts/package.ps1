@@ -2,16 +2,16 @@
 .SYNOPSIS
 Builds verified Windows x64 editions, portable ZIPs, and optional installers.
 .EXAMPLE
-./scripts/package.ps1 -WorkDir C:\Build\ZSDesk -TargetDir C:\Build\ZSDesk-target -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+./scripts/package.ps1 -WorkDir C:\Build\AuraExplorer -TargetDir C:\Build\AuraExplorer-target -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 #>
 param(
     [ValidateSet('standard','network','desktop','full','themed','desktop-box')][string[]]$Editions = @('standard','network','desktop','full','themed','desktop-box'),
-    [string]$WorkDir = (Join-Path ([IO.Path]::GetTempPath()) 'ZSDesk-build'),
+    [string]$WorkDir = (Join-Path ([IO.Path]::GetTempPath()) 'AuraExplorer-build'),
     [string]$TargetDir = $env:CARGO_TARGET_DIR,
     [string]$OutputDir,
     [string]$RoutingDir,
     [string]$RuntimeDir,
-    [string]$EverythingDir = $env:ZSDESK_EVERYTHING_DIR,
+    [string]$EverythingDir = $env:AURA_EVERYTHING_DIR,
     [string]$InnoCompiler,
     [string]$ListaryBuildRoot,
     [switch]$SkipBuild,
@@ -61,7 +61,7 @@ $runtimeFiles=@('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')
 foreach ($name in $runtimeFiles) { if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDir $name) -PathType Leaf)) { throw "Redistributable file missing: $name" } }
 $enginePinPath=Join-Path $root 'packaging\engines\everything.json'
 $enginePin=Get-Content -LiteralPath $enginePinPath -Raw | ConvertFrom-Json -AsHashtable
-if($enginePin.schema -ne 'ZSDesk.EverythingPackage.v1' -or $enginePin.product -ne 'Everything' -or $enginePin.platform -ne 'windows-x64' -or $enginePin.edition -ne 'standard') { throw 'Everything package identity is invalid' }
+if($enginePin.schema -ne 'AuraExplorer.EverythingPackage.v1' -or $enginePin.product -ne 'Everything' -or $enginePin.platform -ne 'windows-x64' -or $enginePin.edition -ne 'standard') { throw 'Everything package identity is invalid' }
 $engineFiles=@('Everything.exe','Everything.lng','License.txt')
 if(@($enginePin.files.Keys).Count -ne $engineFiles.Count -or @($enginePin.files.Keys | Where-Object { $_ -notin $engineFiles }).Count) { throw 'Unexpected Everything package member' }
 if(@($Editions | Where-Object { $_ -ne 'desktop-box' }).Count) {
@@ -78,14 +78,14 @@ if((Get-Item -LiteralPath (Join-Path $EverythingDir 'Everything.exe')).VersionIn
 if($enginePin.executable_sha256 -ne $enginePin.files['Everything.exe'].sha256) { throw 'Everything executable hash declaration differs' }
 }
 foreach ($path in @($WorkDir,$TargetDir,$OutputDir)) { [IO.Directory]::CreateDirectory($path) | Out-Null }
-$lock = [IO.File]::Open((Join-Path $TargetDir 'zsdesk-package.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+$lock = [IO.File]::Open((Join-Path $TargetDir 'aura-package.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 $env:CARGO_TARGET_DIR=$TargetDir
 $env:CARGO_INCREMENTAL='0'
 $env:CARGO_PROFILE_DEV_DEBUG='0'
 $env:CARGO_PROFILE_TEST_DEBUG='0'
 $env:CARGO_PROFILE_RELEASE_DEBUG='0'
 $zsui=Join-Path (Split-Path -Parent $root) 'zsui'
-$env:CARGO_ENCODED_RUSTFLAGS=@("--remap-path-prefix=$root=/src/zsdesk","--remap-path-prefix=$zsui=/src/zsui","--remap-path-prefix=$env:USERPROFILE=/user","--remap-path-prefix=$TargetDir=/target",'-C','link-arg=/PDBALTPATH:zsdesk.pdb') -join [char]31
+$env:CARGO_ENCODED_RUSTFLAGS=@("--remap-path-prefix=$root=/src/aura","--remap-path-prefix=$zsui=/src/zsui","--remap-path-prefix=$env:USERPROFILE=/user","--remap-path-prefix=$TargetDir=/target",'-C','link-arg=/PDBALTPATH:aura.pdb') -join [char]31
 $env:TEMP=Join-Path $WorkDir 'temp'
 $env:TMP=$env:TEMP
 [IO.Directory]::CreateDirectory($env:TEMP) | Out-Null
@@ -137,45 +137,45 @@ try {
     if (@($Editions | Where-Object { $_ -ne 'desktop-box' }).Count) {
         if (-not $ListaryBuildRoot) { $ListaryBuildRoot=Join-Path $WorkDir 'listary-build' }
         $ListaryBuildRoot=[IO.Path]::GetFullPath($ListaryBuildRoot)
-        $project=Join-Path $root 'native\listary\Listary.FileAppPlugin.ZSDesk.csproj'
-        & dotnet build $project --configuration Release "-p:ZSDeskBuildRoot=$ListaryBuildRoot" '-p:RestoreLockedMode=true' '-p:DebugType=None'
+        $project=Join-Path $root 'native\listary\Listary.FileAppPlugin.AuraExplorer.csproj'
+        & dotnet build $project --configuration Release "-p:AuraExplorerBuildRoot=$ListaryBuildRoot" '-p:RestoreLockedMode=true' '-p:DebugType=None'
         if ($LASTEXITCODE) { throw 'Listary folder provider build failed' }
-        $pluginOutput=Join-Path $ListaryBuildRoot 'Listary.FileAppPlugin.ZSDesk\bin\Release\net48'
+        $pluginOutput=Join-Path $ListaryBuildRoot 'Listary.FileAppPlugin.AuraExplorer\bin\Release\net48'
     }
     foreach ($edition in $Editions) {
         $definition=$definitions[$edition]
-        $name="ZSDesk-$version-$edition-x64"
+        $name="AuraExplorer-$version-$edition-x64"
         $stage=Join-Path $WorkDir $name
         $destination=Join-Path $OutputDir $name
         Assert-ChildPath $stage $WorkDir
         Assert-ChildPath $destination $OutputDir
         if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath "$destination.zip")) { throw "Existing package retained; inspect it before retrying: $name" }
-        $flags=@('build','--release','--locked','-p','zsdesk-app','--manifest-path',(Join-Path $root 'Cargo.toml'))
+        $flags=@('build','--release','--locked','-p','aura-explorer','--manifest-path',(Join-Path $root 'Cargo.toml'))
         if ($edition -ne 'full') {
             $flags += '--no-default-features'
             if ($definition.Features.Count) { $flags += @('--features',($definition.Features -join ',')) }
         }
-        $state=[ordered]@{project='ZSDesk';version=$version;edition=$edition;source=$root;target=$TargetDir;profile='release';features=$definition.Features;runtime_source=$RuntimeDir;everything_source=$EverythingDir;everything_version=$enginePin.version;pid=$PID;state='running';started=[DateTimeOffset]::Now.ToString('o')}
+        $state=[ordered]@{project='AuraExplorer';version=$version;edition=$edition;source=$root;target=$TargetDir;profile='release';features=$definition.Features;runtime_source=$RuntimeDir;everything_source=$EverythingDir;everything_version=$enginePin.version;pid=$PID;state='running';started=[DateTimeOffset]::Now.ToString('o')}
         Write-Json (Join-Path $WorkDir 'package-state.current.json') $state
         if (-not $SkipBuild) {
             & cargo @flags --message-format=json-render-diagnostics 1>(Join-Path $WorkDir "cargo.$edition.current.jsonl")
             if ($LASTEXITCODE -ne 0) { throw "Cargo failed for $edition" }
             # The dock is a separate process without edition features; it ships with every package.
-            $dockFlags=@('build','--release','--locked','-p','zsdesk-dock','--manifest-path',(Join-Path $root 'Cargo.toml'))
+            $dockFlags=@('build','--release','--locked','-p','aura-dock','--manifest-path',(Join-Path $root 'Cargo.toml'))
             & cargo @dockFlags --message-format=json-render-diagnostics 1>(Join-Path $WorkDir "cargo.dock.$edition.current.jsonl")
             if ($LASTEXITCODE -ne 0) { throw "Cargo failed for the dock ($edition)" }
-            $exe=Join-Path $TargetDir 'release\zsdesk-app.exe'
+            $exe=Join-Path $TargetDir 'release\aura-explorer.exe'
         } else { $exe=[IO.Path]::GetFullPath($BinaryPath) }
         $identity=Get-BuildInfo $exe
-        if ($identity.product -ne 'ZSDesk' -or $identity.version -ne $version -or $identity.edition -ne $edition -or $identity.network -ne $definition.Network -or $identity.desktop -ne $definition.Desktop -or $identity.themed -ne $definition.Themed -or [bool]$identity.desktop_only -ne [bool]$definition.DesktopOnly) { throw "Executable edition/version mismatch: $edition" }
+        if ($identity.product -ne 'AuraExplorer' -or $identity.version -ne $version -or $identity.edition -ne $edition -or $identity.network -ne $definition.Network -or $identity.desktop -ne $definition.Desktop -or $identity.themed -ne $definition.Themed -or [bool]$identity.desktop_only -ne [bool]$definition.DesktopOnly) { throw "Executable edition/version mismatch: $edition" }
         [IO.Directory]::CreateDirectory($stage) | Out-Null
-        Copy-Item -LiteralPath $exe -Destination (Join-Path $stage 'ZSDesk.exe')
-        $dockExe=if ($SkipBuild) { Join-Path (Split-Path -Parent $exe) 'zsdesk-dock.exe' } else { Join-Path $TargetDir 'release\zsdesk-dock.exe' }
-        if (Test-Path -LiteralPath $dockExe) { Copy-Item -LiteralPath $dockExe -Destination (Join-Path $stage 'zsdesk-dock.exe') }
-        elseif ($SkipBuild) { Write-Warning 'zsdesk-dock.exe is missing next to -BinaryPath; the package ships without the dock' }
+        Copy-Item -LiteralPath $exe -Destination (Join-Path $stage 'AuraExplorer.exe')
+        $dockExe=if ($SkipBuild) { Join-Path (Split-Path -Parent $exe) 'AuraDock.exe' } else { Join-Path $TargetDir 'release\aura-dock.exe' }
+        if (Test-Path -LiteralPath $dockExe) { Copy-Item -LiteralPath $dockExe -Destination (Join-Path $stage 'AuraDock.exe') }
+        elseif ($SkipBuild) { Write-Warning 'AuraDock.exe is missing next to -BinaryPath; the package ships without the dock' }
         else { throw 'The dock executable was not produced' }
-        $windowHook=(Get-Content -LiteralPath (Join-Path $TargetDir 'release\ZSDeskWindowHook.name') -Raw).Trim()
-        if($windowHook -notmatch '^ZSDeskWindowHook-[0-9a-f]{16}\.dll$'){throw 'Invalid window hook identity'}
+        $windowHook=(Get-Content -LiteralPath (Join-Path $TargetDir 'release\AuraExplorerWindowHook.name') -Raw).Trim()
+        if($windowHook -notmatch '^AuraExplorerWindowHook-[0-9a-f]{16}\.dll$'){throw 'Invalid window hook identity'}
         Copy-Item -LiteralPath (Join-Path $TargetDir "release\$windowHook") -Destination (Join-Path $stage $windowHook)
         foreach ($runtime in $runtimeFiles) {
             Copy-Item -LiteralPath (Join-Path $RuntimeDir $runtime) -Destination (Join-Path $stage $runtime)
@@ -186,10 +186,10 @@ try {
         if (-not $definition.DesktopOnly) {
             $listaryStage=Join-Path $stage 'integrations\listary'
             [IO.Directory]::CreateDirectory($listaryStage) | Out-Null
-            $provider=Join-Path $listaryStage 'FileAppPlugins\ZSDesk'
+            $provider=Join-Path $listaryStage 'FileAppPlugins\AuraExplorer'
             [IO.Directory]::CreateDirectory($provider) | Out-Null
             # The file manager host supplies the FileAppPlugin contract.
-            foreach ($file in @('Listary.FileAppPlugin.ZSDesk.dll','ListaryPluginManifest.json','Icon.png')) {
+            foreach ($file in @('Listary.FileAppPlugin.AuraExplorer.dll','ListaryPluginManifest.json','Icon.png')) {
                 Copy-Item -LiteralPath (Join-Path $pluginOutput $file) -Destination $provider
             }
             Copy-Item -LiteralPath (Join-Path $root 'native\listary\Prepare-Listary7.ps1') -Destination (Join-Path $listaryStage 'Prepare-Listary7.ps1')
@@ -202,25 +202,25 @@ try {
         Copy-Item -LiteralPath $enginePinPath -Destination (Join-Path $engineStage 'manifest.json')
         }
         if ($RoutingDir -and -not $definition.DesktopOnly) {
-            $routingFiles=@('ShellRoutingControl.exe','ZSDeskRevealRouter.dll','manifest.json','MinHook-LICENSE.txt')
+            $routingFiles=@('ShellRoutingControl.exe','AuraExplorerRevealRouter.dll','manifest.json','MinHook-LICENSE.txt')
             [IO.Directory]::CreateDirectory((Join-Path $stage 'routing')) | Out-Null
             foreach ($file in $routingFiles) { Copy-Item -LiteralPath (Join-Path $RoutingDir $file) -Destination (Join-Path $stage "routing\$file") }
         }
-        $readme=@("ZSDesk $version $($definition.Name) — Windows x64",'',
-            '运行 ZSDesk.exe 打开文件管理器；--classic-menu 使用原版菜单。',
-            '码头：ZSDesk.exe 启动时自动带起 zsdesk-dock.exe（面板与 Launchpad），退出时一并结束；右键菜单可退出面板。',
+        $readme=@("AuraExplorer $version $($definition.Name) — Windows x64",'',
+            '运行 AuraExplorer.exe 打开文件管理器；--classic-menu 使用原版菜单。',
+            '码头：AuraExplorer.exe 启动时自动带起 AuraDock.exe（面板与 Launchpad），退出时一并结束；右键菜单可退出面板。',
             'Ctrl+F 在主窗口搜索文件；Alt+P 切换预览窗格；空格打开快速预览。',
             'Ctrl+Shift+A 反向选择；地址栏支持 pwsh、powershell、nu 和 nushell。',
             '≡ → 系统集成 → 开机启动与全局快捷键：设置登录常驻及唤起主窗口搜索的全局快捷键。',
             '≡ → 布局、标签页、预览与操作、搜索：界面与搜索选项。',
             '≡ → 右键菜单：选择菜单样式和显示的命令。',
             '≡ → 系统集成：文件夹默认打开方式。')
-        if ($definition.DesktopOnly) {$readme=@("ZSDesk $version 桌面盒子独立版 — Windows x64",'','运行 ZSDesk.exe 启动桌面格子。','支持文件夹映射、格子标签页、拖放整理、预览、主题与独立登录启动。','配置目录：%APPDATA%\ZSDesk-DesktopBox；与文件管理版和主题版分别保存。','外部文件夹使用系统资源管理器打开。','此版本不包含文件管理主窗口、全盘搜索和文件夹接管。')}
+        if ($definition.DesktopOnly) {$readme=@("AuraExplorer $version 桌面盒子独立版 — Windows x64",'','运行 AuraExplorer.exe 启动桌面格子。','支持文件夹映射、格子标签页、拖放整理、预览、主题与独立登录启动。','配置目录：%APPDATA%\AuraExplorer-DesktopBox；与文件管理版和主题版分别保存。','外部文件夹使用系统资源管理器打开。','此版本不包含文件管理主窗口、全盘搜索和文件夹接管。')}
         if ($RoutingDir -and -not $definition.DesktopOnly) { $readme += '≡ → 系统集成 → 文件位置转发：选择应用并接入文件定位。' }
-        if ($definition.Desktop -and -not $definition.DesktopOnly) { $readme += @('','桌面格子：ZSDesk.exe --desktop，或从主菜单启动。','支持文件夹映射、腾讯布局导入、悬停展开、分组和屏幕布局。') }
+        if ($definition.Desktop -and -not $definition.DesktopOnly) { $readme += @('','桌面格子：AuraExplorer.exe --desktop，或从主菜单启动。','支持文件夹映射、腾讯布局导入、悬停展开、分组和屏幕布局。') }
         if ($definition.Network) { $readme += @('','支持 SMB/UNC、系统 FTP；SFTP/SSH 地址需要 SSHFS-Win/WinFsp。') }
-        if($definition.Themed){$readme+=@('','主题版支持亚克力、Mica 和纯色深浅主题；配置独立存放在 AppData\Roaming\ZSDesk-Theme。')}
-        elseif(-not $definition.DesktopOnly){$readme+=@('','配置默认保存在用户 AppData\Roaming\ZSDesk。')}
+        if($definition.Themed){$readme+=@('','主题版支持亚克力、Mica 和纯色深浅主题；配置独立存放在 AppData\Roaming\AuraExplorer-Theme。')}
+        elseif(-not $definition.DesktopOnly){$readme+=@('','配置默认保存在用户 AppData\Roaming\AuraExplorer。')}
         if(-not $definition.DesktopOnly){
         $readme += @('','≡ → 搜索：选择自带搜索或 Everything 搜索；新配置默认使用自带搜索，已有配置保留原来的选择。',
             '自带搜索使用共享的内存索引和本地快照；普通权限下遍历目录，管理员权限下使用只读 MFT 枚举。',
@@ -230,23 +230,23 @@ try {
             'Everything 快速全盘索引需要兼容服务或管理员权限；未配置可用索引时会显示设置提示。',
             'Everything 版权与完整许可位于 engines\everything\License.txt。')
         }
-        $readme+=@('配置目录菜单可为下次普通启动指定位置，空目录从初始设置开始。','portable.flag 使用程序旁 data 目录；--profile-dir 指定独立配置。','安装包与便携包不包含用户路径、桌面布局、搜索索引或系统接管记录。','源码与许可证：https://github.com/qiu7824/zsdesk')
+        $readme+=@('配置目录菜单可为下次普通启动指定位置，空目录从初始设置开始。','portable.flag 使用程序旁 data 目录；--profile-dir 指定独立配置。','安装包与便携包不包含用户路径、桌面布局、搜索索引或系统接管记录。','源码与许可证：https://github.com/qiu7824/aura')
         $readme -join "`r`n" | Set-Content -LiteralPath (Join-Path $stage '说明.txt') -Encoding utf8BOM
-        $english=@("ZSDesk $version ($edition) — Windows x64",'',
+        $english=@("AuraExplorer $version ($edition) — Windows x64",'',
             'Language: non-Chinese Windows systems use English by default.',
             'File manager: menu → Language. Application text switches immediately.',
             'File names and Windows Shell labels retain their original language.',
-            'Run ZSDesk.exe. Ctrl+F searches files; Alt+P toggles the preview pane; Space opens quick preview.',
-            'Dock: ZSDesk.exe starts zsdesk-dock.exe with it (panel and Launchpad) and stops it on exit; its menu can quit the panel.',
+            'Run AuraExplorer.exe. Ctrl+F searches files; Alt+P toggles the preview pane; Space opens quick preview.',
+            'Dock: AuraExplorer.exe starts AuraDock.exe with it (panel and Launchpad) and stops it on exit; its menu can quit the panel.',
             'Network share searches stay within the selected UNC folder or existing mapped network folder.',
-            'Settings are preserved during updates. Exit ZSDesk before replacing portable files.',
+            'Settings are preserved during updates. Exit AuraExplorer before replacing portable files.',
             'Use portable.flag for a data folder beside the program, or --profile-dir for a separate configuration.',
-            'Source and licenses: https://github.com/qiu7824/zsdesk')
-        if($definition.DesktopOnly){$english=@("ZSDesk $version Desktop Box — Windows x64",'',
-            'Run ZSDesk.exe to start desktop fences. This edition does not include the file manager or search.',
+            'Source and licenses: https://github.com/qiu7824/aura')
+        if($definition.DesktopOnly){$english=@("AuraExplorer $version Desktop Box — Windows x64",'',
+            'Run AuraExplorer.exe to start desktop fences. This edition does not include the file manager or search.',
             'The interface follows the Windows display language, using English on non-Chinese systems.',
-            'Settings: %APPDATA%\ZSDesk-DesktopBox. Files and folders remain in their original locations.',
-            'Source and licenses: https://github.com/qiu7824/zsdesk')}
+            'Settings: %APPDATA%\AuraExplorer-DesktopBox. Files and folders remain in their original locations.',
+            'Source and licenses: https://github.com/qiu7824/aura')}
         $english -join "`r`n" | Set-Content -LiteralPath (Join-Path $stage 'README.en.txt') -Encoding utf8BOM
         $files=[ordered]@{}
         foreach ($file in (Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName)) {
@@ -257,7 +257,7 @@ try {
         $searchEngine=if($definition.DesktopOnly){$null}else{[ordered]@{product='Everything';version=$enginePin.version;manifest='engines/everything/manifest.json';manifest_sha256=(Get-FileHash -LiteralPath $enginePinPath).Hash.ToLowerInvariant()}}
         $defaultSearchBackend=if($definition.DesktopOnly){$null}else{'native_ntfs'}
         $searchBackends=@();if(-not $definition.DesktopOnly){$searchBackends=@('native_ntfs','everything')}
-        $manifest=[ordered]@{product='ZSDesk';version=$version;edition=$edition;edition_name=$definition.Name;platform='windows-x64';features=$definition.Features;desktop_only=[bool]$definition.DesktopOnly;
+        $manifest=[ordered]@{product='AuraExplorer';version=$version;edition=$edition;edition_name=$definition.Name;platform='windows-x64';features=$definition.Features;desktop_only=[bool]$definition.DesktopOnly;
             search_engine=$searchEngine;search_default_backend=$defaultSearchBackend;search_backends=@($searchBackends);files=$files}
         Write-Json (Join-Path $stage 'manifest.json') $manifest
         Assert-Payload $stage $manifest
@@ -267,7 +267,7 @@ try {
         $archive=[IO.Compression.ZipFile]::OpenRead($zip)
         try { if ($archive.Entries.Count -ne $files.Count+1) { throw 'ZIP file count mismatch' } } finally { $archive.Dispose() }
         if ($InnoCompiler) {
-            $arguments=@('/Qp',"/DSourceDir=$stage","/DOutputDir=$WorkDir","/DMyAppVersion=$version","/DEdition=$edition","/DEditionName=$($definition.Name)","/DHasDesktop=$([int]$definition.Desktop)",(Join-Path $root 'packaging\windows\zsdesk.iss'))
+            $arguments=@('/Qp',"/DSourceDir=$stage","/DOutputDir=$WorkDir","/DMyAppVersion=$version","/DEdition=$edition","/DEditionName=$($definition.Name)","/DHasDesktop=$([int]$definition.Desktop)",(Join-Path $root 'packaging\windows\aura.iss'))
             & $InnoCompiler @arguments 1>(Join-Path $WorkDir "installer.$edition.current.log")
             if ($LASTEXITCODE -ne 0) { throw "Installer compiler failed for $edition" }
         }
@@ -277,7 +277,7 @@ try {
         Move-Item -LiteralPath $stage -Destination $destination
         Move-Item -LiteralPath $zip -Destination "$destination.zip"
         if ($InnoCompiler) { Move-Item -LiteralPath (Join-Path $WorkDir "$name-setup.exe") -Destination (Join-Path $OutputDir "$name-setup.exe") }
-        $state.state='verified';$state['ended']=[DateTimeOffset]::Now.ToString('o');$state['output']=$destination;$state['exe_sha256']=$files['ZSDesk.exe'].sha256
+        $state.state='verified';$state['ended']=[DateTimeOffset]::Now.ToString('o');$state['output']=$destination;$state['exe_sha256']=$files['AuraExplorer.exe'].sha256
         Write-Json (Join-Path $WorkDir 'package-state.current.json') $state
         Write-Output "$name verified"
     }

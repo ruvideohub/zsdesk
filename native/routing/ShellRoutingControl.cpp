@@ -22,10 +22,10 @@
 
 namespace {
 constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-std::wstring gRunName=L"ZSDeskFileRevealRouting";
-constexpr wchar_t kRouterClass[] = L"ZSDesk.FileRevealRouter.2";
+std::wstring gRunName=L"AuraExplorerFileRevealRouting";
+constexpr wchar_t kRouterClass[] = L"AuraExplorer.FileRevealRouter.2";
 constexpr wchar_t kLegacyClass[] = L"Native360.FileRevealRouter.1";
-constexpr wchar_t kTargetClass[] = L"ZSDesk.Native.Explorer";
+constexpr wchar_t kTargetClass[] = L"AuraExplorer.Native.Explorer";
 constexpr wchar_t kPackage[] = L"package.ini";
 constexpr wchar_t kBackup[] = L"routing-startup-backup.bin";
 constexpr wchar_t kWatchState[] = L"routing-watcher-state.tsv";
@@ -84,8 +84,8 @@ bool SameOwner(HANDLE process,DWORD pid) {
 DWORD Initialize() {
     wchar_t exe[32768]{};DWORD length=GetModuleFileNameW(nullptr,exe,DWORD(std::size(exe)));if(!length||length>=std::size(exe))return ERROR_BAD_PATHNAME;
     gExe=exe;gRoot=gExe.substr(0,gExe.find_last_of(L"\\/"));DWORD error=OwnerSid(GetCurrentProcess(),gSid);if(error)return error;
-    gRunName=RoutingIni(Join(kPackage),L"Routing",L"StartupName",L"ZSDeskFileRevealRouting");
-    if(gRunName!=L"ZSDeskFileRevealRouting"&&gRunName!=L"Native360FileRevealRouting")return ERROR_BAD_CONFIGURATION;
+    gRunName=RoutingIni(Join(kPackage),L"Routing",L"StartupName",L"AuraExplorerFileRevealRouting");
+    if(gRunName!=L"AuraExplorerFileRevealRouting"&&gRunName!=L"Native360FileRevealRouting")return ERROR_BAD_CONFIGURATION;
     std::wstring bindings=RoutingIni(Join(kPackage),L"Routing",L"BindingsFile",L"clients.ini");
     if(bindings.empty()||bindings.find_first_of(L"\\/:")!=std::wstring::npos||bindings.find(wchar_t(34))!=std::wstring::npos||bindings.find(L"..")!=std::wstring::npos)return ERROR_BAD_CONFIGURATION;
     error=ReadClientBindings(Join(bindings.c_str()),gSpecs);if(error)return error;
@@ -132,7 +132,7 @@ DWORD OpenTarget(const Target& target,Handle& process) {
 }
 DWORD Package(DWORD role,std::wstring& path,std::string& digest) {
     bool bridge=role==1;wchar_t file[260]{},hash[80]{};
-    GetPrivateProfileStringW(L"Routing",bridge?L"BridgeFile":L"RouterFile",bridge?L"360RevealBridge.dll":L"ZSDeskRevealRouter.dll",file,DWORD(std::size(file)),Join(kPackage).c_str());
+    GetPrivateProfileStringW(L"Routing",bridge?L"BridgeFile":L"RouterFile",bridge?L"360RevealBridge.dll":L"AuraExplorerRevealRouter.dll",file,DWORD(std::size(file)),Join(kPackage).c_str());
     GetPrivateProfileStringW(L"Routing",bridge?L"BridgeSHA256":L"RouterSHA256",L"",hash,DWORD(std::size(hash)),Join(kPackage).c_str());
     if(!file[0]||wcsstr(file,L"..")||wcspbrk(file,L"\\/:\""))return ERROR_BAD_CONFIGURATION;
     size_t length=wcslen(file);if(length<5||_wcsicmp(file+length-4,L".dll")||wcslen(hash)!=64)return ERROR_BAD_CONFIGURATION;
@@ -169,7 +169,7 @@ DWORD SelectAdapter(const Target& target,HANDLE process,const std::vector<Remote
     for(const auto& module:modules){
         if(!_wcsicmp(module.path.c_str(),path.c_str()))continue;
         const wchar_t* name=BaseName(module.path.c_str());
-        if(_wcsicmp(name,L"FileRevealRouter.dll")&&_wcsicmp(name,L"ZSDeskRevealRouter.dll"))continue;
+        if(_wcsicmp(name,L"FileRevealRouter.dll")&&_wcsicmp(name,L"AuraExplorerRevealRouter.dll"))continue;
         std::string actual;
         if(legacyConfigured&&!_wcsicmp(module.path.c_str(),Join(legacyFile.c_str()).c_str())&&FileSha256(module.path.c_str(),actual)&&actual==legacyHash){
             routing::Status status;error=RemoteBuffer(process,module.base,"RouterGetStatus",status);if(error)return error;
@@ -310,7 +310,7 @@ BOOL CALLBACK FindDestinationWindow(HWND window,LPARAM parameter) {
     DWORD pid=0;GetWindowThreadProcessId(window,&pid);Target target;
     if(!DestinationProcess(pid,*search.destination,target))return TRUE;
     if(!search.destination->profileToken.empty()){
-        std::wstring property=L"ZSDesk.RoutingProfile."+search.destination->profileToken;
+        std::wstring property=L"AuraExplorer.RoutingProfile."+search.destination->profileToken;
         if(reinterpret_cast<INT_PTR>(GetPropW(window,property.c_str()))!=1)return TRUE;
     }
     search.window=window;search.target=target;return FALSE;
@@ -368,7 +368,7 @@ DWORD Forward(const std::vector<BYTE>& packet,bool& uncertain,bool allowForegrou
                 SendMessageTimeoutW(window,WM_COPYDATA,0,reinterpret_cast<LPARAM>(&activation),SMTO_ABORTIFHUNG|SMTO_BLOCK,1500,&shown);
             }else{
                 // Retain the broker's inherited permission for older receivers.
-                const INT_PTR preferred=reinterpret_cast<INT_PTR>(GetPropW(window,L"ZSDesk.PreferredShow"));
+                const INT_PTR preferred=reinterpret_cast<INT_PTR>(GetPropW(window,L"AuraExplorer.PreferredShow"));
                 ShowWindowAsync(window,DestinationShowCommand(IsWindowVisible(window)!=FALSE,IsIconic(window)!=FALSE,preferred));
                 SetForegroundWindow(window);
             }
@@ -425,7 +425,7 @@ DWORD Watch() {
     WNDCLASSEXW legacy=klass;legacy.lpszClassName=kLegacyClass;ATOM legacyAtom=RegisterClassExW(&legacy);
     HWND legacyWindow=legacyAtom?CreateWindowExW(0,kLegacyClass,L"",0,0,0,0,0,HWND_MESSAGE,nullptr,legacy.hInstance,nullptr):nullptr;
     const std::wstring ownerProperty=gPrefix+L".Owner";
-    for(HWND owned:{window,legacyWindow})if(owned){SetPropW(owned,L"ZSDesk.Routing.Protocol",reinterpret_cast<HANDLE>(INT_PTR(2)));SetPropW(owned,ownerProperty.c_str(),reinterpret_cast<HANDLE>(INT_PTR(1)));}
+    for(HWND owned:{window,legacyWindow})if(owned){SetPropW(owned,L"AuraExplorer.Routing.Protocol",reinterpret_cast<HANDLE>(INT_PTR(2)));SetPropW(owned,ownerProperty.c_str(),reinterpret_cast<HANDLE>(INT_PTR(1)));}
     gStats.installed=1;gStats.bridgeWindow=reinterpret_cast<ULONG_PTR>(window);gAccepting.store(true);
     FILETIME created{},exited{},kernel{},user{};GetProcessTimes(GetCurrentProcess(),&created,&exited,&kernel,&user);
     std::ostringstream state;state<<"N360WATCH1\n"<<GetCurrentProcessId()<<'\t'<<TimeNumber(created)<<'\t'<<gSession<<'\n';WriteText(kWatchState,state.str());SaveStats();
@@ -438,7 +438,7 @@ HWND OwnWatcherWindow(){
     for(const wchar_t* klass:{kRouterClass,kLegacyClass}){HWND window=nullptr;while((window=FindWindowExW(HWND_MESSAGE,window,klass,nullptr))!=nullptr){
         DWORD pid=0;GetWindowThreadProcessId(window,&pid);Handle process(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,FALSE,pid));if(!process||!SameOwner(process.get(),pid))continue;
         wchar_t path[32768]{};DWORD size=DWORD(std::size(path));if(!QueryFullProcessImageNameW(process.get(),0,path,&size)||_wcsicmp(path,gExe.c_str()))continue;
-        INT_PTR protocol=reinterpret_cast<INT_PTR>(GetPropW(window,L"ZSDesk.Routing.Protocol"));
+        INT_PTR protocol=reinterpret_cast<INT_PTR>(GetPropW(window,L"AuraExplorer.Routing.Protocol"));
         if(protocol==2&&reinterpret_cast<INT_PTR>(GetPropW(window,property.c_str()))==1)return window;
         if(!protocol&&gRunName==L"Native360FileRevealRouting"&&!wcscmp(klass,kLegacyClass))return window;
     }}return nullptr;
@@ -557,7 +557,7 @@ DWORD Discover(){
             }RegCloseKey(app);
         }RegCloseKey(uninstall);
     }
-    std::wstring json=L"{\"schema\":\"ZSDesk.RoutingDiscovery.v1\",\"applications\":[";bool first=true;for(const auto& item:found){if(!first)json+=L",";first=false;json+=CompatibilityJson(item.second);}json+=L"]}";Out(json);return 0;
+    std::wstring json=L"{\"schema\":\"AuraExplorer.RoutingDiscovery.v1\",\"applications\":[";bool first=true;for(const auto& item:found){if(!first)json+=L",";first=false;json+=CompatibilityJson(item.second);}json+=L"]}";Out(json);return 0;
 }
 DWORD Inspect(const wchar_t* path,const wchar_t* caller=nullptr){auto value=InspectCompatibility(path,caller?caller:L"");Out(CompatibilityJson(value));return value.supported?0:ERROR_NOT_SUPPORTED;}
 DWORD SelfTest() {
@@ -615,7 +615,7 @@ void RecordLaunchResult(int argc,wchar_t** argv,DWORD error){
     DWORD reason=0;{std::lock_guard<std::mutex> lock(gStatsMutex);reason=gStats.reserved;}
     Handle mutex(CreateMutexW(nullptr,FALSE,(gPrefix+L".LaunchStatus").c_str()));
     if(mutex){const DWORD wait=WaitForSingleObject(mutex.get(),200);if(wait==WAIT_OBJECT_0||wait==WAIT_ABANDONED){
-        std::ostringstream record;record<<"ZSDesk.RouteLaunch.v1\n"<<source<<'\t'<<kind<<'\t'<<id<<'\t'<<error<<'\t'<<(reason==static_cast<DWORD>(routing::Reason::Indeterminate))<<'\t'<<reason<<'\n';WriteText(L"routing-launch.current.tsv",record.str());ReleaseMutex(mutex.get());
+        std::ostringstream record;record<<"AuraExplorer.RouteLaunch.v1\n"<<source<<'\t'<<kind<<'\t'<<id<<'\t'<<error<<'\t'<<(reason==static_cast<DWORD>(routing::Reason::Indeterminate))<<'\t'<<reason<<'\n';WriteText(L"routing-launch.current.tsv",record.str());ReleaseMutex(mutex.get());
     }}
 }
 DWORD UpgradeCheck(const wchar_t* clients,const wchar_t* previous){
@@ -623,7 +623,7 @@ DWORD UpgradeCheck(const wchar_t* clients,const wchar_t* previous){
     if(previous){std::vector<Spec> old;error=ReadClientBindings(previous,old);if(error)return error;
         for(auto& entry:old)if(entry.enabled&&std::none_of(bindings.begin(),bindings.end(),[&](const Spec& current){return !_wcsicmp(current.path.c_str(),entry.path.c_str());}))bindings.push_back(std::move(entry));
     }
-    std::wstring json=L"{\"schema\":\"ZSDesk.RoutingUpgrade.v1\",\"processes\":[";bool first=true;unsigned blocked=0;
+    std::wstring json=L"{\"schema\":\"AuraExplorer.RoutingUpgrade.v1\",\"processes\":[";bool first=true;unsigned blocked=0;
     Handle snapshot(CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0));if(snapshot.get()==INVALID_HANDLE_VALUE)return ErrorOr();
     PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.get(),&entry))return ErrorOr();
     do{for(const auto& binding:bindings){
@@ -632,7 +632,7 @@ DWORD UpgradeCheck(const wchar_t* clients,const wchar_t* previous){
         wchar_t path[32768]{};DWORD length=DWORD(std::size(path));if(!QueryFullProcessImageNameW(process.get(),0,path,&length))return ErrorOr();
         if(_wcsicmp(path,binding.path.c_str()))continue;
         std::vector<RemoteModule> modules;error=ReadModules(entry.th32ProcessID,modules);if(error)return error;
-        for(const auto& module:modules)if(!_wcsicmp(BaseName(module.path.c_str()),L"ZSDeskRevealRouter.dll")||!_wcsicmp(BaseName(module.path.c_str()),L"FileRevealRouter.dll")){
+        for(const auto& module:modules)if(!_wcsicmp(BaseName(module.path.c_str()),L"AuraExplorerRevealRouter.dll")||!_wcsicmp(BaseName(module.path.c_str()),L"FileRevealRouter.dll")){
             if(!first)json+=L",";first=false;++blocked;
             json+=L"{\"pid\":"+std::to_wstring(entry.th32ProcessID)+L",\"application\":"+RoutingJson(binding.name)+L",\"module\":"+RoutingJson(module.path)+L"}";break;
         }
@@ -642,7 +642,7 @@ DWORD UpgradeCheck(const wchar_t* clients,const wchar_t* previous){
 }
 } // namespace
 
-#ifndef ZSDESK_ROUTING_NO_MAIN
+#ifndef AURA_ROUTING_NO_MAIN
 int wmain(int argc,wchar_t** argv) {
     if(argc<2){std::fwprintf(stderr,L"ShellRoutingControl --apply-once | --status | --watch | --stop | --enable-startup | --disable-startup | --restore | --reveal path | --forward-test packet | --self-test\n");return ERROR_INVALID_PARAMETER;}
     const bool watching=!wcscmp(argv[1],L"--watch");

@@ -1,23 +1,23 @@
-# Панель ZSDesk (док + Launchpad)
+# Панель AuraDock (док + Launchpad)
 
 Панель внизу экрана — это **Laminar Dock** (`davesousa/Laminar_Dock`, MIT, © 2026 Dave Sousa),
-взятый в исходниках и приспособленный к ZSDesk. Вместе с ним в поставку входит `laminar-sys` —
+взятый в исходниках и приспособленный к AuraExplorer. Вместе с ним в поставку входит `laminar-sys` —
 системный слой (приложения, поиск, звук, медиа, радио, тема, статистика).
 
 | Что | Где |
 |---|---|
-| Панель, трей, стеки, превью, поиск, Launchpad | `crates/zsdesk-dock` |
+| Панель, трей, стеки, превью, поиск, Launchpad | `crates/aura-dock` |
 | Системные сервисы панели | `crates/laminar-sys` |
-| Запуск панели вместе с ZSDesk | `crates/zsdesk-app/src/shell_dock.rs` |
-| Настройки панели | `%APPDATA%\ZSDesk\Dock\config.json` |
-| Установщик | `packaging/windows/zsdesk.iss` (кладутся оба exe) |
+| Запуск панели вместе с AuraExplorer | `crates/aura-explorer/src/shell_dock.rs` |
+| Настройки панели | `%APPDATA%\AuraExplorer\Dock\config.json` |
+| Установщик | `packaging/windows/aura.iss` (кладутся оба exe) |
 | Лицензия апстрима | `packaging/licenses/Laminar-MIT.txt` |
 
 ## Один установщик, один запуск
 
-1. Установщик ZSDesk кладёт рядом `ZSDesk.exe` и `zsdesk-dock.exe`.
-2. При старте `ZSDesk.exe` поднимает панель: `zsdesk-dock.exe --parent <pid ZSDesk>`.
-3. Дочерний процесс сам следит за родителем: как только `ZSDesk.exe` завершился (в том числе
+1. Установщик AuraExplorer кладёт рядом `AuraExplorer.exe` и `AuraDock.exe`.
+2. При старте `AuraExplorer.exe` поднимает панель: `AuraDock.exe --parent <pid AuraExplorer>`.
+3. Дочерний процесс сам следит за родителем: как только `AuraExplorer.exe` завершился (в том числе
    аварийно), панель закрывается и возвращает на место панель задач Windows.
 4. Панель не запускается в служебных режимах: `--quick-search`, `--quick-search-settings`,
    `--background`, `--desktop --quit`, а также при явном `--no-dock`.
@@ -30,17 +30,17 @@
 | Место | Изменение |
 |---|---|
 | `launchpad.rs` | одна тихая панель по центру вместо трёх (виджеты и центр управления выключены), подложка светлее (`scrim 0.22`) |
-| `updater.rs` | Velopack вырезан: панель обновляется вместе с ZSDesk, `installed() == false`, автозапуск — забота ZSDesk |
-| `config.rs` | каталог настроек `%APPDATA%\ZSDesk\Dock`, `check_updates` по умолчанию выключен |
-| `main.rs`, `dock.rs`, `tracker.rs` | имена окна, класса и мьютекса — `ZSDesk.Dock` / `ZSDeskDock`, меню говорит «ZSDesk Dock» |
-| `Cargo.toml` | пакет `zsdesk-dock`, версия как у ZSDesk, зависимости — только `windows`, `windows-core`, `windows-numerics`, `serde`, `serde_json`, `laminar-sys` |
+| `updater.rs` | Velopack вырезан: панель обновляется вместе с AuraExplorer, `installed() == false`, автозапуск — забота AuraExplorer |
+| `config.rs` | каталог настроек `%APPDATA%\AuraExplorer\Dock`, `check_updates` по умолчанию выключен |
+| `main.rs`, `dock.rs`, `tracker.rs` | имена окна, класса и мьютекса — `AuraExplorer.Dock` / `AuraExplorerDock`, меню говорит «AuraDock» |
+| `Cargo.toml` | пакет `aura-dock`, версия как у AuraExplorer, зависимости — только `windows`, `windows-core`, `windows-numerics`, `serde`, `serde_json`, `laminar-sys` |
 
 ## Русский интерфейс
 
 Подписи панели — русские. Переводятся два места, через которые проходит весь текст:
 `menu::MenuItem::item/header` (все меню: панель, значки, виджет часов, уведомления) и
 `launchpad::Launchpad::txt` (всё, что рисует Launchpad: вкладки настроек, подписи, подсказки).
-Таблица лежит в `crates/zsdesk-dock/src/strings.rs` и сопоставляет **целые строки**, поэтому
+Таблица лежит в `crates/aura-dock/src/strings.rs` и сопоставляет **целые строки**, поэтому
 имена приложений, пути, имена файлов и текст пользователя остаются как есть. Подписи с
 числами («Закрыть все окна (3)», «Все приложения 12») обрабатываются по префиксу.
 
@@ -61,56 +61,56 @@
   в меню панели. Осталось три вкладки: «Панель», «Стекло», «Поведение».
 - **Три панели Launchpad** — см. ниже.
 
-## Значок ZSDesk на панели
+## Значок AuraExplorer на панели
 
-Панель принадлежит ZSDesk, поэтому его иконка стоит **первой слева** и появляется на любом
-профиле: `apps::ensure_own_pin` при старте сверяет `pins` с `ZSDesk.exe`, лежащим рядом с
-`zsdesk-dock.exe`, и добавляет иконку с разделителем, если её нет. Картинку и подпись
-отдаёт сама оболочка (иконка берётся из ресурсов `ZSDesk.exe`), поэтому отдельный файл
+Панель принадлежит AuraExplorer, поэтому его иконка стоит **первой слева** и появляется на любом
+профиле: `apps::ensure_own_pin` при старте сверяет `pins` с `AuraExplorer.exe`, лежащим рядом с
+`AuraDock.exe`, и добавляет иконку с разделителем, если её нет. Картинку и подпись
+отдаёт сама оболочка (иконка берётся из ресурсов `AuraExplorer.exe`), поэтому отдельный файл
 значка не нужен. Клик открывает файловый менеджер и fences.
 
 ## Значок панели
 
-У `zsdesk-dock.exe` есть свой значок и блок версии — иначе в Проводнике, в меню «Пуск» и в
+У `AuraDock.exe` есть свой значок и блок версии — иначе в Проводнике, в меню «Пуск» и в
 списке установленных программ вместо панели показывалась бы безымянная системная иконка.
 
-- `crates/zsdesk-dock/resources/zsdesk-dock.ico` — панель в том же золоте, что папка
-  `ZSDesk.exe`: скруглённая полоса с тремя плитками. Размеры 16…256, каждый нарисован
+- `crates/aura-dock/resources/aura-dock.ico` — панель в том же золоте, что папка
+  `AuraExplorer.exe`: скруглённая полоса с тремя плитками. Размеры 16…256, каждый нарисован
   отдельно с 4-кратным запасом, поэтому 16 и 20 px читаются, а не превращаются в кашу.
-- `crates/zsdesk-dock/resources/zsdesk-dock.rc` — иконка `101 ICON` и `VERSIONINFO`
-  (`ZSDesk Panel`, 0.3.18, MIT и упоминание Laminar Dock).
-- `crates/zsdesk-dock/build.rs` — встраивает `.rc` через `embed-resource` (тот же приём,
-  что у `zsdesk-app`; манифест панели не нужен, поэтому `manifest_optional`).
+- `crates/aura-dock/resources/aura-dock.rc` — иконка `101 ICON` и `VERSIONINFO`
+  (`AuraDock`, 0.3.18, MIT и упоминание Laminar Dock).
+- `crates/aura-dock/build.rs` — встраивает `.rc` через `embed-resource` (тот же приём,
+  что у `aura-explorer`; манифест панели не нужен, поэтому `manifest_optional`).
 - `scripts/make-icons.py` — перерисовывает `.ico` из кода: `python3 scripts/make-icons.py`.
 
 ## Установка и автозапуск
 
-`packaging/windows/install.ps1` (и `install.cmd` для двойного щелчка) ставит ZSDesk в профиль
+`packaging/windows/install.ps1` (и `install.cmd` для двойного щелчка) ставит AuraExplorer в профиль
 пользователя — администратор не нужен:
 
-1. копирует `ZSDesk.exe` и `zsdesk-dock.exe` в `%LOCALAPPDATA%\Programs\ZSDesk`,
+1. копирует `AuraExplorer.exe` и `AuraDock.exe` в `%LOCALAPPDATA%\Programs\AuraExplorer`,
    снимает метку «из интернета» (`Unblock-File`), подхватывает рядом лежащие DLL
    Visual C++ Runtime;
 2. прописывает автозапуск в `HKCU\…\CurrentVersion\Run`:
-   `"…\ZSDesk.exe" --desktop --tray` — сетки, виджет часов и панель поднимаются при входе
+   `"…\AuraExplorer.exe" --desktop --tray` — сетки, виджет часов и панель поднимаются при входе
    в Windows, окно файлового менеджера не открывается, значок стоит в трее;
-3. делает ярлыки в меню «Пуск»: «ZSDesk» (обычный запуск) и «ZSDesk - сетки и панель»
+3. делает ярлыки в меню «Пуск»: «AuraExplorer» (обычный запуск) и «AuraExplorer - сетки и панель»
    (`--desktop --tray`);
-4. запускает ZSDesk и печатает состояние подписи.
+4. запускает AuraExplorer и печатает состояние подписи.
 
-Отдельной записи автозапуска для панели нет намеренно: панель — дочерний процесс `ZSDesk.exe`
+Отдельной записи автозапуска для панели нет намеренно: панель — дочерний процесс `AuraExplorer.exe`
 и живёт ровно столько же, сколько он. Вторая запись дала бы вторую панель (её оттолкнул бы
-мьютекс `Local\ZSDesk.Dock`, но панель осталась бы без родителя и не вернула бы панель задач
+мьютекс `Local\AuraExplorer.Dock`, но панель осталась бы без родителя и не вернула бы панель задач
 при выходе). Если панель всё же нужна без сеток: `install.cmd -PanelOnly`.
 
 Прочее: `-NoAutostart` — не прописывать автозапуск, `-DesktopShortcut` — ярлык на рабочем
 столе, `-NoStart` — не запускать после установки, `-Remove` — удалить всё (процессы,
-автозапуск, ярлыки, папку). В Inno-установщике (`packaging/windows/zsdesk.iss`) то же самое
+автозапуск, ярлыки, папку). В Inno-установщике (`packaging/windows/aura.iss`) то же самое
 делает задача «autostart» с записью в `[Registry]` и `uninsdeletevalue`.
 
 ## Виджет часов на рабочем столе
 
-`crates/zsdesk-dock/src/desktop_clock.rs` — стеклянная карточка в углу рабочего стола: время
+`crates/aura-dock/src/desktop_clock.rs` — стеклянная карточка в углу рабочего стола: время
 крупным тонким шрифтом, под ним дата и день недели по-русски («четверг, 19 ноября»).
 Windows Composition рисует её той же поверхностью, что панель и Launchpad.
 
@@ -146,7 +146,7 @@ Windows Composition рисует её той же поверхностью, чт
 ## Виджеты на самой панели
 
 Виджеты — не только карточки Launchpad: любой из каталога
-(`crates/zsdesk-dock/src/widgets/catalog.rs`) можно поставить прямо на панель, слева от иконок.
+(`crates/aura-dock/src/widgets/catalog.rs`) можно поставить прямо на панель, слева от иконок.
 
 - **Добавить:** правый клик по панели → раздел «Виджеты на панели»: девять повседневных
   (часы, погода на сегодня, календарь, монитор ресурсов, батарея, «сейчас играет», сеть,
@@ -160,7 +160,7 @@ Windows Composition рисует её той же поверхностью, чт
 
 ## Чего больше нет
 
-- **«О программе»**: ни в меню ZSDesk, ни в настройках панели. Окно панели поиска и
+- **«О программе»**: ни в меню AuraExplorer, ни в настройках панели. Окно панели поиска и
   подсказок по клавишам осталось, но пункта, который открывал «О программе», нет.
 - **Проверки обновлений**: стартовая ежедневная проверка не запускается, уведомление о
   новой версии не показывается, в меню панели нет «Проверить обновления…». Обновления
@@ -169,7 +169,7 @@ Windows Composition рисует её той же поверхностью, чт
 ## Подпись сборки
 
 GitHub Actions подписывает оба exe на каждом прогоне (`scripts/sign.ps1`): если в секретах
-репозитория лежит настоящий сертификат (`ZSDesk_SIGN_PFX_B64` и `ZSDesk_SIGN_PFX_PASSWORD`),
+репозитория лежит настоящий сертификат (`AuraExplorer_SIGN_PFX_B64` и `AuraExplorer_SIGN_PFX_PASSWORD`),
 подпись ставится им; если нет — одноразовым самоподписанным сертификатом, чтобы в файле была
 валидная подпись Authenticode (`Get-AuthenticodeSignature` её видит и её можно явно
 доверить). SmartScreen предупреждение снимает только настоящий сертификат.
@@ -192,7 +192,7 @@ GitHub Actions подписывает оба exe на каждом прогон�
 
 `hide_windows_taskbar` по умолчанию **включён**: панель занимает место панели задач Windows, а
 сторож (`taskbar.rs`) возвращает её на место при любом выходе панели — штатном, аварийном или
-при завершении ZSDesk. Выключить можно в настройках панели (правый клик по фону → Settings).
+при завершении AuraExplorer. Выключить можно в настройках панели (правый клик по фону → Settings).
 
 ### Часы и z-порядок
 
@@ -220,7 +220,7 @@ GitHub Actions подписывает оба exe на каждом прогон�
 
 ## Центр управления
 
-Одна стеклянная шторка над панелью (`crates/zsdesk-dock/src/control_center.rs`), разделённая
+Одна стеклянная шторка над панелью (`crates/aura-dock/src/control_center.rs`), разделённая
 на секции сверху вниз:
 
 - **Плитки** 3×2: Wi-Fi, Bluetooth, режим полёта, ночной свет, «не беспокоить», тёмная/светлая
@@ -284,7 +284,7 @@ Windows. Режим полёта выключает оба радио (Wi-Fi и 
 свёрнуто, **не развёрнуто** (`IsZoomed`) и занимает весь монитор с допуском в 2 px, панель
 прячется целиком (`SW_HIDE`) вместе с Launchpad, меню, превью и стеком. Развёрнутые окна
 панель не прячут — они, как и панель задач, ходят под ней. Рабочий стол (`Progman`, `WorkerW`),
-сама панель задач и окна ZSDesk не считаются приложениями. Как только полноэкранное окно уходит
+сама панель задач и окна AuraExplorer не считаются приложениями. Как только полноэкранное окно уходит
 вперёд другое приложение — панель возвращается без активации (`SW_SHOWNOACTIVATE`).
 
 Ключ `hide_fullscreen` (по умолчанию `true`) — переключатель «Поведение» → «Hide the panel in
@@ -334,35 +334,35 @@ full-screen apps».
 ## Обновления
 
 Панель не обновляет себя: `updater::installed()` всегда `false`, поэтому меню и раздел About
-честно сообщают, что обновления приходят с ZSDesk, а `begin_install()` объясняет, что нужно
-запустить установщик ZSDesk. Проверка обновлений в настройках панели по умолчанию выключена —
+честно сообщают, что обновления приходят с AuraExplorer, а `begin_install()` объясняет, что нужно
+запустить установщик AuraExplorer. Проверка обновлений в настройках панели по умолчанию выключена —
 иначе панель полезла бы на GitHub за версией, которой у неё нет.
 
 ## Сборка
 
 ```bash
-cargo build -p zsdesk-dock --release        # панель
-cargo build -p zsdesk-app  --release        # файловый менеджер и fences
+cargo build -p aura-dock --release        # панель
+cargo build -p aura-explorer  --release        # файловый менеджер и fences
 ```
 
-`scripts/package.ps1` собирает оба бинарника для каждой редакции и кладёт `zsdesk-dock.exe`
-в стейдж; `zsdesk.iss` забирает оттуда всё содержимое. GitHub Actions: `Dock build`
-(`.github/workflows/dock-build.yml`) срабатывает на изменения `crates/zsdesk-dock/**` и
-`crates/laminar-sys/**` и отдаёт артефакт `zsdesk-dock-windows-x64`.
+`scripts/package.ps1` собирает оба бинарника для каждой редакции и кладёт `AuraDock.exe`
+в стейдж; `aura.iss` забирает оттуда всё содержимое. GitHub Actions: `Dock build`
+(`.github/workflows/dock-build.yml`) срабатывает на изменения `crates/aura-dock/**` и
+`crates/laminar-sys/**` и отдаёт артефакт `aura-dock-windows-x64`.
 
 ## Тесты
 
 ```bash
-cargo test -p zsdesk-dock          # на Windows: настройки, частоты проверок, апдейтер-заглушка
-cargo test --workspace --exclude zsdesk-dock --exclude laminar-sys
+cargo test -p aura-dock          # на Windows: настройки, частоты проверок, апдейтер-заглушка
+cargo test --workspace --exclude aura-dock --exclude laminar-sys
 ```
 
-Переносимая логика ZSDesk (конфиг, геометрия, каталог ярлыков) тестируется на хосте;
-`zsdesk-dock` собирается только под Windows.
+Переносимая логика AuraExplorer (конфиг, геометрия, каталог ярлыков) тестируется на хосте;
+`aura-dock` собирается только под Windows.
 
 ## Ограничения
 
 - Панель — второй процесс. Это выбрано сознательно: у апстрима свой dispatcher queue и
   STA-апартамент, и слияние в один процесс требует переделки его оконного цикла.
 - Значки приложений и трей берутся из оболочки; в урезанных сборках Windows список может быть короче.
-- Velopack-обновление и самообновление из меню отключены навсегда — это ответственность ZSDesk.
+- Velopack-обновление и самообновление из меню отключены навсегда — это ответственность AuraExplorer.

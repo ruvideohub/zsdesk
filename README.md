@@ -1,8 +1,8 @@
-# ZSDesk
+# AuraExplorer
 
 Windows 多标签文件管理器与桌面格子。可以在一个窗口里浏览多个文件夹、使用双栏整理文件，也可以把桌面文件分组收纳。
 
-[下载安装](https://github.com/qiu7824/zsdesk/releases/latest) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/zsdesk/issues)
+[下载安装](https://github.com/qiu7824/aura/releases/latest) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/aura/issues)
 
 适用于 Windows 10 / 11，64 位。当前版本为 **0.3.18**，支持简体中文和英文界面。
 
@@ -19,11 +19,11 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 | 主题版 | 全量功能，增加 Mica、亚克力和深浅色材质，配置独立 |
 | 桌面盒子独立版 | 只整理桌面，不包含文件管理窗口与搜索 |
 
-每个版本提供安装程序和便携 ZIP。普通用户选择名称含 `setup.exe` 的安装程序；便携版解压后运行 `ZSDesk.exe`，保留整个程序目录和 `data` 配置目录。
+每个版本提供安装程序和便携 ZIP。普通用户选择名称含 `setup.exe` 的安装程序；便携版解压后运行 `AuraExplorer.exe`，保留整个程序目录和 `data` 配置目录。
 
 ## 开始使用
 
-1. 安装或解压后打开 ZSDesk，先用普通文件夹熟悉操作。
+1. 安装或解压后打开 AuraExplorer，先用普通文件夹熟悉操作。
 2. 按 **Ctrl+T** 新建标签，**Ctrl+L** 输入目录，**Ctrl+F** 搜索。
 3. 在 **≡ → 布局** 开启双栏、调整标签位置和命令栏；两栏分别保留自己的目录与标签。
 4. 需要替代系统文件管理器时，进入 **≡ → 系统集成 → 默认打开文件夹、磁盘和此电脑**；选择“不接管系统资源管理器”可恢复。
@@ -42,7 +42,7 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 | 新窗口 | Ctrl+N |
 | 双击空白处返回上一级 | 在“预览与操作”中开关 |
 | 显示文件夹总大小并排序 | 排序 → 计算并按总大小排序 |
-| 检查版本更新 | 关于 ZSDesk → 检查更新 |
+| 检查版本更新 | 关于 AuraExplorer → 检查更新 |
 
 ## 搜索、预览和右键
 
@@ -77,53 +77,53 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 ## Панель и Launchpad вместо меню «Пуск»
 
 Панель внизу экрана — **Laminar Dock** (`davesousa/Laminar_Dock`, MIT), взятый в
-исходниках: `crates/zsdesk-dock` и `crates/laminar-sys`. В ней закреплённые и
+исходниках: `crates/aura-dock` и `crates/laminar-sys`. В ней закреплённые и
 запущенные приложения, стеки, превью окон, трей, поиск и Launchpad.
 
-- **Один установщик**: `zsdesk.iss` кладёт рядом `ZSDesk.exe` и `zsdesk-dock.exe`.
-- **Один запуск**: `ZSDesk.exe` сам поднимает панель (`--parent <pid>`) и она
+- **Один установщик**: `aura.iss` кладёт рядом `AuraExplorer.exe` и `AuraDock.exe`.
+- **Один запуск**: `AuraExplorer.exe` сам поднимает панель (`--parent <pid>`) и она
   закрывается вместе с ним, возвращая панель задач Windows на место.
   Отдельного ярлыка и ручного запуска больше нет; `--no-dock` отключает панель
   на один сеанс.
 - **Launchpad проще апстрима**: одна тихая панель по центру (~70 % экрана),
   поиск сверху, сетка приложений в середине, счётчик страниц — и ничего больше.
   Колонки виджетов и центр управления из Laminar выключены.
-- Настройки панели: `%APPDATA%\ZSDesk\Dock\config.json`. Панель не обновляет
-  себя: обновления приходят с установщиком ZSDesk.
+- Настройки панели: `%APPDATA%\AuraExplorer\Dock\config.json`. Панель не обновляет
+  себя: обновления приходят с установщиком AuraExplorer.
 - Интерфейс панели и Launchpad — на русском (`language` в `config.json`: `"ru"`, `"en"`,
   `"auto"`), из апстрима убраны виджеты, коннекторы и «О программе».
-- Иконка ZSDesk — первая на панели; на рабочем столе — стеклянный виджет часов
+- Иконка AuraExplorer — первая на панели; на рабочем столе — стеклянный виджет часов
   в стиле macOS (время и дата по-русски, не перекрывает окна).
 - **Часы настраиваются сами**: правый клик по карточке — угол, размер, 12/24 часа, дата,
   секунды, «убрать часы»; перетаскивание со снапом к ближайшему углу.
 - **Виджеты на панели**: правый клик по панели → «Виджеты на панели» (часы, погода,
   календарь, монитор ресурсов, батарея, «сейчас играет», сеть, быстрые действия) с
   галочками; «Другие виджеты…» — весь каталог в галерее Launchpad.
-- **Свой значок у панели**: `zsdesk-dock.exe` несёт иконку (золотая полоса с плитками,
+- **Свой значок у панели**: `AuraDock.exe` несёт иконку (золотая полоса с плитками,
   16–256 px) и номер версии, поэтому в Проводнике, «Пуске» и списке программ видно
   панель, а не пустую системную иконку. Рисуется из кода: `python3 scripts/make-icons.py`.
 
 ### Установка и автозапуск
 
 ```powershell
-# из папки с ZSDesk.exe и zsdesk-dock.exe
+# из папки с AuraExplorer.exe и AuraDock.exe
 powershell -ExecutionPolicy Bypass -File install.ps1
 
 # или двойным щелчком: install.cmd
 install.cmd -Remove        # удалить: процессы, автозапуск, ярлыки, папку
 ```
 
-- Ставит в профиль пользователя: `%LOCALAPPDATA%\Programs\ZSDesk`, администратор не нужен.
-- Автозапуск — одна запись `HKCU\…\Run`: `ZSDesk.exe --desktop --tray`. При входе в Windows
+- Ставит в профиль пользователя: `%LOCALAPPDATA%\Programs\AuraExplorer`, администратор не нужен.
+- Автозапуск — одна запись `HKCU\…\Run`: `AuraExplorer.exe --desktop --tray`. При входе в Windows
   сразу появляются сетки, виджет часов и панель, окно файлового менеджера не открывается,
   значок стоит в трее.
-- Отдельная запись для панели не нужна и вредна: панель — дочерний процесс `ZSDesk.exe`
+- Отдельная запись для панели не нужна и вредна: панель — дочерний процесс `AuraExplorer.exe`
   и живёт ровно столько же, сколько он. Нужна только панель — `install.cmd -PanelOnly`.
 - Прочее: `-NoAutostart`, `-DesktopShortcut`, `-NoStart`, `-Dir <путь>`.
 
 ```powershell
-cargo build -p zsdesk-dock --release   # панель
-cargo build -p zsdesk-app  --release   # файловый менеджер и fences
+cargo build -p aura-dock --release   # панель
+cargo build -p aura-explorer  --release   # файловый менеджер и fences
 ```
 
 Что именно изменено относительно апстрима, почему панель осталась отдельным
@@ -131,7 +131,7 @@ cargo build -p zsdesk-app  --release   # файловый менеджер и fe
 
 ## 反馈问题
 
-请在 [Issues](https://github.com/qiu7824/zsdesk/issues) 中提供程序版本和版本类型、Windows 版本、触发步骤、预期结果和错误信息。右键问题同时注明菜单样式及相关第三方扩展。
+请在 [Issues](https://github.com/qiu7824/aura/issues) 中提供程序版本和版本类型、Windows 版本、触发步骤、预期结果和错误信息。右键问题同时注明菜单样式及相关第三方扩展。
 
 修复提交、正式发布与反馈电脑上的复测分别记录；各项进展见[兼容性与反馈状态](docs/feedback-status.md)。
 

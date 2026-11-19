@@ -1,11 +1,11 @@
-Laminar Dock (the ZSDesk panel)
+Laminar Dock (the AuraExplorer panel)
 ================================
 The panel — the dock strip, its tray, stacks, previews, search and the Launchpad
-frame in crates/zsdesk-dock and crates/laminar-sys — is vendored from Laminar Dock
+frame in crates/aura-dock and crates/laminar-sys — is vendored from Laminar Dock
 0.2.9 by Dave Sousa, commit bcf3f33 (https://github.com/davesousa/Laminar_Dock).
-ZSDesk changes it: the Launchpad keeps one panel instead of three, the panel is
-started by ZSDesk.exe instead of a separate shortcut, Velopack is replaced with
-ZSDesk's own upgrade path, and the settings file lives in %APPDATA%\ZSDesk\Dock.
+AuraExplorer changes it: the Launchpad keeps one panel instead of three, the panel is
+started by AuraExplorer.exe instead of a separate shortcut, Velopack is replaced with
+AuraExplorer's own upgrade path, and the settings file lives in %APPDATA%\AuraExplorer\Dock.
 The upstream source declares @license MIT. The full licence text is in
 packaging\licenses\Laminar-MIT.txt.
 

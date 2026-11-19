@@ -9,7 +9,7 @@ $outputRoot=[IO.Path]::GetFullPath($OutputDir)
 if(-not $BuildDir){
     $hasher=[Security.Cryptography.SHA256]::Create()
     try {$identity=([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($PSScriptRoot)))).Replace('-','').Substring(0,12)}finally{$hasher.Dispose()}
-    $BuildDir=Join-Path ([IO.Path]::GetTempPath()) ('zsdesk-routing-'+$identity+'-msvc-x64')
+    $BuildDir=Join-Path ([IO.Path]::GetTempPath()) ('aura-routing-'+$identity+'-msvc-x64')
 }
 if(-not [IO.Path]::IsPathRooted($BuildDir)){throw 'BuildDir must be an absolute path'}
 $buildRoot=[IO.Path]::GetFullPath($BuildDir)
@@ -44,14 +44,14 @@ try {
     if($LASTEXITCODE -ne 0){throw 'Routing resource build failed'}
     & $cl @common (Join-Path $PSScriptRoot 'ShellRoutingControl.cpp') $resource ('/Fe'+(Join-Path $release 'ShellRoutingControl.exe')) ('/Fo'+$controllerObj.Replace('\','/')+'/') /link /SUBSYSTEM:WINDOWS /ENTRY:wmainCRTStartup '/PDBALTPATH:%_PDB%' user32.lib advapi32.lib shell32.lib ole32.lib bcrypt.lib shlwapi.lib version.lib
     if($LASTEXITCODE -ne 0){throw 'Routing controller build failed'}
-    $minhook=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\crates\zsdesk-windows\native\minhook'))
+    $minhook=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\crates\aura-windows\native\minhook'))
     $upstream=@((Join-Path $minhook 'src\buffer.c'),(Join-Path $minhook 'src\hook.c'),(Join-Path $minhook 'src\trampoline.c'),(Join-Path $minhook 'src\hde\hde64.c'))
     & $cl /nologo /utf-8 /O2 /MT /TC /W4 /WX /wd4201 /wd4310 /wd4244 /wd4701 /c ('/I'+(Join-Path $minhook 'include')) @upstream ('/Fo'+$adapterObj.Replace('\','/')+'/')
     if($LASTEXITCODE -ne 0){throw 'MinHook source build failed'}
     $objects=@('buffer.obj','hook.obj','trampoline.obj','hde64.obj')|ForEach-Object {Join-Path $adapterObj $_}
-    & $cl @common /LD ('/I'+(Join-Path $minhook 'include')) (Join-Path $PSScriptRoot 'adapter\ZSDeskRevealRouter.cpp') @objects ('/Fe'+(Join-Path $release 'ZSDeskRevealRouter.dll')) ('/Fo'+$adapterObj.Replace('\','/')+'/') /link '/PDBALTPATH:%_PDB%' user32.lib shell32.lib ole32.lib psapi.lib advapi32.lib bcrypt.lib
+    & $cl @common /LD ('/I'+(Join-Path $minhook 'include')) (Join-Path $PSScriptRoot 'adapter\AuraExplorerRevealRouter.cpp') @objects ('/Fe'+(Join-Path $release 'AuraExplorerRevealRouter.dll')) ('/Fo'+$adapterObj.Replace('\','/')+'/') /link '/PDBALTPATH:%_PDB%' user32.lib shell32.lib ole32.lib psapi.lib advapi32.lib bcrypt.lib
     if($LASTEXITCODE -ne 0){throw 'Routing adapter build failed'}
-    $files=@('ShellRoutingControl.exe','ZSDeskRevealRouter.dll')
+    $files=@('ShellRoutingControl.exe','AuraExplorerRevealRouter.dll')
     foreach($name in $files){Copy-Item -LiteralPath (Join-Path $buildRoot ('Release\'+$name)) -Destination (Join-Path $outputRoot $name)}
     $privateRoots=@($env:USERPROFILE,[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..')),$buildRoot,$outputRoot)+$ForbiddenPath
     foreach($name in $files){
@@ -59,9 +59,9 @@ try {
         $views=@([Text.Encoding]::UTF8.GetString($bytes),[Text.Encoding]::Unicode.GetString($bytes),[Text.Encoding]::Unicode.GetString($bytes,1,$bytes.Length-1))
         foreach($private in $privateRoots|Where-Object {$_}){foreach($variant in @($private,$private.Replace('\','/'))){foreach($view in $views){if($view.IndexOf($variant,[StringComparison]::OrdinalIgnoreCase) -ge 0){throw ('Private build path found in '+$name)}}}}
     }
-    $license=Join-Path $PSScriptRoot '..\..\crates\zsdesk-windows\native\minhook\LICENSE.txt'
+    $license=Join-Path $PSScriptRoot '..\..\crates\aura-windows\native\minhook\LICENSE.txt'
     Copy-Item -LiteralPath $license -Destination (Join-Path $outputRoot 'MinHook-LICENSE.txt')
-    $manifest=[ordered]@{schema='ZSDesk.RoutingPackage.v1';adapter_abi=2;controller=[ordered]@{file=$files[0];sha256=(Get-FileHash -LiteralPath (Join-Path $outputRoot $files[0])).Hash.ToLowerInvariant()};adapter=[ordered]@{file=$files[1];sha256=(Get-FileHash -LiteralPath (Join-Path $outputRoot $files[1])).Hash.ToLowerInvariant()};licenses=@('MinHook-LICENSE.txt');profiles=@('native-shell','chromium','wechat','explicit-module');default_enabled=$false;default_startup=$false}
+    $manifest=[ordered]@{schema='AuraExplorer.RoutingPackage.v1';adapter_abi=2;controller=[ordered]@{file=$files[0];sha256=(Get-FileHash -LiteralPath (Join-Path $outputRoot $files[0])).Hash.ToLowerInvariant()};adapter=[ordered]@{file=$files[1];sha256=(Get-FileHash -LiteralPath (Join-Path $outputRoot $files[1])).Hash.ToLowerInvariant()};licenses=@('MinHook-LICENSE.txt');profiles=@('native-shell','chromium','wechat','explicit-module');default_enabled=$false;default_startup=$false}
     [IO.File]::WriteAllText((Join-Path $outputRoot 'manifest.json'),($manifest|ConvertTo-Json -Depth 5)+"`n",[Text.UTF8Encoding]::new($false))
     $manifest|ConvertTo-Json -Depth 5
 } finally {$env:TEMP=$oldTemp;$env:TMP=$oldTmp;$env:PATH=$oldPath;$env:INCLUDE=$oldInclude;$env:LIB=$oldLib;$lock.Dispose()}

@@ -1,13 +1,13 @@
 {
   "ManifestVersion": 1,
-  "Id": "ZSDesk",
+  "Id": "AuraExplorer",
   "PluginType": "FileAppPlugin",
   "PluginVersion": "1.0.0",
-  "DisplayName": "ZSdesk",
-  "Authors": [ "ZSdesk" ],
-  "Description": "Use the active ZSdesk folder in Listary Quick Switch and Currently Opened Folders.",
+  "DisplayName": "AuraExplorer",
+  "Authors": [ "AuraExplorer" ],
+  "Description": "Use the active AuraExplorer folder in Listary Quick Switch and Currently Opened Folders.",
   "Icon": "Icon.png",
   "Api": "NetFramework",
   "ApiVersion": 1,
-  "Entry": "Listary.FileAppPlugin.ZSDesk.dll"
+  "Entry": "Listary.FileAppPlugin.AuraExplorer.dll"
 }

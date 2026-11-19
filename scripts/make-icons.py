@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Draw the panel (dock) icon and write `crates/zsdesk-dock/resources/zsdesk-dock.ico`.
+"""Draw the panel (dock) icon and write `crates/aura-dock/resources/aura-dock.ico`.
 
-The file manager's own icon (`crates/zsdesk-app/resources/zsdesk.ico`) is a golden
+The file manager's own icon (`crates/aura-explorer/resources/aura.ico`) is a golden
 macOS-style folder; the panel's icon is the same gold, drawn as the panel itself —
 a rounded bar with three app tiles on it — so the two read as one product in Explorer
 and in the Start menu.
@@ -111,7 +111,7 @@ def main():
         )
     largest = frames[256]
     largest.save(
-        "crates/zsdesk-dock/resources/zsdesk-dock.ico",
+        "crates/aura-dock/resources/aura-dock.ico",
         format="ICO",
         sizes=[(size, size) for size in SIZES],
         append_images=[frames[size] for size in SIZES if size != 256],
@@ -123,7 +123,7 @@ def main():
         preview = frames[size]
         strip.alpha_composite(preview, (x, 0)) if size <= strip.height else None
         x += preview.width + 10
-    print("wrote crates/zsdesk-dock/resources/zsdesk-dock.ico")
+    print("wrote crates/aura-dock/resources/aura-dock.ico")
 
 
 if __name__ == "__main__":

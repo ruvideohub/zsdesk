@@ -1,12 +1,12 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/zsdesk-core",
-    "crates/zsdesk-platform",
-    "crates/zsdesk-app",
-    "crates/zsdesk-ui",
-    "crates/zsdesk-windows",
-    "crates/zsdesk-dock",
+    "crates/aura-core",
+    "crates/aura-platform",
+    "crates/aura-explorer",
+    "crates/aura-ui",
+    "crates/aura-windows",
+    "crates/aura-dock",
     "crates/laminar-sys",
 ]
 

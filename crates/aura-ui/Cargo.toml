@@ -1,0 +1,14 @@
+[package]
+name = "aura-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AuraExplorer native window layout."
+
+[dependencies]
+zsui = { path = "../../../zsui", default-features = false }
+aura-core = { path = "../aura-core" }
+
+[target.'cfg(windows)'.dependencies]
+zsui = { path = "../../../zsui", default-features = false, features = ["windows-win32"] }

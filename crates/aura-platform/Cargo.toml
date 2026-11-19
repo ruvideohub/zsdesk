@@ -1,0 +1,10 @@
+[package]
+name = "aura-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AuraExplorer platform-agnostic traits implemented by aura-windows."
+
+[dependencies]
+aura-core = { path = "../aura-core" }

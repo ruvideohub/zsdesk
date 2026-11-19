@@ -19,11 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          path: zsdesk
+          path: aura
       - name: Read the ZSUI revision
         id: dependency
         shell: pwsh
-        run: '"revision=$((Get-Content -LiteralPath zsdesk/packaging/zsui-revision.txt -Raw).Trim())" >> $env:GITHUB_OUTPUT'
+        run: '"revision=$((Get-Content -LiteralPath aura/packaging/zsui-revision.txt -Raw).Trim())" >> $env:GITHUB_OUTPUT'
       - uses: actions/checkout@v7
         with:
           repository: qiu7824/zsui
@@ -31,29 +31,29 @@ jobs:
           path: zsui
       - uses: dtolnay/rust-toolchain@1.99.0
       - name: Test
-        working-directory: zsdesk
-        run: cargo test --workspace --exclude zsdesk-dock --exclude laminar-sys --release --locked
+        working-directory: aura
+        run: cargo test --workspace --exclude aura-dock --exclude laminar-sys --release --locked
       - name: Check all editions
-        working-directory: zsdesk
+        working-directory: aura
         shell: pwsh
         run: |
-          cargo check --locked --release -p zsdesk-app --no-default-features
+          cargo check --locked --release -p aura-explorer --no-default-features
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --release -p zsdesk-app --no-default-features --features network
+          cargo check --locked --release -p aura-explorer --no-default-features --features network
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --release -p zsdesk-app --no-default-features --features desktop
+          cargo check --locked --release -p aura-explorer --no-default-features --features desktop
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo build --locked --release -p zsdesk-app
+          cargo build --locked --release -p aura-explorer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --release -p zsdesk-app --no-default-features --features themed
+          cargo check --locked --release -p aura-explorer --no-default-features --features themed
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo check --locked --release -p zsdesk-app --no-default-features --features desktop-box
+          cargo check --locked --release -p aura-explorer --no-default-features --features desktop-box
           exit $LASTEXITCODE
       - name: Test theme and desktop-only editions
-        working-directory: zsdesk
+        working-directory: aura
         shell: pwsh
         run: |
-          cargo test --locked --release -p zsdesk-app --no-default-features --features themed
+          cargo test --locked --release -p aura-explorer --no-default-features --features themed
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo test --locked --release -p zsdesk-app --no-default-features --features desktop-box
+          cargo test --locked --release -p aura-explorer --no-default-features --features desktop-box
           exit $LASTEXITCODE

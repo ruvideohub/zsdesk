@@ -1,12 +1,12 @@
 ﻿<#
 .SYNOPSIS
-Creates a merged Listary preferences copy for opening folders and locating files in ZSDesk.
+Creates a merged Listary preferences copy for opening folders and locating files in AuraExplorer.
 .EXAMPLE
-./Prepare-Listary7.ps1 -ZSDeskPath 'C:\Program Files\ZSDesk\ZSDesk.exe' -PreferencesPath "$env:APPDATA\Listary\UserProfile\Settings\Preferences.json" -OutputPath 'C:\Users\Public\Preferences.ZSDesk.json'
+./Prepare-Listary7.ps1 -AuraExplorerPath 'C:\Program Files\AuraExplorer\AuraExplorer.exe' -PreferencesPath "$env:APPDATA\Listary\UserProfile\Settings\Preferences.json" -OutputPath 'C:\Users\Public\Preferences.AuraExplorer.json'
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][string]$ZSDeskPath,
+    [Parameter(Mandatory=$true)][string]$AuraExplorerPath,
     [Parameter(Mandatory=$true)][string]$PreferencesPath,
     [Parameter(Mandatory=$true)][string]$OutputPath
 )
@@ -31,16 +31,16 @@ function Array-Field($Parent,[string]$Name) {
     if($null -eq $Parent.$Name -or $Parent.$Name -isnot [Array]){throw "Invalid array at $Name"}
 }
 
-$ZSDeskPath=Absolute-Path $ZSDeskPath
+$AuraExplorerPath=Absolute-Path $AuraExplorerPath
 $PreferencesPath=Absolute-Path $PreferencesPath
 $OutputPath=Absolute-Path $OutputPath
 if($OutputPath.Equals($PreferencesPath,[StringComparison]::OrdinalIgnoreCase)){throw 'OutputPath must differ from the original preferences file'}
 if(Test-Path -LiteralPath $OutputPath){throw 'OutputPath already exists; choose an unused output file'}
 $parent=Split-Path -Parent $OutputPath
 if(-not (Test-Path -LiteralPath $parent -PathType Container)){throw 'The output directory must already exist'}
-$executable=Get-Item -LiteralPath $ZSDeskPath
-if($executable.PSIsContainer -or $executable.Extension -ine '.exe' -or $executable.VersionInfo.ProductName -ine 'ZSDesk'){
-    throw 'ZSDeskPath must identify a ZSDesk executable'
+$executable=Get-Item -LiteralPath $AuraExplorerPath
+if($executable.PSIsContainer -or $executable.Extension -ine '.exe' -or $executable.VersionInfo.ProductName -ine 'AuraExplorer'){
+    throw 'AuraExplorerPath must identify a AuraExplorer executable'
 }
 $preferences=Get-Item -LiteralPath $PreferencesPath
 if($preferences.PSIsContainer -or $preferences.Length -gt 16MB){throw 'PreferencesPath must identify a JSON file smaller than 16 MiB'}
@@ -48,7 +48,7 @@ $originalHash=(Get-FileHash -LiteralPath $PreferencesPath -Algorithm SHA256).Has
 $document=[IO.File]::ReadAllText($PreferencesPath,[Text.Encoding]::UTF8) | ConvertFrom-Json
 if($null -eq $document -or $document -isnot [pscustomobject]){throw 'Preferences JSON must contain an object'}
 $settings=Object-Field $document 'Settings'
-Set-Field $settings 'OpenFolder.Path' $ZSDeskPath
+Set-Field $settings 'OpenFolder.Path' $AuraExplorerPath
 # A final path component prevents a drive root's trailing backslash from
 # escaping the closing quote when Listary expands its raw parameter template.
 Set-Field $settings 'OpenFolder.Param' '"%1\."'
@@ -58,15 +58,15 @@ $items=Object-Field $actions 'Items'
 foreach($field in @('Deletions','Moves','Insertions','Updates')){Array-Field $items $field}
 $id='34620ed5-029f-4d20-9264-d281b7ecda10'
 $ownedRows=@($items.Insertions | Where-Object { $_.Item.Id -eq $id })
-if($ownedRows.Count -gt 1){throw 'The ZSDesk action ID occurs more than once'}
+if($ownedRows.Count -gt 1){throw 'The AuraExplorer action ID occurs more than once'}
 if($ownedRows.Count -eq 1){
     $action=$ownedRows[0].Item
-    if($action -isnot [pscustomobject] -or $action.'$customType' -ne 'CustomCommand'){throw 'The ZSDesk action ID is used by an incompatible action'}
+    if($action -isnot [pscustomobject] -or $action.'$customType' -ne 'CustomCommand'){throw 'The AuraExplorer action ID is used by an incompatible action'}
 }else{
     $action=[pscustomobject]@{Id=$id;'$customType'='CustomCommand'}
     Set-Field $items 'Insertions' @(@($items.Insertions)+@([pscustomobject]@{Index=-1;Info=$null;Item=$action}))
 }
-$values=[ordered]@{Title='在 ZSDesk 中定位文件';Path=$ZSDeskPath;Parameter='--select "{action_path}"';Keyword='zsdesk';Enabled=$true}
+$values=[ordered]@{Title='在 AuraExplorer 中定位文件';Path=$AuraExplorerPath;Parameter='--select "{action_path}"';Keyword='aura';Enabled=$true}
 foreach($entry in $values.GetEnumerator()){Set-Field $action $entry.Key $entry.Value}
 Set-Field $items 'Deletions' @($items.Deletions | Where-Object { $_ -ne $id })
 # Existing per-action hotkeys and other future fields remain intact. Update
@@ -82,5 +82,5 @@ $bytes=$encoding.GetBytes($json+[Environment]::NewLine)
 $stream=[IO.File]::Open($OutputPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
 try{$stream.Write($bytes,0,$bytes.Length);$stream.Flush()}finally{$stream.Dispose()}
 $readback=[IO.File]::ReadAllText($OutputPath,[Text.Encoding]::UTF8) | ConvertFrom-Json
-if($readback.Settings.'OpenFolder.Path' -ne $ZSDeskPath -or @($readback.Actions.Items.Insertions | Where-Object { $_.Item.Id -eq $id }).Count -ne 1){throw 'Output validation failed'}
-[pscustomobject]@{OutputPath=$OutputPath;ZSDeskPath=$ZSDeskPath;FolderOpening=$true;SelectedFileAction=$true;QuickSwitch=$false;OriginalPreserved=$true}
+if($readback.Settings.'OpenFolder.Path' -ne $AuraExplorerPath -or @($readback.Actions.Items.Insertions | Where-Object { $_.Item.Id -eq $id }).Count -ne 1){throw 'Output validation failed'}
+[pscustomobject]@{OutputPath=$OutputPath;AuraExplorerPath=$AuraExplorerPath;FolderOpening=$true;SelectedFileAction=$true;QuickSwitch=$false;OriginalPreserved=$true}

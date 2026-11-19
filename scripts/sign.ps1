@@ -6,7 +6,7 @@
 # inspected with `Get-AuthenticodeSignature` (and trusted by hand if you want).
 #
 # For a real certificate, put the PFX in repository secrets as base64 and set
-# `ZSDesk_SIGN_PFX_B64` and `ZSDesk_SIGN_PFX_PASSWORD`; the script then uses it instead
+# `AuraExplorer_SIGN_PFX_B64` and `AuraExplorer_SIGN_PFX_PASSWORD`; the script then uses it instead
 # of generating a throwaway self-signed one.
 #
 #     ./scripts/sign.ps1 -Path dist
@@ -14,7 +14,7 @@
 [CmdletBinding()]
 param(
     [string]$Path = 'dist',
-    [string]$Subject = 'CN=ZSDesk Self-Signed, O=ZSDesk, C=RU'
+    [string]$Subject = 'CN=AuraExplorer Self-Signed, O=AuraExplorer, C=RU'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,14 +44,14 @@ if ($executables.Count -eq 0) {
     exit 0
 }
 
-$pfx = Join-Path ([IO.Path]::GetTempPath()) 'zsdesk-signing.pfx'
-$password = 'zsdesk-self-signed'
+$pfx = Join-Path ([IO.Path]::GetTempPath()) 'aura-signing.pfx'
+$password = 'aura-self-signed'
 
 try {
-    if ($env:ZSDesk_SIGN_PFX_B64) {
+    if ($env:AuraExplorer_SIGN_PFX_B64) {
         Write-Host 'Signing with the certificate from the repository secrets.'
-        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:ZSDesk_SIGN_PFX_B64))
-        if ($env:ZSDesk_SIGN_PFX_PASSWORD) { $password = $env:ZSDesk_SIGN_PFX_PASSWORD }
+        [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:AuraExplorer_SIGN_PFX_B64))
+        if ($env:AuraExplorer_SIGN_PFX_PASSWORD) { $password = $env:AuraExplorer_SIGN_PFX_PASSWORD }
     } else {
         Write-Host 'Signing with a throwaway self-signed certificate (no secret configured).'
         $cert = New-SelfSignedCertificate `

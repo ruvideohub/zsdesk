@@ -8,9 +8,9 @@ BEGIN
   BEGIN
     BLOCK "080404B0"
     BEGIN
-      VALUE "FileDescription", "ZSdesk\0"
-      VALUE "ProductName", "ZSdesk\0"
-      VALUE "InternalName", "ZSdesk\0"
+      VALUE "FileDescription", "AuraExplorer\0"
+      VALUE "ProductName", "AuraExplorer\0"
+      VALUE "InternalName", "AuraExplorer\0"
       VALUE "OriginalFilename", "ShellRoutingControl.exe\0"
       VALUE "FileVersion", "1.0.0\0"
       VALUE "ProductVersion", "1.0.0\0"

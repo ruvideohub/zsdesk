@@ -7,7 +7,7 @@
 
 | Слой | Сколько | Где |
 |---|---|---|
-| Каталог виджетов | ~40 определений | `crates/zsdesk-dock/src/widgets/catalog.rs` |
+| Каталог виджетов | ~40 определений | `crates/aura-dock/src/widgets/catalog.rs` |
 | Быстрый список в меню панели | 9 | `DOCK_WIDGETS` в `dock.rs` |
 | Категории в галерее | 8 | `Category` в `catalog.rs` |
 | Пунктов в контекстном меню панели | 20+ | `context_menu` в `dock.rs` |

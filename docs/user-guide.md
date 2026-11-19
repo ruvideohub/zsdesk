@@ -1,4 +1,4 @@
-# ZSDesk 使用与开发说明
+# AuraExplorer 使用与开发说明
 
 Windows 原生多标签文件管理器与桌面格子，使用 Rust、Win32/COM、Direct2D 和 DirectWrite。
 
@@ -6,7 +6,7 @@ Windows 原生多标签文件管理器与桌面格子，使用 Rust、Win32/COM�
 窗口、绘图及文件操作复用 Win32、Direct2D 和 Windows Shell；共享图标、菜单及快捷键能力来自
 [ZSUI](https://github.com/qiu7824/zsui)，其源码版本固定记录在发行配置中。
 
-[下载](https://github.com/qiu7824/zsdesk/releases) · [更新日志](../CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/zsdesk/issues)
+[下载](https://github.com/qiu7824/aura/releases) · [更新日志](../CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/aura/issues)
 
 ## 版本
 
@@ -24,7 +24,7 @@ Windows 原生多标签文件管理器与桌面格子，使用 Rust、Win32/COM�
 | 桌面盒子独立版 | `desktop-box` | 默认启动桌面格子，独立配置与自启，不包含文件管理窗口、全盘搜索和接管 |
 
 打包脚本支持为上述六个版本生成 Windows x64 便携 ZIP 和安装器，文件名为
-`ZSDesk-<版本>-<standard|network|desktop|full|themed|desktop-box>-x64`。
+`AuraExplorer-<版本>-<standard|network|desktop|full|themed|desktop-box>-x64`。
 安装器默认按当前用户安装，保留个人数据，文件夹接管和登录启动均由软件内设置。
 
 ## 文件管理
@@ -57,7 +57,7 @@ Windows 原生多标签文件管理器与桌面格子，使用 Rust、Win32/COM�
 
 “≡ → 布局 → 导航窗格选项”提供回收站、网络导航项的显隐，以及“此电脑”启动时展开、折叠或跟随起始位置。
 Windows 10 保留 Shell 导航控件的默认尺寸；Windows 11 的导航行距随系统紧凑模式、显示缩放和当前字体调整，缩进由 Shell 处理。
-普通文件夹的查看方式、图标大小、排序、分组及列设置由 Shell 按文件夹保存，并按 ZSDesk 配置目录隔离；未设置的目录继承系统文件夹模板。
+普通文件夹的查看方式、图标大小、排序、分组及列设置由 Shell 按文件夹保存，并按 AuraExplorer 配置目录隔离；未设置的目录继承系统文件夹模板。
 标签页另行保存选区与浏览位置，搜索结果和临时菜单宿主不覆盖普通文件夹的视图偏好。
 主窗口及双栏的锁定状态随标签会话保存；系统注销和关机仍按系统流程保存并结束会话。
 列标题随视图切换，仅在详细信息视图显示。鼠标手势可开关：按住右键向左为后退、向右为前进、
@@ -120,7 +120,7 @@ Everything 是可选兼容后端。标准版、网络版、桌面版、全量版
 只有选择 Everything 后才会按需连接或启动索引进程，普通列表查询通过 Unicode IPC 分页读取结果路径。
 
 Everything 的快速全盘 NTFS 索引需要兼容服务或管理员权限。未安装服务时，可在
-“≡ → 搜索 → 启用快速索引服务…”中授权启用 ZSDesk 专用服务。
+“≡ → 搜索 → 启用快速索引服务…”中授权启用 AuraExplorer 专用服务。
 普通权限下既没有兼容服务，也没有已配置可用索引时，搜索会提示设置；不会静默退回到遍历所有磁盘。
 索引正在加载或建立时显示进度，就绪后自动执行查询，未就绪状态不会当作零结果。
 索引范围、包含和排除规则由 Everything 管理，
@@ -139,7 +139,7 @@ Everything 后端需要保留完整引擎目录或指定可用程序；自带搜
 快捷键打开独立快速搜索窗格并聚焦输入框；关闭后保留内存索引至空闲期限，重新打开可直接复用。
 全局快捷键冲突会显示错误并保留设置入口；安装包默认不启用登录启动，索引服务由用户授权启用。
 
-同一配置的文件窗口、桌面格子、快捷键与搜索请求管理共用一个 ZSdesk 进程，文件窗口关闭后复用原有 UI 线程。
+同一配置的文件窗口、桌面格子、快捷键与搜索请求管理共用一个 AuraExplorer 进程，文件窗口关闭后复用原有 UI 线程。
 桌面图标恢复监护单独运行，桌面线程或主进程异常结束时恢复系统图标；Office 预览宿主仅在预览期间运行。
 文件位置转发辅助组件与 Everything 索引引擎按各自功能运行，关闭搜索不会退出用户原有的 Everything。
 
@@ -158,7 +158,7 @@ Office 文档缺少可用插件时，可用已安装 WPS 只读渲染为临时 P
 “≡ → 诊断日志…”打开独立的只读日志窗口，显示菜单阶段、异常代码与冷暖启动耗时，支持刷新和复制。
 日志保留当前及上一代，仅保存于本机。
 
-启用“默认用 ZSDesk 打开文件夹和磁盘”后，`Win+E` 同时打开 ZSDesk；程序未运行时会自动启动。
+启用“默认用 AuraExplorer 打开文件夹和磁盘”后，`Win+E` 同时打开 AuraExplorer；程序未运行时会自动启动。
 入口使用当前用户的 Explorer 启动命令；后台运行时提供 Win+E 兼容接管。
 桌面“此电脑”具有独立的默认打开关联；原值及类型随接管设置备份，停用时恢复。
 
@@ -172,10 +172,10 @@ Git、SVN、压缩软件及其它扩展由 Windows Shell 提供，没有预设�
 格子管理命令与 Windows 文件命令分别派发，避免命令编号冲突和点击错项。
 
 “管理此处的完整右键菜单…”读取当前选择和目录实际提供的菜单项，勾选控制显示；显示子项时同时恢复其父菜单。
-设置仅作用于 ZSDesk，不禁用其它程序或修改系统注册表；动态深层菜单保留系统原样，无法唯一识别的项不能隐藏。
+设置仅作用于 AuraExplorer，不禁用其它程序或修改系统注册表；动态深层菜单保留系统原样，无法唯一识别的项不能隐藏。
 Windows 11 样式按系统能力选择已验证的原生呈现或公共 Shell 命令兼容呈现；Shift 右键使用经典菜单。Windows 10 文件选区直接绑定系统菜单，减少隐藏视图初始化。
 扩展菜单进程在执行命令后可复用，空闲实例最多保留一个，空闲 30 秒退出；仍有扩展对话框、文件操作或需要提供的剪贴板数据时保持运行。
-文件和桌面格子的右键**默认**先显示 ZSDesk 自己的菜单，它完全由程序命令构成，不实例化 `IContextMenu`，
+文件和桌面格子的右键**默认**先显示 AuraExplorer 自己的菜单，它完全由程序命令构成，不实例化 `IContextMenu`，
 不加载 7-Zip、WPS、Git 等扩展，因此没有扩展枚举等待，也不会被扩展卡死拖住：
 
 - 文件：打开、打开方式（子菜单列出系统为该类型提供的应用，另有“选择其他应用…”）、剪切、复制、
@@ -203,22 +203,22 @@ Windows 11 样式按系统能力选择已验证的原生呈现或公共 Shell �
 Listary 插件通过官方 FileAppPlugin 接口提供当前标签页已打开的文件夹。
 适用于 Listary 6 和 7.0；Listary 7.1 已停止加载用户安装的集成插件，暂不支持此接入方式。
 Listary 7.1 可使用随附 `integrations/listary/Prepare-Listary7.ps1` 生成目录打开及搜索结果定位的配置副本；这两项适配不依赖旧 DLL。
-将安装目录中的 `integrations/listary/FileAppPlugins/ZSDesk` 文件夹复制到 Listary 安装目录的 `FileAppPlugins` 下。重启 Listary，在“选项 → 集成”中启用 ZSDesk。在标准打开或保存对话框中
-按 Listary 的 `Ctrl+G` 快速切换快捷键，可切换到当前 ZSDesk 文件夹。
+将安装目录中的 `integrations/listary/FileAppPlugins/AuraExplorer` 文件夹复制到 Listary 安装目录的 `FileAppPlugins` 下。重启 Listary，在“选项 → 集成”中启用 AuraExplorer。在标准打开或保存对话框中
+按 Listary 的 `Ctrl+G` 快速切换快捷键，可切换到当前 AuraExplorer 文件夹。
 搜索结果、虚拟系统位置和尚未完成的导航不作为快速切换目录。
 
 双栏模式的“更多”菜单提供“复制到另一栏”和“移动到另一栏”，通过一次原生批量文件操作直接提交选中文件，保留系统进度、冲突处理和撤销记录，不改变剪贴板内容。
 
-“预览与操作 → 空格预览方式”默认使用内置预览，也可选择自行安装并运行的 QuickLook；QuickLook 不可用时自动使用内置预览，编辑文件名及输入路径时仍按普通文本输入处理。QuickLook 不随 ZSDesk 安装。
+“预览与操作 → 空格预览方式”默认使用内置预览，也可选择自行安装并运行的 QuickLook；QuickLook 不可用时自动使用内置预览，编辑文件名及输入路径时仍按普通文本输入处理。QuickLook 不随 AuraExplorer 安装。
 
-音视频速览支持 Windows 媒体组件可解码的格式，并提供播放、暂停和进度定位；不支持的编码可用默认播放器打开。快速搜索窗格可从应用菜单打开，也可在搜索设置中启用全局快捷键，支持 Enter 打开结果、打开文件位置及 Esc 关闭。“关于 ZSDesk”提供检查更新和正式发布页入口。
+音视频速览支持 Windows 媒体组件可解码的格式，并提供播放、暂停和进度定位；不支持的编码可用默认播放器打开。快速搜索窗格可从应用菜单打开，也可在搜索设置中启用全局快捷键，支持 Enter 打开结果、打开文件位置及 Esc 关闭。“关于 AuraExplorer”提供检查更新和正式发布页入口。
 
 普通文件拖到桌面格子或映射文件夹时，来源允许移动便默认移动，跨盘同样适用。按住 Ctrl 请求复制，已在桌面的项目加入桌面格子时只调整归属。支持 Windows 文件拖放的网盘客户端可以接收文件；网盘提供虚拟文件时，由目标文件夹和客户端协商可用操作。仅允许复制的下载来源保留其原有文件。
 
 ## 桌面格子
 
-桌面版和全量版可从主菜单启动格子，或执行 `ZSDesk.exe --desktop`。
-桌面盒子独立版直接启动格子，配置保存在 `%APPDATA%\ZSDesk-DesktopBox`；安装标识和登录启动与其他版本独立。
+桌面版和全量版可从主菜单启动格子，或执行 `AuraExplorer.exe --desktop`。
+桌面盒子独立版直接启动格子，配置保存在 `%APPDATA%\AuraExplorer-DesktopBox`；安装标识和登录启动与其他版本独立。
 
 - 文件夹映射、桌面项目分组、手动排序、大小和屏幕位置。
 - 悬停临时展开，移开收起；双击固定展开，支持锁定和拖动。
@@ -235,20 +235,20 @@ Listary 7.1 可使用随附 `integrations/listary/Prepare-Listary7.ps1` 生成�
 
 ```powershell
 # 预览迁移报告；“-”表示自动查找本机腾讯布局。
-ZSDesk.exe --import-tencent - --import-report "C:\Reports\layout.json"
+AuraExplorer.exe --import-tencent - --import-report "C:\Reports\layout.json"
 
-# 退出 ZSDesk 格子后应用迁移；原配置保留为 desktop-fences.before-tencent.json。
-ZSDesk.exe --import-tencent - --import-report "C:\Reports\layout.json" --apply-import
+# 退出 AuraExplorer 格子后应用迁移；原配置保留为 desktop-fences.before-tencent.json。
+AuraExplorer.exe --import-tencent - --import-report "C:\Reports\layout.json" --apply-import
 ```
 
 ## 文件夹与应用接入
 
 “≡ → 系统集成”提供不接管（按备份恢复系统设置）、增加右键入口和默认打开文件夹和磁盘。
-操作仅涉及当前用户注册表；“此电脑”可由 ZSDesk 打开，其他系统虚拟文件夹保持原有默认处理方式。
+操作仅涉及当前用户注册表；“此电脑”可由 AuraExplorer 打开，其他系统虚拟文件夹保持原有默认处理方式。
 默认接管同时登记文件夹和磁盘的 `open`、`explore` 动作，保存原始处理程序与隐藏标志，恢复时保留其他程序后续写入的设置。
 运行中的默认配置通过标准 Shell 打开会话接收目录请求；WPS 文档标签的“打开文件位置”可创建目录标签并选中目标文件。
 每个文件窗口的已完成导航标签登记到系统窗口集合，双栏分别登记；系统文件定位请求在对应窗格选中项目，Explorer 重启后重新登记。
-“接管新出现的系统浏览窗口”监听新出现的单标签文件夹与“此电脑”，确认 ZSDesk 已完成导航、选区和必要的激活后关闭来源窗口。
+“接管新出现的系统浏览窗口”监听新出现的单标签文件夹与“此电脑”，确认 AuraExplorer 已完成导航、选区和必要的激活后关闭来源窗口。
 准备阶段最多等待 8 秒，来源窗口保持可见；短暂隐藏期限为 800 毫秒，独立守护负责超时及异常恢复。
 已有窗口、多标签窗口和用户已操作的窗口保留原状。文件选择接管由独立开关控制。
 
@@ -277,9 +277,9 @@ ZSDesk.exe --import-tencent - --import-report "C:\Reports\layout.json" --apply-i
 
 ## 数据
 
-默认目录为 `%APPDATA%\ZSDesk`。程序旁的 `portable.flag` 使用相邻 `data/` 目录，
+默认目录为 `%APPDATA%\AuraExplorer`。程序旁的 `portable.flag` 使用相邻 `data/` 目录，
 在文件管理器“≡ → 配置目录”或格子全局设置中选择默认配置目录。新目录在下次普通启动时生效，已有配置直接读取，空目录从初始设置开始。使用“打开当前配置目录”可查看正在使用的位置。命令行 `--profile-dir` 优先，其次是程序旁 `portable.flag` 指定的 `data` 目录。
-主题版默认使用 `%APPDATA%\ZSDesk-Theme`，安装目录、启动标识和配置与其他版本独立。
+主题版默认使用 `%APPDATA%\AuraExplorer-Theme`，安装目录、启动标识和配置与其他版本独立。
 主题版可在“≡ → 主题与材质”中分别选择材质（跟随系统、Mica、亚克力、纯色）和颜色（跟随系统、浅色、深色）；不支持材质效果的系统使用纯色背景。
 地址栏输入 `pwsh`、`powershell`、`nu` 或 `nushell` 可在当前文件夹启动对应终端。
 
@@ -307,28 +307,28 @@ ZSUI 按需启用原生窗口、虚拟列表、输入和快捷键等功能。其
 `packaging/zsui-revision.txt`，位于本仓库的同级 `zsui/` 目录。
 
 ```powershell
-git clone https://github.com/qiu7824/zsdesk.git
+git clone https://github.com/qiu7824/aura.git
 git clone https://github.com/qiu7824/zsui.git
-git -C zsui checkout (Get-Content zsdesk/packaging/zsui-revision.txt -Raw).Trim()
-Set-Location zsdesk
+git -C zsui checkout (Get-Content aura/packaging/zsui-revision.txt -Raw).Trim()
+Set-Location aura
 
-$env:CARGO_TARGET_DIR = 'C:\Build\ZSDesk-target'
+$env:CARGO_TARGET_DIR = 'C:\Build\AuraExplorer-target'
 $env:CARGO_PROFILE_DEV_DEBUG = '0'
 $env:CARGO_PROFILE_TEST_DEBUG = '0'
 cargo test --workspace --release --locked
-cargo build --release --locked -p zsdesk-app
+cargo build --release --locked -p aura-explorer
 
 # 可选功能版本
-cargo build --release --locked -p zsdesk-app --no-default-features
-cargo build --release --locked -p zsdesk-app --no-default-features --features network
-cargo build --release --locked -p zsdesk-app --no-default-features --features desktop
-cargo build --release --locked -p zsdesk-app --no-default-features --features themed
-cargo build --release --locked -p zsdesk-app --no-default-features --features desktop-box
+cargo build --release --locked -p aura-explorer --no-default-features
+cargo build --release --locked -p aura-explorer --no-default-features --features network
+cargo build --release --locked -p aura-explorer --no-default-features --features desktop
+cargo build --release --locked -p aura-explorer --no-default-features --features themed
+cargo build --release --locked -p aura-explorer --no-default-features --features desktop-box
 
 # 转发组件与六个发行版本
-./native/routing/build.ps1 -OutputDir 'C:\Build\ZSDesk-routing' -BuildDir 'C:\Build\ZSDesk-routing-build'
-./scripts/package.ps1 -WorkDir 'C:\Build\ZSDesk-package' -TargetDir $env:CARGO_TARGET_DIR `
-    -RoutingDir 'C:\Build\ZSDesk-routing' -EverythingDir 'C:\Build\Everything-1.4.1.1032-x64' `
+./native/routing/build.ps1 -OutputDir 'C:\Build\AuraExplorer-routing' -BuildDir 'C:\Build\AuraExplorer-routing-build'
+./scripts/package.ps1 -WorkDir 'C:\Build\AuraExplorer-package' -TargetDir $env:CARGO_TARGET_DIR `
+    -RoutingDir 'C:\Build\AuraExplorer-routing' -EverythingDir 'C:\Build\Everything-1.4.1.1032-x64' `
     -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 

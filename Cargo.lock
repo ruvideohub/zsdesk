@@ -1040,7 +1040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
-name = "zsdesk-app"
+name = "aura-explorer"
 version = "0.3.18"
 dependencies = [
  "anyhow",
@@ -1055,15 +1055,15 @@ dependencies = [
  "windows",
  "windows-core",
  "windows-sys 0.59.0",
- "zsdesk-core",
- "zsdesk-platform",
- "zsdesk-ui",
- "zsdesk-windows",
+ "aura-core",
+ "aura-platform",
+ "aura-ui",
+ "aura-windows",
  "zsui",
 ]
 
 [[package]]
-name = "zsdesk-core"
+name = "aura-core"
 version = "0.3.18"
 dependencies = [
  "serde",
@@ -1071,7 +1071,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "zsdesk-dock"
+name = "aura-dock"
 version = "0.3.18"
 dependencies = [
  "embed-resource",
@@ -1084,22 +1084,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "zsdesk-platform"
+name = "aura-platform"
 version = "0.3.18"
 dependencies = [
- "zsdesk-core",
+ "aura-core",
 ]
 
 [[package]]
-name = "zsdesk-ui"
+name = "aura-ui"
 version = "0.3.18"
 dependencies = [
- "zsdesk-core",
+ "aura-core",
  "zsui",
 ]
 
 [[package]]
-name = "zsdesk-windows"
+name = "aura-windows"
 version = "0.3.18"
 dependencies = [
  "anyhow",
@@ -1112,8 +1112,8 @@ dependencies = [
  "windows-core",
  "windows-numerics",
  "windows-sys 0.59.0",
- "zsdesk-core",
- "zsdesk-platform",
+ "aura-core",
+ "aura-platform",
 ]
 
 [[package]]

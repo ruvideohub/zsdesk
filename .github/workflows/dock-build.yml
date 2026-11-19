@@ -9,7 +9,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'crates/zsdesk-dock/**'
+      - 'crates/aura-dock/**'
       - 'crates/laminar-sys/**'
       - 'packaging/windows/install.*'
       - 'packaging/windows/install-readme.txt'
@@ -28,11 +28,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          path: zsdesk
+          path: aura
       - name: Read the ZSUI revision
         id: dependency
         shell: pwsh
-        run: '"revision=$((Get-Content -LiteralPath zsdesk/packaging/zsui-revision.txt -Raw).Trim())" >> $env:GITHUB_OUTPUT'
+        run: '"revision=$((Get-Content -LiteralPath aura/packaging/zsui-revision.txt -Raw).Trim())" >> $env:GITHUB_OUTPUT'
       - uses: actions/checkout@v7
         with:
           repository: qiu7824/zsui
@@ -40,36 +40,36 @@ jobs:
           path: zsui
       - uses: dtolnay/rust-toolchain@1.99.0
       - name: Build the host and the dock
-        working-directory: zsdesk
+        working-directory: aura
         shell: pwsh
         run: |
-          cargo build --locked --release -p zsdesk-app
+          cargo build --locked --release -p aura-explorer
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo build --locked --release -p zsdesk-dock
+          cargo build --locked --release -p aura-dock
           exit $LASTEXITCODE
       - name: Collect the executables
-        working-directory: zsdesk
+        working-directory: aura
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item -LiteralPath target/release/zsdesk-app.exe -Destination dist/ZSDesk.exe
-          Copy-Item -LiteralPath target/release/zsdesk-dock.exe -Destination dist/zsdesk-dock.exe
+          Copy-Item -LiteralPath target/release/aura-explorer.exe -Destination dist/AuraExplorer.exe
+          Copy-Item -LiteralPath target/release/aura-dock.exe -Destination dist/AuraDock.exe
           # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
           Copy-Item -LiteralPath packaging/windows/install.ps1 -Destination dist/install.ps1
           Copy-Item -LiteralPath packaging/windows/install.cmd -Destination dist/install.cmd
           Copy-Item -LiteralPath packaging/windows/install-readme.txt -Destination dist/install-readme.txt
           Get-ChildItem -LiteralPath dist | Format-Table Name, Length
       - name: Sign the executables
-        working-directory: zsdesk
+        working-directory: aura
         shell: pwsh
-        # A self-signed certificate unless ZSDesk_SIGN_PFX_B64 / ZSDesk_SIGN_PFX_PASSWORD
+        # A self-signed certificate unless AuraExplorer_SIGN_PFX_B64 / AuraExplorer_SIGN_PFX_PASSWORD
         # hold a real one; see scripts/sign.ps1.
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/sign.ps1 -Path dist
         env:
-          ZSDesk_SIGN_PFX_B64: ${{ secrets.ZSDesk_SIGN_PFX_B64 }}
-          ZSDesk_SIGN_PFX_PASSWORD: ${{ secrets.ZSDesk_SIGN_PFX_PASSWORD }}
+          AuraExplorer_SIGN_PFX_B64: ${{ secrets.AuraExplorer_SIGN_PFX_B64 }}
+          AuraExplorer_SIGN_PFX_PASSWORD: ${{ secrets.AuraExplorer_SIGN_PFX_PASSWORD }}
       - uses: actions/upload-artifact@v4
         with:
-          name: zsdesk-dock-windows-x64
-          path: zsdesk/dist/*
+          name: aura-dock-windows-x64
+          path: aura/dist/*
           if-no-files-found: error

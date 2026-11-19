@@ -1,5 +1,5 @@
 ﻿[CmdletBinding()]
-param([Parameter(Mandatory=$true)][string]$ZSDeskPath,[Parameter(Mandatory=$true)][string]$WorkDir)
+param([Parameter(Mandatory=$true)][string]$AuraExplorerPath,[Parameter(Mandatory=$true)][string]$WorkDir)
 $ErrorActionPreference='Stop'
 if(-not [IO.Path]::IsPathRooted($WorkDir)){throw 'WorkDir must be absolute'}
 $WorkDir=[IO.Path]::GetFullPath($WorkDir)
@@ -17,8 +17,8 @@ $fixture=[ordered]@{
 $fixturePath=Join-Path $WorkDir 'original.json';$first=Join-Path $WorkDir 'merged.json';$second=Join-Path $WorkDir 'merged-again.json'
 [IO.File]::WriteAllText($fixturePath,($fixture|ConvertTo-Json -Depth 20),(New-Object Text.UTF8Encoding($false)))
 $before=(Get-FileHash -LiteralPath $fixturePath).Hash
-$result=& $prepare -ZSDeskPath $ZSDeskPath -PreferencesPath $fixturePath -OutputPath $first
-$repeat=& $prepare -ZSDeskPath $ZSDeskPath -PreferencesPath $first -OutputPath $second
+$result=& $prepare -AuraExplorerPath $AuraExplorerPath -PreferencesPath $fixturePath -OutputPath $first
+$repeat=& $prepare -AuraExplorerPath $AuraExplorerPath -PreferencesPath $first -OutputPath $second
 if((Get-FileHash -LiteralPath $fixturePath).Hash -ne $before){throw 'Original preferences changed'}
 if((Get-FileHash -LiteralPath $first).Hash -ne (Get-FileHash -LiteralPath $second).Hash){throw 'Repeated preparation is not idempotent'}
 $merged=Get-Content -LiteralPath $first -Raw -Encoding UTF8|ConvertFrom-Json
@@ -30,10 +30,10 @@ if($merged.Settings.'OpenFolder.Param' -ne '"%1\."'){throw 'Folder argument temp
 if($merged.Actions.Items.Insertions[1].Item.Parameter -ne '--select "{action_path}"'){throw 'Selection argument template differs'}
 if($result.QuickSwitch -or $repeat.QuickSwitch){throw 'One-way adapter must not advertise Quick Switch'}
 $refused=$false
-try{& $prepare -ZSDeskPath $ZSDeskPath -PreferencesPath $fixturePath -OutputPath $fixturePath|Out-Null}catch{$refused=$true}
+try{& $prepare -AuraExplorerPath $AuraExplorerPath -PreferencesPath $fixturePath -OutputPath $fixturePath|Out-Null}catch{$refused=$true}
 if(-not $refused){throw 'Preparing over the live preferences file was not refused'}
 $refused=$false
-try{& $prepare -ZSDeskPath $ZSDeskPath -PreferencesPath $fixturePath -OutputPath $first|Out-Null}catch{$refused=$true}
+try{& $prepare -AuraExplorerPath $AuraExplorerPath -PreferencesPath $fixturePath -OutputPath $first|Out-Null}catch{$refused=$true}
 if(-not $refused){throw 'Existing output was overwritten'}
 $report=[ordered]@{state='passed';original_unchanged=$true;idempotent=$true;unknown_settings_preserved=$true;existing_actions_preserved=$true;existing_hotkey_preserved=$true;overwrite_refused=$true;folder_and_selection_templates=$true;quick_switch_claimed=$false}
 $report|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $WorkDir 'verification.current.json') -Encoding UTF8

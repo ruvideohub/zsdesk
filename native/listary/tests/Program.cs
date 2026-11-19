@@ -2,7 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Listary.FileAppPlugin;
-using Listary.FileAppPlugin.ZSDesk;
+using Listary.FileAppPlugin.AuraExplorer;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -14,7 +14,7 @@ internal static class Program
         IntPtr original = GetThreadDesktop(GetCurrentThreadId());
         try
         {
-            string desktopName = Environment.GetEnvironmentVariable("ZSDESK_LISTARY_TEST_DESKTOP");
+            string desktopName = Environment.GetEnvironmentVariable("AURA_LISTARY_TEST_DESKTOP");
             if (!string.IsNullOrEmpty(desktopName))
             {
                 desktop = OpenDesktopW(desktopName, 0, false, 0x0081);
@@ -22,7 +22,7 @@ internal static class Program
             }
             if (args.Length != 2) return 2;
             var window = new IntPtr(unchecked((long)ulong.Parse(args[0])));
-            var plugin = new ZSDeskPlugin();
+            var plugin = new AuraExplorerPlugin();
             if (!plugin.Initialize(new Host()).GetAwaiter().GetResult()) return 3;
             if (!plugin.IsOpenedFolderProvider || plugin.IsQuickSwitchTarget || plugin.IsSharedAcrossApplications) return 4;
             if (plugin.BindFileWindow(IntPtr.Zero) != null) return 5;
@@ -53,8 +53,8 @@ internal static class Program
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     private static void WaitForPausedTarget()
     {
-        string ready = Environment.GetEnvironmentVariable("ZSDESK_LISTARY_TEST_READY");
-        string run = Environment.GetEnvironmentVariable("ZSDESK_LISTARY_TEST_RUN");
+        string ready = Environment.GetEnvironmentVariable("AURA_LISTARY_TEST_READY");
+        string run = Environment.GetEnvironmentVariable("AURA_LISTARY_TEST_RUN");
         if (string.IsNullOrEmpty(ready) || string.IsNullOrEmpty(run)) return;
         using (var readyEvent = EventWaitHandle.OpenExisting(ready))
         using (var runEvent = EventWaitHandle.OpenExisting(run))

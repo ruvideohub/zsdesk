@@ -1,5 +1,5 @@
 {
-  "schema": "ZSDesk.EverythingPackage.v1",
+  "schema": "AuraExplorer.EverythingPackage.v1",
   "product": "Everything",
   "version": "1.4.1.1032",
   "platform": "windows-x64",

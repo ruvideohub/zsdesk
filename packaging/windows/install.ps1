@@ -1,32 +1,32 @@
 ﻿<#
 .SYNOPSIS
-    Устанавливает ZSDesk с панелью и включает автозапуск.
+    Устанавливает AuraExplorer с панелью и включает автозапуск.
 
 .DESCRIPTION
-    Копирует ZSDesk.exe и zsdesk-dock.exe в папку пользователя, кладёт ярлыки в меню
+    Копирует AuraExplorer.exe и AuraDock.exe в папку пользователя, кладёт ярлыки в меню
     «Пуск» и прописывает автозапуск при входе в Windows. Автозапуск запускает
-    `ZSDesk.exe --desktop --tray`: сетки появляются сразу, окно файлового менеджера не
+    `AuraExplorer.exe --desktop --tray`: сетки появляются сразу, окно файлового менеджера не
     открывается, в трее стоит значок, а панель внизу и виджет часов поднимает сам
-    ZSDesk — поэтому отдельная запись автозапуска панели не нужна и даже вредна:
+    AuraExplorer — поэтому отдельная запись автозапуска панели не нужна и даже вредна:
     вторая панель подралась бы за место на экране.
 
     Администратор не нужен: всё ставится в профиль пользователя (PrivilegesRequired)
     и в HKCU.
 
 .PARAMETER Dir
-    Куда ставить. По умолчанию %LOCALAPPDATA%\Programs\ZSDesk.
+    Куда ставить. По умолчанию %LOCALAPPDATA%\Programs\AuraExplorer.
 
 .PARAMETER NoAutostart
     Не прописывать автозапуск (и убрать прежний).
 
 .PARAMETER PanelOnly
-    Автозапуск только панели (zsdesk-dock.exe), без сеток и файлового менеджера.
+    Автозапуск только панели (AuraDock.exe), без сеток и файлового менеджера.
 
 .PARAMETER DesktopShortcut
     Положить ярлык ещё и на рабочий стол.
 
 .PARAMETER NoStart
-    Не запускать ZSDesk после установки.
+    Не запускать AuraExplorer после установки.
 
 .PARAMETER Remove
     Удалить: остановить процессы, убрать автозапуск, ярлыки и папку.
@@ -39,7 +39,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\ZSDesk'),
+    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\AuraExplorer'),
     [switch]$NoAutostart,
     [switch]$PanelOnly,
     [switch]$DesktopShortcut,
@@ -54,31 +54,31 @@ $RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 # Папки оболочки могут быть пустыми в урезанной среде — тогда ярлыки просто не делаем.
 $Programs   = [Environment]::GetFolderPath('Programs')
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
-$StartMenu  = if ($Programs) { Join-Path $Programs 'ZSDesk.lnk' } else { $null }
-$ShellLink  = if ($Programs) { Join-Path $Programs 'ZSDesk - сетки и панель.lnk' } else { $null }
-$Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'ZSDesk.lnk' } else { $null }
+$StartMenu  = if ($Programs) { Join-Path $Programs 'AuraExplorer.lnk' } else { $null }
+$ShellLink  = if ($Programs) { Join-Path $Programs 'AuraExplorer - сетки и панель.lnk' } else { $null }
+$Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'AuraExplorer.lnk' } else { $null }
 $Source    = $PSScriptRoot
 if (-not $Source) { $Source = (Get-Location).Path }
-if (-not $Dir) { throw 'Не задана папка установки и пуст %LOCALAPPDATA%: запусти с -Dir "C:\ZSDesk".' }
-$Exe       = Join-Path $Dir 'ZSDesk.exe'
-$Dock      = Join-Path $Dir 'zsdesk-dock.exe'
+if (-not $Dir) { throw 'Не задана папка установки и пуст %LOCALAPPDATA%: запусти с -Dir "C:\AuraExplorer".' }
+$Exe       = Join-Path $Dir 'AuraExplorer.exe'
+$Dock      = Join-Path $Dir 'AuraDock.exe'
 
 function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
 function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
 function Write-Ok([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
 
-function Stop-ZSDesk {
-    # Вежливо: просим запущенный ZSDesk закрыться (он сам погасит панель и вернёт
+function Stop-AuraExplorer {
+    # Вежливо: просим запущенный AuraExplorer закрыться (он сам погасит панель и вернёт
     # панель задач Windows), потом ждём, и только затем добиваем остатки.
     if (Test-Path -LiteralPath $Exe) {
         try { Start-Process -FilePath $Exe -ArgumentList '--desktop', '--quit' -Wait -ErrorAction Stop | Out-Null } catch { }
         for ($i = 0; $i -lt 40; $i++) {
-            $alive = Get-Process -Name 'ZSDesk' -ErrorAction SilentlyContinue
+            $alive = Get-Process -Name 'AuraExplorer' -ErrorAction SilentlyContinue
             if (-not $alive) { break }
             Start-Sleep -Milliseconds 250
         }
     }
-    Get-Process -Name 'ZSDesk', 'zsdesk-dock' -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name 'AuraExplorer', 'aura-dock' -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
 }
@@ -117,10 +117,10 @@ function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [strin
 
 # ------------------------------------------------------------------ удаление
 if ($Remove) {
-    Write-Head 'Удаление ZSDesk'
-    Stop-ZSDesk
-    Remove-Autostart 'ZSDesk'
-    Remove-Autostart 'ZSDesk Dock'
+    Write-Head 'Удаление AuraExplorer'
+    Stop-AuraExplorer
+    Remove-Autostart 'AuraExplorer'
+    Remove-Autostart 'AuraDock'
     Remove-Shortcut $StartMenu
     Remove-Shortcut $ShellLink
     Remove-Shortcut $Desktop
@@ -129,23 +129,23 @@ if ($Remove) {
         Write-Note "папка $Dir удалена"
     }
     Write-Host ''
-    Write-Host 'Готово. Настройки остались в %APPDATA%\ZSDesk — удали папку вручную, если они больше не нужны.' -ForegroundColor Green
+    Write-Host 'Готово. Настройки остались в %APPDATA%\AuraExplorer — удали папку вручную, если они больше не нужны.' -ForegroundColor Green
     return
 }
 
 # ------------------------------------------------------------------ установка
-Write-Head 'Установка ZSDesk'
+Write-Head 'Установка AuraExplorer'
 
-$needed = @('ZSDesk.exe', 'zsdesk-dock.exe')
+$needed = @('AuraExplorer.exe', 'AuraDock.exe')
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
-    Write-Host 'Положи install.ps1 в ту же папку, что ZSDesk.exe и zsdesk-dock.exe (как в архиве сборки).' -ForegroundColor Red
+    Write-Host 'Положи install.ps1 в ту же папку, что AuraExplorer.exe и AuraDock.exe (как в архиве сборки).' -ForegroundColor Red
     exit 1
 }
 
 $sameFolder = ($Source.TrimEnd('\') -eq $Dir.TrimEnd('\'))
-if (-not $sameFolder) { Stop-ZSDesk }
+if (-not $sameFolder) { Stop-AuraExplorer }
 
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
 foreach ($file in $needed) {
@@ -158,7 +158,7 @@ foreach ($file in $needed) {
 # сильнее, чем на подпись.
 try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
 
-# Visual C++ Runtime: ZSDesk собран с динамическим CRT. Если рядом с exe лежат
+# Visual C++ Runtime: AuraExplorer собран с динамическим CRT. Если рядом с exe лежат
 # библиотеки — копируем их; если нет и в системе их тоже нет, предупреждаем.
 $runtime = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
 foreach ($dll in $runtime) {
@@ -176,16 +176,16 @@ if ($env:SystemRoot) {
 # ------------------------------------------------------------------ автозапуск
 Write-Head 'Автозапуск'
 if ($NoAutostart) {
-    Remove-Autostart 'ZSDesk'
-    Remove-Autostart 'ZSDesk Dock'
+    Remove-Autostart 'AuraExplorer'
+    Remove-Autostart 'AuraDock'
     Write-Note 'автозапуск не прописан'
 } elseif ($PanelOnly) {
-    Set-Autostart 'ZSDesk Dock' ('"{0}"' -f $Dock)
-    Remove-Autostart 'ZSDesk'
+    Set-Autostart 'AuraDock' ('"{0}"' -f $Dock)
+    Remove-Autostart 'AuraExplorer'
     Write-Ok "при входе в Windows запускается только панель: $Dock"
 } else {
-    Set-Autostart 'ZSDesk' ('"{0}" --desktop --tray' -f $Exe)
-    Remove-Autostart 'ZSDesk Dock'
+    Set-Autostart 'AuraExplorer' ('"{0}" --desktop --tray' -f $Exe)
+    Remove-Autostart 'AuraDock'
     Write-Ok "при входе в Windows запускается $Exe --desktop --tray"
     Write-Note 'это сетки, виджет часов и панель сразу; окно файлового менеджера не открывается'
 }
@@ -193,12 +193,12 @@ if ($NoAutostart) {
 # ------------------------------------------------------------------ ярлыки
 Write-Head 'Ярлыки'
 if ($StartMenu -or $Desktop) {
-    New-Shortcut $StartMenu $Exe '' 'ZSDesk — файловый менеджер с панелью и сетками'
+    New-Shortcut $StartMenu $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
     if ($StartMenu) { Write-Note "меню «Пуск»: $StartMenu" }
-    New-Shortcut $ShellLink $Exe '--desktop --tray' 'ZSDesk — сетки рабочего стола и панель, без окна'
+    New-Shortcut $ShellLink $Exe '--desktop --tray' 'AuraExplorer — сетки рабочего стола и панель, без окна'
     if ($ShellLink) { Write-Note "меню «Пуск»: $ShellLink" }
     if ($DesktopShortcut) {
-        New-Shortcut $Desktop $Exe '' 'ZSDesk — файловый менеджер с панелью и сетками'
+        New-Shortcut $Desktop $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
         if ($Desktop) { Write-Note "рабочий стол: $Desktop" }
     }
 } else {
@@ -216,15 +216,15 @@ try {
 
 # ------------------------------------------------------------------ запуск
 if (-not $NoStart) {
-    Stop-ZSDesk
+    Stop-AuraExplorer
     Start-Process -FilePath $Exe -ArgumentList '--desktop', '--tray' -WorkingDirectory $Dir
-    Write-Ok 'ZSDesk запущен'
+    Write-Ok 'AuraExplorer запущен'
 }
 
 Write-Host ''
 Write-Host 'Установлено.' -ForegroundColor Green
 Write-Host "  Папка:      $Dir"
-Write-Host '  Панель:     внизу экрана, первая иконка — сам ZSDesk'
+Write-Host '  Панель:     внизу экрана, первая иконка — сам AuraExplorer'
 Write-Host '  Сетки:      на рабочем столе, появляются сразу'
 Write-Host '  Часы:       правый нижний угол, стеклянная карточка'
 Write-Host '  Значок:     в трее; выход — правый клик по нему'

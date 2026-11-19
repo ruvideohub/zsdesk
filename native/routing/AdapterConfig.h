@@ -19,7 +19,7 @@ struct AdapterConfig {
     char callerSHA256[65]{};
     wchar_t controller[kPathCharacters]{};
     char controllerSHA256[65]{};
-    wchar_t receiverClass[128]=L"ZSDesk.FileRevealRouter.2";
+    wchar_t receiverClass[128]=L"AuraExplorer.FileRevealRouter.2";
 };
 static_assert(sizeof(AdapterConfig)<65536);
 }
