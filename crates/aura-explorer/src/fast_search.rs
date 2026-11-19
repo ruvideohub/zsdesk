@@ -2,7 +2,9 @@
 mod ntfs;
 mod metadata;
 mod native_scan;
+mod sort;
 mod snapshot;
+pub use sort::SearchSort;
 pub(crate) mod query;
 mod native;
 pub(crate) mod network;
@@ -39,7 +41,7 @@ pub struct SearchEvent{
     pub scanning:bool,pub finished:bool,pub truncated:bool,pub error:Option<String>,pub reset:bool,
     pub backend:BackendKind,pub phase:IndexPhase,pub volumes:Vec<VolumeStatus>,pub read_only:bool,
 }
-#[derive(Clone)]struct Request{generation:u64,query:String,preferred:Option<PathBuf>,invalid:Option<String>,offset:u32,limit:u32,sort:everything::SearchSort}
+#[derive(Clone)]struct Request{generation:u64,query:String,preferred:Option<PathBuf>,invalid:Option<String>,offset:u32,limit:u32,sort:SearchSort}
 #[derive(Clone,Copy,Default,PartialEq)]enum ScanAction{#[default]None,Refresh,Rebuild}
 #[derive(Default)]struct Control{request:Option<Request>,action:ScanAction,release_idle:bool,settings_changed:bool}
 struct Shared{
@@ -120,8 +122,8 @@ impl FastSearch{
         let worker=thread::Builder::new().name("aura-search".into()).spawn(move||{let _permit=permit;worker_loop(path,profile,options,roots,state,sender)})?;
         Ok(Self{shared,events,worker:Some(worker)})
     }
-    pub fn start(&self,query:&str,preferred:Option<PathBuf>)->u64{self.start_page(query,preferred,0,2000,everything::SearchSort::NameAsc)}
-    pub fn start_page(&self,query:&str,preferred:Option<PathBuf>,offset:u32,limit:u32,sort:everything::SearchSort)->u64{
+    pub fn start(&self,query:&str,preferred:Option<PathBuf>)->u64{self.start_page(query,preferred,0,2000,SearchSort::NameAsc)}
+    pub fn start_page(&self,query:&str,preferred:Option<PathBuf>,offset:u32,limit:u32,sort:SearchSort)->u64{
         let generation=self.shared.generation.fetch_add(1,Ordering::AcqRel)+1;network::cancel(&self.shared);self.discard_events();
         let text:String=query.trim().chars().take(513).collect();let invalid=if text.chars().count()>512||text.contains('\0'){Some("搜索内容过长或包含无效字符".into())}else{None};
         let mut control=self.shared.control.lock().unwrap_or_else(|e|e.into_inner());control.release_idle=text.is_empty();

@@ -16,8 +16,7 @@ const MAX_PACKET:usize=16*1024*1024;
 const PAGE_LIMIT:u32=2000;
 fn wide(value:&str)->Vec<u16>{value.encode_utf16().chain(Some(0)).collect()}
 
-#[derive(Clone,Copy,Debug,Default,PartialEq,Eq)]
-pub enum SearchSort{#[default]NameAsc,NameDesc,ModifiedDesc,SizeDesc}
+/// QUERY2 sort codes for the shared orderings.
 impl SearchSort{
     fn code(self)->u32{match self{Self::NameAsc=>1,Self::NameDesc=>2,Self::ModifiedDesc=>14,Self::SizeDesc=>6}}
 }

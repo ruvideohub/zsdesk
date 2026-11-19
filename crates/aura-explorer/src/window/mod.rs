@@ -54,8 +54,6 @@ mod geometry_regression;
 mod interaction_regression;
 #[cfg(test)]
 mod search_regression;
-#[cfg(test)]
-mod everything_regression;
 
 use std::{cell::{Cell, RefCell}, collections::HashMap, mem::size_of, path::PathBuf, rc::Rc};
 use anyhow::{Context, Result};

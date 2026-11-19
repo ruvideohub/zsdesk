@@ -1,6 +1,6 @@
 //! Search controls embedded above the native Shell results view.
 use super::*;
-use crate::fast_search::everything::SearchSort;
+use crate::fast_search::SearchSort;
 use windows::Win32::{
     System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER},
     UI::Shell::{FileOpenDialog, IFileOpenDialog, FOS_FORCEFILESYSTEM, FOS_PATHMUSTEXIST,

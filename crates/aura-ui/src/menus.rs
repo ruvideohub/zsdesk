@@ -256,10 +256,11 @@ fn preview_settings(ui: &ExplorerUi) -> MenuItemSpec {
 }
 
 fn search_settings(ui: &ExplorerUi) -> MenuItemSpec {
+    // One engine, no choice to make: the built-in index. The Everything backend, its program
+    // picker, its service and its status window are gone from the product.
     let builtin=ui.search_backend.is_builtin();
     group(aura_core::i18n::text("搜索"), "settings-search", vec![
-        entry(aura_core::i18n::text("自带搜索"), "search-backend-native", true, builtin),
-        entry(aura_core::i18n::text("Everything 搜索"), "search-backend-everything", true, !builtin),
+        entry(aura_core::i18n::text("自带搜索"), "search-backend-native", true, true),
         submenu(aura_core::i18n::text("自带搜索选项"),vec![
             entry(aura_core::i18n::text("收录开发和缓存目录内容"), "search-native-development",builtin,ui.search_include_development),
             entry(aura_core::i18n::text("索引文件大小和修改时间"), "search-native-metadata",builtin,ui.search_index_metadata),
@@ -274,20 +275,15 @@ fn search_settings(ui: &ExplorerUi) -> MenuItemSpec {
         entry(aura_core::i18n::text("显示文件夹大小"), "everything-folder-sizes", true, ui.everything_folder_sizes),
         MenuItemSpec::Separator,
         item(aura_core::i18n::text("重建文件名索引"), "search-rebuild-index"),
-        entry(aura_core::i18n::text("Everything 索引设置…"), "search-index-settings",!builtin,false),
-        entry(aura_core::i18n::text("启用 Everything 索引服务…"), "search-everything-service",!builtin,false),
-        entry(aura_core::i18n::text("选择已安装的 Everything…"), "search-everything-program",!builtin,ui.everything_executable.is_some()),
-        entry(aura_core::i18n::text("自动选择已安装或内置 Everything"), "search-everything-auto",!builtin,ui.everything_executable.is_none()),
-        item(aura_core::i18n::text("搜索引擎状态…"), "search-engine-status"),
     ])
 }
 
 /// Applies a recognized settings choice; the host then saves and relayouts.
-pub fn interface_requires_dialog(choice:&str)->bool{matches!(choice,"search-everything-program"|"startup-folder"|"new-tab-folder")}
+pub fn interface_requires_dialog(choice:&str)->bool{matches!(choice,"startup-folder"|"new-tab-folder")}
 
 /// Settings entries that run an action instead of toggling a preference.
 pub fn interface_action(choice:&str)->bool{
-    matches!(choice,"search-rebuild-index"|"search-index-settings"|"search-everything-service"|"search-engine-status"|"dual-pane"|"startup-restore"|"startup-this-pc"|"new-tab-this-pc"|"new-tab-current")||interface_requires_dialog(choice)
+    matches!(choice,"search-rebuild-index"|"dual-pane"|"startup-restore"|"startup-this-pc"|"new-tab-this-pc"|"new-tab-current")||interface_requires_dialog(choice)
 }
 
 pub fn apply_interface_setting(ui: &mut ExplorerUi, choice: &str) -> bool {
@@ -328,8 +324,6 @@ pub fn apply_interface_setting(ui: &mut ExplorerUi, choice: &str) -> bool {
         "preview-provider-office" => ui.preview_provider = PreviewProviderPreference::Office,
         "preview-provider-wps" => ui.preview_provider = PreviewProviderPreference::Wps,
         "search-backend-auto"|"search-backend-native"|"search-backend-directory" => ui.search_backend = SearchBackendPreference::NativeNtfs,
-        "search-backend-everything"=>ui.search_backend=SearchBackendPreference::Everything,
-        "search-everything-auto"=>ui.everything_executable=None,
         "search-native-development"=>ui.search_include_development=!ui.search_include_development,
         "search-native-metadata"=>ui.search_index_metadata=!ui.search_index_metadata,
         "search-native-pinyin"=>ui.search_pinyin_initials=!ui.search_pinyin_initials,
@@ -673,9 +667,8 @@ mod tests {
         assert!(!ui.hover_preview);assert_eq!(ui.preview_provider,PreviewProviderPreference::System);
     }
     #[test]
-    fn search_backends_are_explicit_and_never_map_native_to_everything(){
+    fn search_backends_are_explicit_and_never_map_native_to_another_engine(){
         let mut ui=ExplorerUi::default();assert!(ui.search_backend.is_builtin());
-        assert!(apply_interface_setting(&mut ui,"search-backend-everything"));assert_eq!(ui.search_backend,SearchBackendPreference::Everything);
         for id in ["search-backend-native","search-backend-auto","search-backend-directory"]{
             assert!(apply_interface_setting(&mut ui,id));assert_eq!(ui.search_backend,SearchBackendPreference::NativeNtfs);
         }
@@ -683,19 +676,15 @@ mod tests {
         assert!(apply_interface_setting(&mut ui,"search-native-metadata"));assert!(ui.search_index_metadata);assert!(ui.search_backend.is_builtin());
     }
     #[test]
-    fn everything_program_choice_is_visible_and_can_return_to_auto(){
-        fn checked(ui:&ExplorerUi,id:&str)->bool{
+    fn the_search_group_offers_only_the_built_in_engine(){
+        fn ids(ui:&ExplorerUi)->Vec<String>{
             let MenuItemSpec::Submenu{menu,..}=search_settings(ui)else{panic!("search group")};
-            menu.items.iter().any(|item|matches!(item,MenuItemSpec::Command{command:UiCommand::Custom{id:key,..},checked:true,..} if key==id))
+            menu.items.iter().filter_map(|item|match item{MenuItemSpec::Command{command:UiCommand::Custom{id,..},..}=>Some(id.clone()),_=>None}).collect()
         }
-        let mut ui=ExplorerUi::default();ui.search_backend=SearchBackendPreference::Everything;
-        ui.everything_executable=Some(r"E:\Apps\Everything.exe".into());
-        let preferences=ui.search_preferences();let mut reopened=ExplorerUi::default();reopened.apply_search_preferences(&preferences);
-        assert!(checked(&reopened,"search-everything-program")&&!checked(&reopened,"search-everything-auto"));
-        assert!(apply_interface_setting(&mut reopened,"search-everything-auto"));
-        assert!(reopened.everything_executable.is_none()&&checked(&reopened,"search-everything-auto")&&!checked(&reopened,"search-everything-program"));
-        assert_eq!(reopened.search_backend,SearchBackendPreference::Everything);
-        assert!(interface_action("search-engine-status"));
+        let mut ui=ExplorerUi::default();ui.search_backend=SearchBackendPreference::NativeNtfs;
+        let ids=ids(&ui);
+        assert!(ids.iter().all(|id|!id.contains("everything")&&id!="search-engine-status"),"{ids:?}");
+        assert!(!interface_action("search-engine-status")&&!interface_requires_dialog("search-everything-program"));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use super::*;
 use super::search_panel::{SearchCategory,SearchControls,SEARCH_PAGE_SIZE};
-use crate::fast_search::everything::SearchSort;
+use crate::fast_search::SearchSort;
 use aura_windows::shell::commands::Column;
 #[path="font_scope.rs"]pub(super) mod font_scope;
 
