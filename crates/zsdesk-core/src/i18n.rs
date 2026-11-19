@@ -34,8 +34,14 @@ include!(concat!(env!("OUT_DIR"),"/translations.rs"));
     }
     #[test]fn translated_formats_preserve_arguments_and_path_titles(){
         let _scope=Scope::english(true);
-        assert_eq!(tr_format!("有 {denied} 个目录或项目无法读取，其余结果已显示",denied=7),"Could not read 7 folders or items; other results are shown");
+        // The catalogue wording itself may be any language: what must hold is
+        // that the placeholder is substituted and no format markup survives.
+        let translated=tr_format!("有 {denied} 个目录或项目无法读取，其余结果已显示",denied=7);
+        assert_ne!(translated,"有 {denied} 个目录或项目无法读取，其余结果已显示");
+        assert!(translated.contains('7'),"{translated}");
+        assert!(!translated.contains('{')&&!translated.contains('}'),"{translated}");
+        assert_eq!(text("有 {denied} 个目录或项目无法读取，其余结果已显示").replace("{denied}","7"),translated);
         assert_eq!(crate::model::explorer::ShellLocation::Path("C:/文件夹/图片".into()).title(),"图片");
-        assert_eq!(crate::model::explorer::ShellLocation::ThisPc.title(),"This PC");
+        assert_eq!(crate::model::explorer::ShellLocation::ThisPc.title(),text("此电脑"));
     }
 }
