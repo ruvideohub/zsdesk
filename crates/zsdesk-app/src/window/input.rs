@@ -805,9 +805,6 @@ impl WindowState {
                 let text = shortcut_help_text();
                 if let Err(error)=crate::utility_panel::shortcuts(self.hwnd,&self.config_path,text){self.show_message(zsdesk_core::tr_format!("无法打开快捷键窗口：{error:#}", error=error));}
             }
-            Some("about") => {
-                if let Err(error)=crate::utility_panel::about(self.hwnd,&self.config_path){self.show_message(zsdesk_core::tr_format!("无法打开关于窗口：{error:#}", error=error));}
-            }
             _ => {}
         }
     }

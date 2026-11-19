@@ -1,4 +1,7 @@
 //! Official release discovery and verified, edition-matched update downloads.
+// The About window no longer has an entry point, so the automatic check and its
+// notice plumbing are unreachable; the panel itself still calls the rest.
+#![allow(dead_code)]
 use anyhow::{Context,Result,ensure};
 use serde::{Deserialize,Serialize};
 use sha2::{Digest,Sha256};

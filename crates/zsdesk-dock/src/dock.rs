@@ -1911,7 +1911,6 @@ impl Dock {
         m.push(MenuItem::sep());
         m.push(MenuItem::item("Dock Settings…", CMD_SETTINGS));
         if crate::updater::installed() {
-            m.push(MenuItem::item("Check for Updates…", CMD_UPDATE_CHECK));
         }
         m.push(MenuItem::item("Quit ZSDesk Dock", CMD_QUIT));
 

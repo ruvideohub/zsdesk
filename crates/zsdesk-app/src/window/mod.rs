@@ -567,7 +567,6 @@ impl WindowState {
             if let Err(error) = crate::quick_search::start_if_enabled(&self.config_path) {
                 self.show_message(zsdesk_core::tr_format!("后台搜索启动失败：{error:#}", error=error));
             }
-            crate::update_check::start_daily(&self.config_path,hwnd);
         }
         self.update_shell_registry();
         Ok(())
@@ -1501,9 +1500,6 @@ impl WindowState {
                 if self.session.ui.tab_selection_emphasis!=saved.ui.tab_selection_emphasis{
                     self.session.ui.tab_selection_emphasis=saved.ui.tab_selection_emphasis;self.invalidate();
                 }
-            },
-            crate::update_check::NOTICE=>if let Some(release)=crate::update_check::take_notice(&self.config_path){
-                if let Err(error)=crate::utility_panel::offer_update(self.hwnd,&self.config_path,release){self.show_message(zsdesk_core::tr_format!("无法显示更新信息：{error:#}", error=error));}
             },
             crate::routing_control::WM_RESULT => if lp.0!=0{self.show_message(unsafe{*Box::from_raw(lp.0 as *mut String)});},
             message if message>=0xC000&&message==zsdesk_windows::shell::file_transfer::result_message()=>{

@@ -468,7 +468,6 @@ pub fn app_menu_with_capabilities(state: AppMenuState, ui: &ExplorerUi, themed: 
         item(zsdesk_core::i18n::text("文件夹选项"), "folder-options"),
         item(zsdesk_core::i18n::text("键盘快捷键"), "shortcuts"),
         item(zsdesk_core::i18n::text("诊断日志…"), "diagnostics"),
-        item(zsdesk_core::i18n::text("关于 ZSDesk"), "about"),
     ]);
     menu(items)
 }

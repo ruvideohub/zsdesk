@@ -5,12 +5,13 @@
 //! application windows — the way desktop widgets behave on a Mac — and it never takes a
 //! click. The time refreshes once a second; only a changed minute redraws anything.
 
-use windows::core::{w, Result};
+use windows::core::{w, Interface, Result};
 use windows::UI::Composition::*;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, RECT, SYSTEMTIME};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_USE_HOSTBACKDROPBRUSH};
-use windows::Win32::System::Time::{GetLocalTime, SYSTEMTIME};
-use windows::Win32::System::WinRT::Composition::{ICompositorDesktopInterop, DesktopWindowTarget};
+use windows::Win32::System::SystemInformation::GetLocalTime;
+use windows::UI::Composition::Desktop::DesktopWindowTarget;
+use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW, SetWindowPos, ShowWindow,
     SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WNDCLASSW, WS_EX_NOACTIVATE,
@@ -192,11 +193,7 @@ impl Drop for DesktopClock {
 }
 
 fn local_time() -> SYSTEMTIME {
-    let mut now = SYSTEMTIME::default();
-    unsafe {
-        GetLocalTime(&mut now);
-    }
-    now
+    unsafe { GetLocalTime() }
 }
 
 unsafe extern "system" fn procedure(
