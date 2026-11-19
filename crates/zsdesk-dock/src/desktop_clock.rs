@@ -26,9 +26,9 @@ use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetWindowLongPtrW, GetWindowRect, RegisterClassW,
-    SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE, SWP_NOZORDER, SWP_NOSIZE,
-    SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WM_CONTEXTMENU, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
+    GetWindowThreadProcessId, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WM_CONTEXTMENU, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP,
     WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
@@ -115,6 +115,36 @@ struct ClockState {
     drawn: String,
     /// Pointer offset inside the card while dragging.
     drag: Option<(i32, i32)>,
+    /// The app window the card was last pushed under (0: none).
+    below: isize,
+}
+
+/// One of the panel's own windows (the card, the dock, its pop-ups).
+fn is_own(h: HWND) -> bool {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+    pid == std::process::id()
+}
+
+/// The desktop's own windows: the icon view, the wallpaper host, the taskbar, Start.
+fn is_shell(h: HWND) -> bool {
+    let mut name = [0u16; 64];
+    let n = unsafe { GetClassNameW(h, &mut name) }.max(0) as usize;
+    let class = String::from_utf16_lossy(&name[..n.min(name.len())]);
+    matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow" | "SysShadow")
+}
+
+/// The app window that is in front, if any. The card belongs to the desktop, so it goes
+/// under that window and never over it.
+fn app_in_front() -> Option<HWND> {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_invalid() || is_own(fg) || is_shell(fg) {
+            None
+        } else {
+            Some(fg)
+        }
+    }
 }
 
 impl ClockState {
@@ -136,10 +166,35 @@ impl ClockState {
         let margin = (MARGIN * self.dpi.max(1.0)).round() as i32;
         let (x, y) = corner_origin(self.prefs.corner, self.monitor, w, h, margin);
         unsafe {
-            // Not HWND_TOPMOST: the card belongs to the desktop, not above your work.
-            let _ = SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            // The card belongs to the desktop, not above your work. `SetWindowPos` with a
+            // null insert-after is HWND_TOP, which is what put it over every window; here
+            // it goes just *under* the app in front (or keeps its place when the desktop
+            // itself is in front, which is where a desktop widget may sit on top).
+            match app_in_front() {
+                Some(front) => {
+                    let _ = SetWindowPos(self.hwnd, Some(front), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                }
+                None => {
+                    let _ = SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER);
+                }
+            }
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
+    }
+
+    /// Keep the card under the app in front of it (once a second, while it is visible).
+    fn keep_below(&mut self) {
+        let Some(front) = app_in_front() else {
+            self.below = 0;
+            return;
+        };
+        if self.below == front.0 as isize {
+            return;
+        }
+        unsafe {
+            let _ = SetWindowPos(self.hwnd, Some(front), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+        self.below = front.0 as isize;
     }
 
     /// The corner nearest to where the card was dropped.
@@ -271,6 +326,7 @@ impl DesktopClock {
                 prefs,
                 drawn: String::new(),
                 drag: None,
+                below: 0,
             });
             // The window procedure reaches its state through this pointer. `state` is
             // boxed, so the address stays valid when the panel moves the clock around.
@@ -307,6 +363,7 @@ impl DesktopClock {
 
     /// Draw the card. Called on a one-second timer; redraws only when the text changed.
     pub fn tick(&mut self, c: &Compositor, gfx: &Gfx) -> Result<()> {
+        self.state.keep_below();
         let now = local_time();
         let (time, suffix) = self.state.time_text(&now);
         let date = if self.state.prefs.date { self.state.date_text(&now) } else { String::new() };
