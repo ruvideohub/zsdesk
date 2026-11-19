@@ -26,6 +26,10 @@ const MONTHS_RU: [&str; 12] = [
 const MONTHS_EN: [&str; 12] = [
     "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
 ];
+/// Months as a date says them in Russian: "19 ноября", never "19 Ноябрь".
+const MONTHS_RU_GEN: [&str; 12] = [
+    "января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря",
+];
 /// 0 = Sunday, as `SYSTEMTIME.wDayOfWeek` counts.
 const DAYS_RU: [&str; 7] = ["Воскресенье", "Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"];
 const DAYS_EN: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -49,6 +53,14 @@ fn month_name(m: u32) -> &'static str {
     let i = ((m.clamp(1, 12)) - 1) as usize;
     if ru() {
         MONTHS_RU[i]
+    } else {
+        MONTHS_EN[i]
+    }
+}
+fn month_gen(m: u32) -> &'static str {
+    let i = ((m.clamp(1, 12)) - 1) as usize;
+    if ru() {
+        MONTHS_RU_GEN[i]
     } else {
         MONTHS_EN[i]
     }
@@ -1429,7 +1441,7 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
     let time = format!("{}:{:02}", h12(n.hour), n.minute);
     let mon = month_name(n.month);
     let day = day_name(n.weekday);
-    let date_long = if ru() { format!("{day}, {} {mon}", n.day) } else { format!("{day}, {mon} {}", n.day) };
+    let date_long = if ru() { format!("{day}, {} {}", n.day, month_gen(n.month)) } else { format!("{day}, {mon} {}", n.day) };
     let date_short = if ru() {
         format!("{} {} {mon}", n.day, day_short(n.weekday))
     } else {
@@ -1466,7 +1478,16 @@ fn clock(c: &Canvas, out: &mut Painted, k: ClockKind, x: &Ctx, sh: Shape) {
                                 c.tw(t, rx + cs * 1.9, c.h / 2.0 - cs * 0.85, cs * 1.25, 600, c.text1(), c.w - rx - cs * 1.9 - 6.0);
                             }
                             None => {
-                                c.tw(&day_short3(n.weekday).to_uppercase(), rx, c.h / 2.0 - cs * 1.3, cs, 700, RED, c.w - rx - 6.0);
+                                // A wider widget has room for the whole weekday ("Пятница");
+                                // the narrow one keeps the three capitals. Measured, not
+                                // guessed: "Среда" fits where "Воскресенье" does not.
+                                let room = c.w - rx - 6.0;
+                                let name = if c.measure(day, cs, 700, Font::Text).0 <= room {
+                                    day.to_string()
+                                } else {
+                                    day_short3(n.weekday).to_uppercase()
+                                };
+                                c.tw(&name, rx, c.h / 2.0 - cs * 1.3, cs, 700, RED, room);
                                 c.tw(&format!("{} {}", month_short(n.month), n.day), rx, c.h / 2.0 - 1.0, cs * 1.15, 600, c.text1(), c.w - rx - 6.0);
                             }
                         }
