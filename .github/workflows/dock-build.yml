@@ -1,0 +1,58 @@
+name: Dock build
+
+# Produces the two executables of the dock edition: the file manager host and
+# the dock itself. The packaging script (`scripts/package.ps1`) still creates the
+# installers; this workflow only answers "did it build, and where are the exes".
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/zsdesk-dock/**'
+      - '.github/workflows/dock-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: zsdesk
+      - name: Read the ZSUI revision
+        id: dependency
+        shell: pwsh
+        run: '"revision=$((Get-Content -LiteralPath zsdesk/packaging/zsui-revision.txt -Raw).Trim())" >> $env:GITHUB_OUTPUT'
+      - uses: actions/checkout@v7
+        with:
+          repository: qiu7824/zsui
+          ref: ${{ steps.dependency.outputs.revision }}
+          path: zsui
+      - uses: dtolnay/rust-toolchain@1.99.0
+      - name: Build the host and the dock
+        working-directory: zsdesk
+        shell: pwsh
+        run: |
+          cargo build --locked --release -p zsdesk-app
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build --locked --release -p zsdesk-dock
+          exit $LASTEXITCODE
+      - name: Collect the executables
+        working-directory: zsdesk
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item -LiteralPath target/release/zsdesk-app.exe -Destination dist/ZSDesk.exe
+          Copy-Item -LiteralPath target/release/zsdesk-dock.exe -Destination dist/zsdesk-dock.exe
+          Get-ChildItem -LiteralPath dist | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zsdesk-dock-windows-x64
+          path: zsdesk/dist/*
+          if-no-files-found: error

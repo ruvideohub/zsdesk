@@ -1,0 +1,1025 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Док ZSDesk — интерактивный макет</title>
+<style>
+  :root {
+    --font: "Segoe UI", "Inter", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font);
+    background:
+      radial-gradient(1200px 700px at 20% 15%, #2b4a7a 0%, rgba(43,74,122,0) 60%),
+      radial-gradient(900px 600px at 85% 25%, #7a3562 0%, rgba(122,53,98,0) 55%),
+      radial-gradient(1000px 800px at 60% 95%, #10324a 0%, rgba(16,50,74,0) 60%),
+      linear-gradient(160deg, #10131c 0%, #1a2233 45%, #0b0f16 100%);
+    overflow: hidden;
+    color: #eef1f7;
+    -webkit-user-select: none; user-select: none;
+  }
+
+  /* ── панель управления макетом ─────────────────────────────── */
+  .panel {
+    position: fixed; top: 18px; left: 18px; z-index: 40;
+    width: 268px; padding: 14px 16px 16px;
+    border-radius: 14px;
+    background: rgba(20, 24, 34, .72);
+    border: 1px solid rgba(255,255,255,.12);
+    backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 18px 44px rgba(0,0,0,.45);
+    font-size: 13px;
+  }
+  .panel h1 { margin: 0 0 2px; font-size: 14px; letter-spacing: .2px; }
+  .panel p.sub { margin: 0 0 12px; font-size: 11.5px; line-height: 1.45; color: #9aa6bd; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; }
+  .row label { color: #cfd7e6; }
+  .row input[type=range] { width: 108px; accent-color: #3f8cff; }
+  .switch { position: relative; width: 38px; height: 21px; flex: none; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch span {
+    position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,.18); transition: background .18s ease;
+  }
+  .switch span::after {
+    content: ""; position: absolute; top: 2.5px; left: 2.5px; width: 16px; height: 16px;
+    border-radius: 50%; background: #fff; transition: transform .18s cubic-bezier(.4,.9,.3,1.2);
+  }
+  .switch input:checked + span { background: #3f8cff; }
+  .switch input:checked + span::after { transform: translateX(17px); }
+  .hint { margin-top: 12px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.10);
+          font-size: 11.5px; line-height: 1.5; color: #8f9bb2; }
+  .hint b { color: #c9d4e6; font-weight: 600; }
+  .value { min-width: 34px; text-align: right; color: #9fb1cd; font-variant-numeric: tabular-nums; }
+
+  /* ── рабочий стол ─────────────────────────────────────────── */
+  .desktop {
+    position: absolute; inset: 0;
+    display: grid; place-items: center;
+  }
+  .window {
+    width: min(760px, 74vw); padding: 20px 24px 26px;
+    border-radius: 16px;
+    background: rgba(26, 32, 44, .55);
+    border: 1px solid rgba(255,255,255,.10);
+    box-shadow: 0 30px 70px rgba(0,0,0,.45);
+    backdrop-filter: blur(6px);
+  }
+  .window h2 { margin: 0 0 6px; font-size: 17px; }
+  .window p { margin: 0; font-size: 13px; line-height: 1.6; color: #a9b5c9; }
+  .window .bar { display: flex; gap: 7px; margin-bottom: 16px; }
+  .window .bar i { width: 10px; height: 10px; border-radius: 50%; background: rgba(255,255,255,.22); }
+
+  /* ── док ──────────────────────────────────────────────────── */
+  #dockLayer {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 190px;
+    z-index: 30; pointer-events: none;
+  }
+  #dock {
+    position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+    display: flex; align-items: flex-end;
+    padding: 9px 11px;
+    border-radius: 24px;
+    background: rgba(32, 34, 42, .58);
+    border: 1px solid rgba(255,255,255,.16);
+    box-shadow: 0 22px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.14);
+    backdrop-filter: blur(22px) saturate(160%);
+    transition: transform .34s cubic-bezier(.33,.9,.28,1), opacity .34s ease;
+    pointer-events: auto;
+  }
+  #dock.autohide-hidden { transform: translateX(-50%) translateY(calc(100% + 14px)); opacity: .0; }
+  #trigger {
+    position: fixed; left: 0; right: 0; bottom: 0; height: 6px; z-index: 31;
+    background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.22));
+    border-top-left-radius: 6px; border-top-right-radius: 6px;
+    opacity: 0; transition: opacity .25s ease; pointer-events: none;
+  }
+  #trigger.visible { opacity: 1; pointer-events: auto; }
+
+  .slot {
+    position: relative;
+    display: flex; align-items: flex-end; justify-content: center;
+    cursor: pointer;
+    transition: width .09s linear;
+  }
+  .icon {
+    position: relative;
+    display: grid; place-items: center;
+    transform-origin: bottom center;
+    will-change: transform;
+    filter: drop-shadow(0 6px 10px rgba(0,0,0,.42));
+    transition: transform .09s linear;
+  }
+  .icon svg { display: block; width: 100%; height: 100%; }
+  .dot {
+    position: absolute; left: 50%; bottom: 1px; transform: translateX(-50%);
+    width: 4px; height: 4px; border-radius: 50%;
+    background: rgba(255,255,255,.85);
+    opacity: 0; transition: opacity .16s ease, background .16s ease;
+  }
+  .slot.running .dot { opacity: .9; }
+  .slot.hover .dot { background: #7fb2ff; }
+  .slot.hover .icon { filter: drop-shadow(0 10px 16px rgba(0,0,0,.5)); }
+
+  .sep { width: 1px; align-self: stretch; margin: 6px 5px; background: rgba(255,255,255,.18); }
+
+  .label-pill {
+    position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+    padding: 4px 10px; border-radius: 9px; white-space: nowrap;
+    font-size: 12px; font-weight: 600; letter-spacing: .1px;
+    background: rgba(46, 48, 58, .92); color: #f2f4f9;
+    border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 10px 22px rgba(0,0,0,.42);
+    opacity: 0; transition: opacity .12s ease; pointer-events: none;
+  }
+  .slot.hover .label-pill { opacity: 1; }
+
+  .clock {
+    align-self: flex-end; padding: 0 8px 6px 4px;
+    font-size: 13px; font-weight: 600; color: rgba(255,255,255,.94);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+
+  /* ── зона состояния (трей) ────────────────────────────────── */
+  .status {
+    display: flex; align-items: flex-end; gap: 3px;
+    padding: 0 2px 3px 4px; align-self: flex-end;
+  }
+  .status-item {
+    position: relative; width: 26px; height: 26px;
+    display: grid; place-items: center; border-radius: 8px;
+    cursor: pointer; color: rgba(255,255,255,.92);
+    transition: background .13s ease, color .13s ease;
+  }
+  .status-item svg { width: 17px; height: 17px; display: block; }
+  .status-item:hover { background: rgba(255,255,255,.16); }
+  .status-item.off { color: rgba(255,255,255,.45); }
+  .status-item .badge {
+    position: absolute; top: -1px; right: -2px; min-width: 13px; height: 13px;
+    border-radius: 7px; background: #ff5f57; color: #fff;
+    font: 700 8.5px/13px "Segoe UI", sans-serif; text-align: center; padding: 0 3px;
+  }
+  .status-item .pill {
+    position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%);
+    padding: 4px 9px; border-radius: 8px; white-space: nowrap; font-size: 11.5px; font-weight: 600;
+    background: rgba(46, 48, 58, .95); border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 10px 22px rgba(0,0,0,.42); opacity: 0; transition: opacity .12s ease; pointer-events: none;
+  }
+  .status-item:hover .pill { opacity: 1; }
+  .status .clock {
+    align-self: center; padding: 0 6px 0 5px; margin-left: 2px;
+    font-size: 13px; font-weight: 600; color: rgba(255,255,255,.94);
+    font-variant-numeric: tabular-nums; white-space: nowrap; cursor: pointer;
+    border-radius: 8px; transition: background .13s ease;
+  }
+  .status .clock:hover { background: rgba(255,255,255,.16); }
+
+  /* ── карточка «Звук и состояние» ──────────────────────────── */
+  #quick {
+    position: fixed; z-index: 45; width: 322px; padding: 14px 16px 15px;
+    border-radius: 18px;
+    background: rgba(28, 31, 40, .82);
+    border: 1px solid rgba(255,255,255,.15);
+    box-shadow: 0 26px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.12);
+    backdrop-filter: blur(26px) saturate(170%);
+    color: #eef2f9; opacity: 0; transform: translateY(8px) scale(.98);
+    transform-origin: bottom right; pointer-events: none;
+    transition: opacity .16s ease, transform .18s cubic-bezier(.33,.9,.28,1);
+  }
+  #quick.open { opacity: 1; transform: none; pointer-events: auto; }
+  .quick-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
+  .quick-head b { font-size: 12.5px; font-weight: 600; letter-spacing: .1px; }
+  .quick-head span { font-size: 11.5px; color: #9aa6bd; font-variant-numeric: tabular-nums; }
+  .slider-row { display: flex; align-items: center; gap: 10px; }
+  .slider-row .mute {
+    width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
+    cursor: pointer; color: rgba(255,255,255,.9); flex: none;
+  }
+  .slider-row .mute:hover { background: rgba(255,255,255,.14); }
+  .slider-row .mute svg { width: 17px; height: 17px; }
+  .track {
+    position: relative; flex: 1; height: 22px; display: flex; align-items: center; cursor: pointer;
+  }
+  .track .rail { position: absolute; left: 0; right: 0; height: 5px; border-radius: 3px; background: rgba(255,255,255,.20); }
+  .track .fill { position: absolute; left: 0; height: 5px; border-radius: 3px; background: linear-gradient(90deg, #4f9bff, #7fbaff); }
+  .track .knob {
+    position: absolute; width: 13px; height: 13px; border-radius: 50%; background: #fff;
+    box-shadow: 0 2px 6px rgba(0,0,0,.45); transform: translateX(-50%);
+  }
+  .quick-line { height: 1px; margin: 12px -4px 11px; background: rgba(255,255,255,.11); }
+  .info-row { display: flex; align-items: center; justify-content: space-between; padding: 3px 0; font-size: 12.5px; }
+  .info-row .left { display: flex; align-items: center; gap: 9px; color: #cfd7e6; }
+  .info-row .left svg { width: 16px; height: 16px; }
+  .info-row .right { color: #97a3b8; font-variant-numeric: tabular-nums; }
+  .chips { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 12px; }
+  .chip {
+    display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px;
+    background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.10);
+    font-size: 12px; color: #e5ebf5; cursor: pointer; transition: background .13s ease;
+  }
+  .chip:hover { background: rgba(255,255,255,.17); }
+  .chip svg { width: 15px; height: 15px; flex: none; }
+  .chip kbd {
+    margin-left: auto; font: 600 9.5px/1 "Segoe UI", sans-serif; color: #93a0b6;
+    background: rgba(255,255,255,.08); border-radius: 4px; padding: 2px 4px;
+  }
+
+  /* ── контекстные меню ─────────────────────────────────────── */
+  .menu {
+    position: fixed; z-index: 60; min-width: 216px; padding: 5px;
+    border-radius: 10px;
+    background: rgba(38, 40, 48, .97);
+    border: 1px solid rgba(255,255,255,.14);
+    box-shadow: 0 22px 44px rgba(0,0,0,.55);
+    font-size: 12.5px; color: #e8ecf4;
+  }
+  .menu .item {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 6px 10px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+  }
+  .menu .item:hover { background: #3f8cff; color: #fff; }
+  .menu .item.disabled { color: #7d879a; cursor: default; }
+  .menu .item.disabled:hover { background: transparent; color: #7d879a; }
+  .menu .item .check { width: 14px; text-align: center; opacity: .9; }
+  .menu .line { height: 1px; margin: 5px 8px; background: rgba(255,255,255,.14); }
+
+  /* ── «Все приложения» ─────────────────────────────────────── */
+  #launcher {
+    position: fixed; inset: 0; z-index: 50; display: none;
+    background: rgba(10, 13, 20, .62);
+    backdrop-filter: blur(16px) saturate(130%);
+  }
+  #launcher.open { display: block; }
+  .search {
+    margin: 54px auto 26px; width: min(420px, 70vw); height: 42px;
+    display: flex; align-items: center; gap: 10px; padding: 0 18px;
+    border-radius: 21px; background: rgba(255,255,255,.14);
+    border: 1px solid rgba(255,255,255,.18);
+    font-size: 14px; color: #eef2f9;
+  }
+  .search .caret { width: 1px; height: 18px; background: #7fb2ff; animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .search .ph { color: #97a3b8; }
+  .grid {
+    display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px 4px;
+    width: min(980px, 92vw); margin: 0 auto;
+  }
+  .tile {
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    padding: 10px 4px 8px; border-radius: 12px; cursor: pointer;
+    transition: background .14s ease;
+  }
+  .tile:hover, .tile.active { background: rgba(255,255,255,.12); }
+  .tile .tile-icon { width: 54px; height: 54px; }
+  .tile .tile-icon svg { width: 100%; height: 100%; display: block; }
+  .tile span { font-size: 11.5px; color: #dfe6f1; text-align: center; line-height: 1.25;
+               max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { width: 100%; text-align: center; padding: 60px 0; color: #9aa6bd; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <h1>Док ZSDesk</h1>
+  <p class="sub">Макет поведения будущего компонента <code>crates/zsdesk-dock</code>: та же геометрия и та же кривая увеличения, что в Rust-коде.</p>
+
+  <div class="row">
+    <label for="magnify">Увеличение значков</label>
+    <span class="switch"><input id="magnify" type="checkbox" checked><span></span></span>
+  </div>
+  <div class="row">
+    <label for="autohide">Автопрятание</label>
+    <span class="switch"><input id="autohide" type="checkbox"><span></span></span>
+  </div>
+  <div class="row">
+    <label for="showStatus">Индикаторы состояния</label>
+    <span class="switch"><input id="showStatus" type="checkbox" checked><span></span></span>
+  </div>
+  <div class="row">
+    <label for="size">Размер значков</label>
+    <input id="size" type="range" min="32" max="64" step="4" value="48">
+    <span class="value" id="sizeValue">48</span>
+  </div>
+
+  <div class="hint">
+    <b>Наведите</b> на иконки — они растут, соседние подхватывают.<br>
+    <b>Клик</b> по запущенному приложению переключает окно, повторный — сворачивает.<br>
+    <b>Правый клик</b> по иконке — список окон, по фону дока — настройки.<br>
+    <b>Сетка</b> открывает «Все приложения» (поиск вводом, Enter, Esc).<br>
+    <b>Правый край</b> — зона состояния: шеврон и звук открывают свою карточку с ползунком громкости, сети и батареей.
+  </div>
+</div>
+
+<div class="desktop">
+  <div class="window">
+    <div class="bar"><i></i><i></i><i></i></div>
+    <h2>Рабочий стол Windows</h2>
+    <p>Док живёт поверх рабочих окон внизу экрана. Прозрачные области слоистого окна не
+       перехватывают мышь, поэтому панель занимает место только под иконками, а увеличение
+       расширяет её вокруг центра. Этот макет повторяет алгоритм из
+       <code>layout.rs</code> и <code>magnify.rs</code>.</p>
+  </div>
+</div>
+
+<div id="trigger" title="Показать док"></div>
+
+<div id="dockLayer">
+  <div id="dock"></div>
+</div>
+
+<div id="quick"></div>
+
+<div id="launcher">
+  <div class="search"><span id="query" class="ph">Поиск приложений…</span><span class="caret"></span></div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+/* ─────────────────────────── данные ─────────────────────────── */
+
+// Значки — встроенный SVG: ничего не грузится из сети, макет работает офлайн.
+function icon(background, glyph, accent) {
+  return `<svg viewBox="0 0 64 64" aria-hidden="true">
+    <rect x="2" y="2" width="60" height="60" rx="15" fill="${background[0]}"/>
+    <path d="M2 17a15 15 0 0 1 15-15h30a15 15 0 0 1 15 15v14H2z" fill="#ffffff" opacity=".13"/>
+    <rect x="2" y="2" width="60" height="60" rx="15" fill="none" stroke="#000000" stroke-opacity=".16"/>
+    ${glyph}
+    ${accent ? `<circle cx="49" cy="49" r="7" fill="${accent}"/>` : ''}
+  </svg>`;
+}
+
+const svgFolder = `<path d="M16 22h12l4 5h16a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H16a3 3 0 0 1-3-3V25a3 3 0 0 1 3-3z" fill="#fff" opacity=".92"/>`;
+const svgNote = `<rect x="18" y="16" width="28" height="34" rx="3" fill="#fff" opacity=".95"/>
+  <path d="M23 25h18M23 31h18M23 37h11" stroke="#2c6bd6" stroke-width="2.4" stroke-linecap="round"/>`;
+const svgCalc = `<rect x="18" y="16" width="28" height="32" rx="4" fill="#fff" opacity=".95"/>
+  <rect x="22" y="20" width="20" height="7" rx="2" fill="#f08a24"/>
+  <g fill="#33405a"><rect x="23" y="31" width="5" height="5" rx="1"/><rect x="30" y="31" width="5" height="5" rx="1"/>
+  <rect x="37" y="31" width="5" height="5" rx="1"/><rect x="23" y="38" width="5" height="5" rx="1"/>
+  <rect x="30" y="38" width="5" height="5" rx="1"/><rect x="37" y="38" width="5" height="5" rx="1"/></g>`;
+const svgPaint = `<path d="M20 40c6 2 10-2 12-8 2-6 6-9 12-8-1 7-3 13-8 17-4 3-10 4-16-1z" fill="#fff" opacity=".95"/>
+  <circle cx="24" cy="24" r="4" fill="#ffd166"/>`;
+const svgTerminal = `<rect x="15" y="19" width="34" height="26" rx="4" fill="#0c1421" opacity=".82"/>
+  <path d="M21 27l5 4-5 4" stroke="#7ff0a8" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M30 35h11" stroke="#7ff0a8" stroke-width="2.4" stroke-linecap="round"/>`;
+const svgGear = `<path d="M32 22a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 5.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9z" fill="#fff" opacity=".95"/>
+  <g fill="#fff" opacity=".8"><rect x="30.5" y="14" width="3" height="5" rx="1.5"/><rect x="30.5" y="45" width="3" height="5" rx="1.5"/>
+  <rect x="14" y="30.5" width="5" height="3" rx="1.5"/><rect x="45" y="30.5" width="5" height="3" rx="1.5"/></g>`;
+const svgGlobe = `<circle cx="32" cy="32" r="13" fill="none" stroke="#fff" stroke-width="2.6" opacity=".95"/>
+  <path d="M19 32h26M32 19c5 5 5 21 0 26M32 19c-5 5-5 21 0 26" fill="none" stroke="#fff" stroke-width="2.2" opacity=".8"/>`;
+const svgMail = `<rect x="16" y="21" width="32" height="22" rx="3" fill="#fff" opacity=".95"/>
+  <path d="M17.5 23.5 32 34l14.5-10.5" fill="none" stroke="#2f7ee0" stroke-width="2.4" stroke-linejoin="round"/>`;
+const svgGrid = `<g fill="#fff" opacity=".95"><rect x="17" y="17" width="8" height="8" rx="2.4"/><rect x="28" y="17" width="8" height="8" rx="2.4"/>
+  <rect x="39" y="17" width="8" height="8" rx="2.4"/><rect x="17" y="28" width="8" height="8" rx="2.4"/><rect x="28" y="28" width="8" height="8" rx="2.4"/>
+  <rect x="39" y="28" width="8" height="8" rx="2.4"/><rect x="17" y="39" width="8" height="8" rx="2.4"/><rect x="28" y="39" width="8" height="8" rx="2.4"/>
+  <rect x="39" y="39" width="8" height="8" rx="2.4"/></g>`;
+const svgTrash = `<path d="M23 24h18l-2 20a4 4 0 0 1-4 3.5h-6A4 4 0 0 1 25 44z" fill="#fff" opacity=".95"/>
+  <rect x="20" y="19" width="24" height="4" rx="2" fill="#fff"/>
+  <path d="M29 15h6" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M29 30v11M35 30v11" stroke="#8fb4ea" stroke-width="2.2" stroke-linecap="round"/>`;
+
+/* Иконки зоны состояния — тонкий штрих 1.6 px, как в системных панелях. */
+const stroke = (inner, width = 1.7) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${width}"
+        stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+
+const svgChevron = stroke(`<path d="M9 15.5 6 12l3-3.5"/><path d="M15 15.5 18 12l-3-3.5"/>`, 1.9);
+const svgWifi = stroke(`<path d="M4 9.5a12 12 0 0 1 16 0"/><path d="M7 13a8 8 0 0 1 10 0"/><path d="M10 16.4a3.6 3.6 0 0 1 4 0"/><circle cx="12" cy="19" r=".9" fill="currentColor" stroke="none"/>`);
+const svgWifiOff = stroke(`<path d="M4 9.5a12 12 0 0 1 6.4-2.7"/><path d="M7 13a8 8 0 0 1 4.6-1.5"/><path d="M10 16.4a3.6 3.6 0 0 1 4 0"/><circle cx="12" cy="19" r=".9" fill="currentColor" stroke="none"/><path d="M4 4l16 16" stroke="#ff8a8a"/>`);
+const svgSpeaker = stroke(`<path d="M5 10.5h3L12.5 7v10L8 13.5H5z" fill="currentColor" stroke="none"/><path d="M15.5 9.4a3.7 3.7 0 0 1 0 5.2"/><path d="M18 7a7.2 7.2 0 0 1 0 10"/>`);
+const svgSpeakerOff = stroke(`<path d="M5 10.5h3L12.5 7v10L8 13.5H5z" fill="currentColor" stroke="none"/><path d="M16 9.8l4 4.4M20 9.8l-4 4.4" stroke="#ff8a8a"/>`);
+const batterySvg = (level, charging) => {
+  const width = Math.max(1.2, 13 * level / 100);
+  return `<svg viewBox="0 0 26 24" fill="none">
+    <rect x="2.2" y="8.2" width="18" height="8.6" rx="2.6" stroke="currentColor" stroke-width="1.6" opacity=".9"/>
+    <rect x="21.4" y="10.7" width="2.1" height="3.6" rx="1.1" fill="currentColor" opacity=".7"/>
+    <rect x="3.6" y="9.6" width="${width}" height="5.8" rx="1.6" fill="${level > 22 ? 'currentColor' : '#ff9f6b'}"/>
+    ${charging ? `<path d="M11.6 4.4 8.9 11h2.6l-1.4 5.2 3.6-6.6h-2.4l1.2-5.2z" fill="#7fe0a8" stroke="none"/>` : ''}
+  </svg>`;
+};
+
+const PINNED = [
+  { id: 'explorer', label: 'Проводник', icon: icon(['#3f7ff5', '#2c5fd0'], svgFolder), running: true },
+  { id: 'notepad',  label: 'Блокнот',   icon: icon(['#f4f7fb', '#e2e9f4'], svgNote),   running: true },
+  { id: 'calc',     label: 'Калькулятор', icon: icon(['#ffb84d', '#f08a24'], svgCalc), running: false },
+  { id: 'paint',    label: 'Paint',     icon: icon(['#5ecbf5', '#2b8fd6'], svgPaint),  running: false },
+  { id: 'terminal', label: 'Терминал',  icon: icon(['#2b3444', '#141c28'], svgTerminal), running: true },
+  { id: 'settings', label: 'Параметры', icon: icon(['#9aa7bd', '#6f7d94'], svgGear),   running: false },
+  { id: 'browser',  label: 'Браузер',   icon: icon(['#3ecfa4', '#1f9b78'], svgGlobe),  running: true },
+  { id: 'mail',     label: 'Почта',     icon: icon(['#5b8def', '#3565c8'], svgMail),   running: false }
+];
+
+const CATALOGUE = [
+  ['Проводник', icon(['#3f7ff5', '#2c5fd0'], svgFolder)],
+  ['Блокнот', icon(['#f4f7fb', '#e2e9f4'], svgNote)],
+  ['Калькулятор', icon(['#ffb84d', '#f08a24'], svgCalc)],
+  ['Paint', icon(['#5ecbf5', '#2b8fd6'], svgPaint)],
+  ['Терминал', icon(['#2b3444', '#141c28'], svgTerminal)],
+  ['Параметры', icon(['#9aa7bd', '#6f7d94'], svgGear)],
+  ['Браузер', icon(['#3ecfa4', '#1f9b78'], svgGlobe)],
+  ['Почта', icon(['#5b8def', '#3565c8'], svgMail)],
+  ['Календарь', icon(['#ff6b6b', '#d94141'], `<rect x="18" y="20" width="28" height="26" rx="4" fill="#fff" opacity=".95"/>
+    <rect x="18" y="20" width="28" height="7" rx="3" fill="#ffd9d9"/><text x="32" y="41" font-size="13" font-weight="700"
+    text-anchor="middle" fill="#c93a3a" font-family="Segoe UI, sans-serif">19</text>`)],
+  ['Фотографии', icon(['#8f6bf5', '#6236d0'], `<circle cx="27" cy="28" r="4" fill="#fff"/><path d="M17 43l9-10 6 6 5-5 10 9z" fill="#fff" opacity=".92"/>`)],
+  ['Музыка', icon(['#f56ba8', '#cf3a7c'], `<path d="M27 40V24l14-4v16" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="24" cy="41" r="4.5" fill="#fff"/><circle cx="38" cy="37" r="4.5" fill="#fff"/>`)],
+  ['Видео', icon(['#2f3a4d', '#171f2c'], `<rect x="24" y="22" width="24" height="20" rx="4" fill="#fff" opacity=".92"/>
+    <path d="M17 26l7 4-7 4z" fill="#fff" opacity=".92"/>`)],
+  ['Диспетчер задач', icon(['#4fd1c5', '#2b9e94'], `<path d="M17 39l7-9 6 5 6-11 6 8 5-4" fill="none" stroke="#0d2b28" stroke-width="2.6"
+    stroke-linecap="round" stroke-linejoin="round"/>`)],
+  ['Word', icon(['#3b7bf0', '#2159bd'], `<path d="M21 19h22v26H21z" fill="#fff" opacity=".95"/>
+    <text x="32" y="38" font-size="15" font-weight="700" text-anchor="middle" fill="#2159bd" font-family="Segoe UI, sans-serif">W</text>`)],
+  ['Excel', icon(['#3aa365', '#237a49'], `<path d="M21 19h22v26H21z" fill="#fff" opacity=".95"/>
+    <text x="32" y="38" font-size="15" font-weight="700" text-anchor="middle" fill="#237a49" font-family="Segoe UI, sans-serif">X</text>`)],
+  ['PowerPoint', icon(['#ef7d45', '#c9541f'], `<path d="M21 19h22v26H21z" fill="#fff" opacity=".95"/>
+    <text x="32" y="38" font-size="15" font-weight="700" text-anchor="middle" fill="#c9541f" font-family="Segoe UI, sans-serif">P</text>`)],
+  ['Visual Studio Code', icon(['#3fa9f5', '#1e6fbb'], svgNote)],
+  ['PowerShell', icon(['#2b3444', '#141c28'], svgTerminal)],
+  ['Skype', icon(['#5fc8f5', '#1f9bd6'], `<circle cx="32" cy="32" r="12" fill="none" stroke="#0d3d52" stroke-width="2.6"/>
+    <circle cx="32" cy="32" r="4" fill="#0d3d52"/>`)],
+  ['Восстановление системы', icon(['#8ea0bb', '#5c6d87'], svgGear)],
+  ['Корзина', icon(['#8ea0bb', '#5c6d87'], svgTrash)]
+];
+
+/* ─────────────────────── состояние макета ─────────────────────── */
+
+const state = {
+  showStatus: true,
+  online: true,
+  networkName: 'Ethernet',
+  volume: 42,
+  muted: false,
+  battery: 76,
+  charging: true,
+  magnify: true,
+  autohide: false,
+  iconSize: 48,
+  pointerX: null,
+  hover: -1,
+  revealed: 1,
+  drag: null
+};
+
+const dockEl = document.getElementById('dock');
+const triggerEl = document.getElementById('trigger');
+const launcherEl = document.getElementById('launcher');
+const gridEl = document.getElementById('grid');
+const queryEl = document.getElementById('query');
+
+/* ───────────────── геометрия (порт layout.rs) ───────────────── */
+
+const metrics = () => ({ icon: state.iconSize, gap: 8, padding: 10, panel: state.iconSize + 18 });
+
+// Косинусный «колокол» (magnify.rs). t >= 1 → 0.
+function bell(t) {
+  if (!isFinite(t) || t >= 1) return 0;
+  if (t <= 0) return 1;
+  return 0.5 * (1 + Math.cos(Math.PI * t));
+}
+
+function scaleAt(distance, influence, max) {
+  max = Math.min(3, Math.max(1, max));
+  if (Math.abs(max - 1) < 1e-6) return 1;
+  return 1 + (max - 1) * bell(Math.abs(distance) / Math.max(1, influence));
+}
+
+// place(): центрированная панель, базовые центры для кривой, расширение вокруг центра.
+function place(count, pointerX) {
+  const m = metrics();
+  if (!count) return { scales: [], widths: [] };
+  const baseWidth = m.padding * 2 + count * m.icon + (count - 1) * m.gap;
+  const baseLeft = (window.innerWidth - baseWidth) / 2;
+  const scales = new Array(count).fill(1);
+  if (state.magnify && pointerX != null) {
+    const radius = Math.max(1, 2.5 * (m.icon + m.gap));
+    for (let i = 0; i < count; i++) {
+      const center = baseLeft + m.padding + i * (m.icon + m.gap) + m.icon / 2;
+      scales[i] = scaleAt(pointerX - center, radius, 1.85);
+    }
+  }
+  const widths = scales.map(s => m.icon * s);
+  return { scales, widths };
+}
+
+/* ───────────────────────── отрисовка дока ───────────────────── */
+
+const SLOT_GAP = 8;
+
+function buildDock() {
+  dockEl.innerHTML = '';
+  const slots = PINNED.slice();
+  slots.forEach((app, index) => {
+    if (index === PINNED.length) return;
+    const slot = document.createElement('div');
+    slot.className = 'slot' + (app.running ? ' running' : '');
+    slot.dataset.index = index;
+    slot.dataset.id = app.id;
+    slot.innerHTML = `<div class="icon">${app.icon}</div><div class="dot"></div>
+      <div class="label-pill">${app.label}</div>`;
+    dockEl.appendChild(slot);
+  });
+
+  dockEl.insertAdjacentHTML('beforeend', '<div class="sep"></div>');
+
+  const launcherSlot = document.createElement('div');
+  launcherSlot.className = 'slot';
+  launcherSlot.dataset.index = PINNED.length;
+  launcherSlot.dataset.id = 'launcher';
+  launcherSlot.innerHTML = `<div class="icon">${icon(['#5f6a80', '#3d4657'], svgGrid)}</div>
+    <div class="dot"></div><div class="label-pill">Все приложения</div>`;
+  dockEl.appendChild(launcherSlot);
+
+  const trashSlot = document.createElement('div');
+  trashSlot.className = 'slot';
+  trashSlot.dataset.index = PINNED.length + 1;
+  trashSlot.dataset.id = 'trash';
+  trashSlot.innerHTML = `<div class="icon">${icon(['#7f8ca3', '#55617a'], svgTrash)}</div>
+    <div class="dot"></div><div class="label-pill">Корзина</div>`;
+  dockEl.appendChild(trashSlot);
+
+  const status = document.createElement('div');
+  status.className = 'status';
+  status.id = 'status';
+  status.innerHTML = `
+    <div class="status-item" data-status="chevron" aria-label="Скрытые значки">
+      ${svgChevron}<span class="pill">Скрытые значки</span></div>
+    <div class="status-item" data-status="network" aria-label="Сеть">
+      ${svgWifi}<span class="pill" id="networkPill">Сеть</span></div>
+    <div class="status-item" data-status="volume" aria-label="Звук">
+      ${svgSpeaker}<span class="pill" id="volumePill">Звук</span></div>
+    <div class="status-item" data-status="battery" aria-label="Батарея">
+      ${batterySvg(state.battery, state.charging)}<span class="pill" id="batteryPill">Батарея</span></div>
+    <div class="clock" id="clock">${timeText()}</div>`;
+  dockEl.appendChild(status);
+
+  document.querySelectorAll('.slot').forEach(bindSlot);
+  bindStatus();
+  measureBase();
+  renderStatus();
+  layoutDock(true);
+}
+
+// Базовая геометрия в покое: центры слотов относительно левого края панели и
+// ширина панели вместе с зоной состояния. По ним считается увеличение — так
+// кривая не «съезжает», когда справа добавлены индикаторы.
+function measureBase() {
+  const slots = Array.from(document.querySelectorAll('.slot'));
+  const m = metrics();
+  slots.forEach((slot, index) => {
+    slot._scale = 1;
+    slot.style.width = m.icon + 'px';
+    slot.style.height = m.icon + 'px';
+    slot.style.marginRight = index === slots.length - 1 ? '0px' : SLOT_GAP + 'px';
+    const iconEl = slot.querySelector('.icon');
+    iconEl.style.width = m.icon + 'px';
+    iconEl.style.height = m.icon + 'px';
+  });
+  state.baseOffsets = slots.map(slot => slot.offsetLeft + m.icon / 2);
+  state.basePanelWidth = dockEl.getBoundingClientRect().width;
+}
+
+function bindStatus() {
+  const status = document.getElementById('status');
+  if (!status) return;
+  status.querySelectorAll('.status-item').forEach(item => {
+    const kind = item.dataset.status;
+    item.addEventListener('click', event => {
+      event.stopPropagation();
+      if (kind === 'chevron' || kind === 'volume') { openQuick(item); return; }
+      if (kind === 'network') { flash('Параметры сети Windows'); return; }
+      if (kind === 'battery') { flash('Параметры батареи Windows'); return; }
+    });
+    item.addEventListener('contextmenu', event => {
+      event.preventDefault(); event.stopPropagation();
+      const items = [];
+      if (kind === 'volume') {
+        items.push({ label: state.muted ? 'Включить звук' : 'Выключить звук',
+          action: () => { state.muted = !state.muted; renderStatus(); } });
+        items.push({ label: 'Параметры звука', action: () => flash('Параметры звука Windows') });
+      } else if (kind === 'network') {
+        items.push({ label: state.online ? 'Отключиться (макет)' : 'Подключиться (макет)',
+          action: () => { state.online = !state.online; renderStatus(); } });
+        items.push({ label: 'Параметры сети', action: () => flash('Параметры сети Windows') });
+      } else if (kind === 'battery') {
+        items.push({ label: 'Параметры батареи', action: () => flash('Параметры батареи Windows') });
+      } else {
+        items.push({ label: 'Громкость и звук', action: () => openQuick(item) });
+        items.push({ label: 'Быстрые настройки', action: () => flash('Win+A') });
+        items.push({ label: 'Уведомления', action: () => flash('Win+N') });
+      }
+      items.push({ line: true });
+      items.push({ label: 'Показывать индикаторы', checked: state.showStatus,
+        action: () => setStatus(!state.showStatus) });
+      menu(event.clientX, event.clientY, items);
+    });
+  });
+  const clock = document.getElementById('clock');
+  clock.addEventListener('contextmenu', event => {
+    event.preventDefault(); event.stopPropagation();
+    menu(event.clientX, event.clientY, [
+      { label: 'Показывать индикаторы', checked: state.showStatus, action: () => setStatus(!state.showStatus) },
+      { label: '24-часовой формат', checked: true }
+    ]);
+  });
+}
+
+function timeText() {
+  const now = new Date();
+  return String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+}
+
+// Раскладывает слоты: ширина = ширина увеличенной иконки, панель растёт вокруг центра.
+function layoutDock(skipAnimation) {
+  const slots = Array.from(document.querySelectorAll('.slot'));
+  const m = metrics();
+  const widths = slots.map(() => m.icon);
+  slots.forEach((slot, index) => {
+    const iconEl = slot.querySelector('.icon');
+    const scale = slot._scale != null ? slot._scale : 1;
+    const size = m.icon * scale;
+    // Слот растёт вместе с иконкой: увеличенные значки поднимаются над базовой
+    // линией, панель становится выше, нижний край остаётся на месте.
+    slot.style.width = size + 'px';
+    slot.style.height = size + 'px';
+    slot.style.marginRight = index === slots.length - 1 ? '0px' : SLOT_GAP + 'px';
+    iconEl.style.width = size + 'px';
+    iconEl.style.height = size + 'px';
+    slot.classList.toggle('hover', state.hover === index);
+  });
+  if (skipAnimation) dockEl.style.transition = 'none';
+  requestAnimationFrame(() => { dockEl.style.transition = ''; });
+}
+
+function updateMagnification(pointerX) {
+  const slots = Array.from(document.querySelectorAll('.slot'));
+  const m = metrics();
+  const basePanelWidth = state.basePanelWidth || dockEl.getBoundingClientRect().width;
+  const baseLeft = (window.innerWidth - basePanelWidth) / 2;
+  const offsets = state.baseOffsets || [];
+  const radius = Math.max(1, 2.5 * (m.icon + m.gap));
+  slots.forEach((slot, index) => {
+    let scale = 1;
+    if (state.magnify && pointerX != null && offsets[index] != null) {
+      scale = scaleAt(pointerX - baseLeft - offsets[index], radius, 1.85);
+    }
+    slot._scale = scale;
+  });
+  layoutDock();
+}
+
+/* ───────────────────── зона состояния (трей) ────────────────── */
+
+function renderStatus() {
+  const status = document.getElementById('status');
+  if (!status) return;
+  const items = {
+    chevron: { show: state.showStatus, glyph: svgChevron },
+    network: { show: state.showStatus, glyph: state.online ? svgWifi : svgWifiOff },
+    volume: { show: state.showStatus, glyph: state.muted ? svgSpeakerOff : svgSpeaker },
+    battery: { show: state.showStatus, glyph: batterySvg(state.battery, state.charging) }
+  };
+  for (const [id, item] of Object.entries(items)) {
+    const el = status.querySelector(`[data-status="${id}"]`);
+    if (!el) continue;
+    el.style.display = item.show ? '' : 'none';
+    el.innerHTML = `${item.glyph}<span class="pill" id="${id}Pill">${statusTip(id)}</span>`;
+    el.classList.toggle('off', id === 'network' ? !state.online : id === 'volume' ? state.muted : false);
+  }
+  const tip = (id, text) => {
+    const pill = document.getElementById(id + 'Pill');
+    if (pill) pill.textContent = text;
+  };
+  tip('chevron', 'Скрытые значки');
+  tip('network', state.online ? state.networkName : 'Нет подключения');
+  tip('volume', state.muted ? 'Звук выключен' : `Звук ${state.volume}%`);
+  tip('battery', `Батарея ${state.battery}%${state.charging ? ', зарядка' : ''}`);
+}
+
+function statusTip(id) {
+  if (id === 'chevron') return 'Скрытые значки';
+  if (id === 'network') return state.online ? state.networkName : 'Нет подключения';
+  if (id === 'volume') return state.muted ? 'Звук выключен' : `Звук ${state.volume}%`;
+  return `Батарея ${state.battery}%`;
+}
+
+function volumeIcons() {
+  return { on: svgSpeaker, off: svgSpeakerOff, wifi: state.online ? svgWifi : svgWifiOff };
+}
+
+function renderQuick() {
+  const panel = document.getElementById('quick');
+  if (!panel) return;
+  const glyphs = volumeIcons();
+  panel.innerHTML = `
+    <div class="quick-head"><b>Звук</b><span id="quickVolume">${state.muted ? 'выключен' : state.volume + '%'}</span></div>
+    <div class="slider-row">
+      <div class="mute" id="mute" aria-label="Выключить звук">${state.muted ? glyphs.off : glyphs.on}</div>
+      <div class="track" id="track">
+        <div class="rail"></div>
+        <div class="fill" style="width:${state.muted ? 0 : state.volume}%"></div>
+        <div class="knob" style="left:${state.muted ? 0 : state.volume}%"></div>
+      </div>
+    </div>
+    <div class="quick-line"></div>
+    <div class="info-row">
+      <div class="left">${glyphs.wifi}<span>${state.online ? state.networkName : 'Нет сети'}</span></div>
+      <div class="right">${state.online ? 'Подключено' : 'Отключено'}</div>
+    </div>
+    <div class="info-row">
+      <div class="left">${batterySvg(state.battery, state.charging)}<span>Батарея</span></div>
+      <div class="right">${state.battery}%${state.charging ? ' · зарядка' : ''}</div>
+    </div>
+    <div class="chips">
+      <div class="chip" data-quick="settings">${svgGearSmall}Быстрые настройки<kbd>Win+A</kbd></div>
+      <div class="chip" data-quick="notifications">${svgBell}Уведомления<kbd>Win+N</kbd></div>
+      <div class="chip" data-quick="sound">${glyphs.on}Параметры звука</div>
+      <div class="chip" data-quick="network">${glyphs.wifi}Параметры сети</div>
+    </div>`;
+  bindQuick();
+}
+
+const svgGearSmall = stroke(`<circle cx="12" cy="12" r="3.1"/><path d="M12 3.6v2M12 18.4v2M3.6 12h2M18.4 12h2M6.2 6.2l1.4 1.4M16.4 16.4l1.4 1.4M17.8 6.2l-1.4 1.4M7.6 16.4l-1.4 1.4"/>`, 1.5);
+const svgBell = stroke(`<path d="M8 10a4 4 0 0 1 8 0c0 4 1.6 5.2 1.6 5.2H6.4S8 14 8 10z"/><path d="M10.4 18a1.8 1.8 0 0 0 3.2 0"/>`, 1.6);
+
+function bindQuick() {
+  const mute = document.getElementById('mute');
+  if (mute) mute.addEventListener('click', () => { state.muted = !state.muted; renderQuick(); renderStatus(); });
+  const track = document.getElementById('track');
+  if (track) {
+    const set = event => {
+      const box = track.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width));
+      state.volume = Math.round(ratio * 100);
+      state.muted = false;
+      renderQuick(); renderStatus();
+    };
+    track.addEventListener('pointerdown', event => {
+      track.setPointerCapture(event.pointerId); set(event);
+      const move = ev => set(ev);
+      const up = () => { track.removeEventListener('pointermove', move); track.removeEventListener('pointerup', up); };
+      track.addEventListener('pointermove', move); track.addEventListener('pointerup', up);
+    });
+  }
+  document.querySelectorAll('[data-quick]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const kind = chip.dataset.quick;
+      const text = {
+        settings: 'Быстрые настройки Windows (Win+A)',
+        notifications: 'Уведомления Windows (Win+N)',
+        sound: 'Параметры звука Windows',
+        network: 'Параметры сети Windows'
+      }[kind];
+      flash(text);
+      closeQuick();
+    });
+  });
+}
+
+let quickOpenAt = null;
+function openQuick(anchorEl) {
+  const panel = document.getElementById('quick');
+  renderQuick();
+  panel.classList.add('open');
+  const dockRect = dockEl.getBoundingClientRect();
+  const width = panel.offsetWidth || 322;
+  let left = dockRect.right - width - 8;
+  left = Math.max(10, Math.min(left, window.innerWidth - width - 12));
+  panel.style.left = left + 'px';
+  panel.style.bottom = (window.innerHeight - dockRect.top + 12) + 'px';
+  quickOpenAt = anchorEl || null;
+}
+function closeQuick() {
+  const panel = document.getElementById('quick');
+  if (panel) panel.classList.remove('open');
+  quickOpenAt = null;
+}
+
+/* ─────────────────────────── события ───────────────────────── */
+
+function bindSlot(slot) {
+  const index = Number(slot.dataset.index);
+  slot.addEventListener('mouseenter', () => { state.hover = index; layoutDock(); });
+  slot.addEventListener('mouseleave', () => { if (state.hover === index) { state.hover = -1; layoutDock(); } });
+  slot.addEventListener('click', event => {
+    event.stopPropagation();
+    const id = slot.dataset.id;
+    if (id === 'launcher') { openLauncher(); return; }
+    if (id === 'trash') { flash('Открылась корзина'); return; }
+    const app = PINNED.find(entry => entry.id === id);
+    if (!app) return;
+    if (app.running) { flash(`Окно «${app.label}» ${app.id === 'browser' ? 'свёрнуто' : 'на переднем плане'}`); }
+    else { app.running = true; slot.classList.add('running'); flash(`Запуск: ${app.label}`); }
+  });
+  slot.addEventListener('contextmenu', event => {
+    event.preventDefault(); event.stopPropagation();
+    const id = slot.dataset.id;
+    if (id === 'launcher') { menu(event.clientX, event.clientY, [
+      { label: 'Все приложения', action: () => openLauncher() }
+    ]); return; }
+    if (id === 'trash') { menu(event.clientX, event.clientY, [
+      { label: 'Открыть корзину', action: () => flash('Открылась корзина') },
+      { label: 'Очистить корзину', action: () => flash('Корзина очищена') }
+    ]); return; }
+    const app = PINNED.find(entry => entry.id === id);
+    const windows = app.running ? [`${app.label} — окно 1`, `${app.label} — окно 2`] : [];
+    menu(event.clientX, event.clientY, [
+      { label: app.label, disabled: true },
+      { line: true },
+      ...windows.map((title, i) => ({ label: `${i + 1}. ${title}`, action: () => flash(`Переключение: ${title}`) })),
+      ...(windows.length ? [{ line: true },
+        { label: 'Закрыть все окна', action: () => { app.running = false;
+            document.querySelector(`.slot[data-id="${app.id}"]`).classList.remove('running'); flash('Все окна закрыты'); } }] : []),
+      { label: 'Новое окно', action: () => flash(`Новое окно: ${app.label}`) },
+      { label: 'Убрать из дока', action: () => flash('Макет: закрепление хранится в dock.json') },
+      { label: 'Показать расположение файла', action: () => flash('Показ файла в Проводнике') }
+    ]);
+  });
+}
+
+document.addEventListener('mousemove', event => {
+  state.pointerX = event.clientX;
+  const rect = dockEl.getBoundingClientRect();
+  const near = event.clientX >= rect.left - 80 && event.clientX <= rect.right + 80
+    && event.clientY >= rect.top - 120 && event.clientY <= window.innerHeight;
+  updateMagnification(near ? event.clientX : null);
+  if (state.autohide) {
+    const overDock = event.clientX >= rect.left && event.clientX <= rect.right
+      && event.clientY >= rect.top - 8;
+    if (!overDock && event.clientY < window.innerHeight - 80) dockEl.classList.add('autohide-hidden');
+  }
+});
+
+dockEl.addEventListener('contextmenu', event => {
+  event.preventDefault();
+  menu(event.clientX, event.clientY, [
+    { label: 'Все приложения', action: () => openLauncher() },
+    { line: true },
+    { label: 'Увеличивать значки', checked: state.magnify, action: () => setMagnify(!state.magnify) },
+    { label: 'Скрывать автоматически', checked: state.autohide, action: () => setAutohide(!state.autohide) },
+    { label: 'Показывать часы', checked: true },
+    { label: 'Показывать корзину', checked: true },
+    { line: true },
+    { label: 'Мелкие значки', action: () => setSize(32) },
+    { label: 'Средние значки', action: () => setSize(48) },
+    { label: 'Крупные значки', action: () => setSize(64) },
+    { line: true },
+    { label: 'Выйти из дока', action: () => flash('Макет: процесс завершится') }
+  ]);
+});
+
+/* ───────────────────── контекстное меню ─────────────────────── */
+
+let openMenu = null;
+function menu(x, y, items) {
+  closeMenu();
+  const el = document.createElement('div');
+  el.className = 'menu';
+  items.forEach(item => {
+    if (item.line) { el.insertAdjacentHTML('beforeend', '<div class="line"></div>'); return; }
+    const row = document.createElement('div');
+    row.className = 'item' + (item.disabled ? ' disabled' : '');
+    row.innerHTML = `<span>${item.label}</span><span class="check">${item.checked ? '✓' : ''}</span>`;
+    if (!item.disabled) row.addEventListener('click', () => { closeMenu(); item.action && item.action(); });
+    el.appendChild(row);
+  });
+  document.body.appendChild(el);
+  const box = el.getBoundingClientRect();
+  el.style.left = Math.min(x, window.innerWidth - box.width - 8) + 'px';
+  el.style.top = Math.min(y, window.innerHeight - box.height - 8) + 'px';
+  openMenu = el;
+}
+
+function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+document.addEventListener('mousedown', event => { if (openMenu && !openMenu.contains(event.target)) closeMenu(); });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { closeMenu(); closeLauncher(); closeQuick(); }
+});
+document.addEventListener('mousedown', event => {
+  const panel = document.getElementById('quick');
+  if (!panel || !panel.classList.contains('open')) return;
+  if (panel.contains(event.target)) return;
+  if (event.target.closest && event.target.closest('[data-status]')) return;
+  closeQuick();
+});
+
+/* ─────────────────────── «Все приложения» ───────────────────── */
+
+let query = '';
+let selection = 0;
+
+function openLauncher() {
+  launcherEl.classList.add('open');
+  query = ''; selection = 0;
+  renderLauncher();
+}
+function closeLauncher() { launcherEl.classList.remove('open'); }
+
+function filtered() {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  return CATALOGUE.filter(([name]) => terms.every(term => name.toLowerCase().includes(term)));
+}
+
+function renderLauncher() {
+  const list = filtered();
+  gridEl.innerHTML = '';
+  if (!list.length) {
+    gridEl.innerHTML = '<div class="empty">Ничего не найдено</div>';
+  }
+  list.forEach(([name, svg], index) => {
+    const tile = document.createElement('div');
+    tile.className = 'tile' + (index === selection ? ' active' : '');
+    tile.innerHTML = `<div class="tile-icon">${svg}</div><span>${name}</span>`;
+    tile.addEventListener('click', () => { launch(name); });
+    gridEl.appendChild(tile);
+  });
+  queryEl.textContent = query || 'Поиск приложений…';
+  queryEl.className = query ? '' : 'ph';
+}
+
+function launch(name) { closeLauncher(); flash(`Запуск: ${name}`); }
+
+launcherEl.addEventListener('mousedown', event => { if (event.target === launcherEl) closeLauncher(); });
+document.addEventListener('keydown', event => {
+  if (!launcherEl.classList.contains('open')) return;
+  if (event.key === 'Escape') { closeLauncher(); return; }
+  if (event.key === 'Enter') { const list = filtered(); if (list[selection]) launch(list[selection][0]); return; }
+  if (event.key === 'ArrowRight') { selection = Math.min(selection + 1, filtered().length - 1); renderLauncher(); return; }
+  if (event.key === 'ArrowLeft') { selection = Math.max(selection - 1, 0); renderLauncher(); return; }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const step = event.key === 'ArrowDown' ? 7 : -7;
+    selection = Math.max(0, Math.min(selection + step, filtered().length - 1));
+    renderLauncher(); return;
+  }
+  if (event.key === 'Backspace') { query = query.slice(0, -1); selection = 0; renderLauncher(); return; }
+  if (event.key.length === 1) { query += event.key; selection = 0; renderLauncher(); }
+});
+
+/* ─────────────────────── настройки ──────────────────────────── */
+
+function setMagnify(value) {
+  state.magnify = value;
+  document.getElementById('magnify').checked = value;
+  updateMagnification(state.pointerX);
+}
+function setAutohide(value) {
+  state.autohide = value;
+  document.getElementById('autohide').checked = value;
+  triggerEl.classList.toggle('visible', value);
+  if (!value) dockEl.classList.remove('autohide-hidden');
+}
+function setSize(value) {
+  state.iconSize = value;
+  document.getElementById('size').value = String(value);
+  document.getElementById('sizeValue').textContent = String(value);
+  measureBase();
+  layoutDock();
+}
+
+function setStatus(value) {
+  state.showStatus = value;
+  const box = document.getElementById('showStatus');
+  if (box) box.checked = value;
+  renderStatus();
+  measureBase();
+  layoutDock();
+}
+
+document.getElementById('magnify').addEventListener('change', event => setMagnify(event.target.checked));
+document.getElementById('autohide').addEventListener('change', event => setAutohide(event.target.checked));
+document.getElementById('size').addEventListener('input', event => setSize(Number(event.target.value)));
+document.getElementById('showStatus').addEventListener('change', event => setStatus(event.target.checked));
+
+/* автопрятание: полоса-триггер внизу возвращает док */
+triggerEl.addEventListener('mouseenter', () => dockEl.classList.remove('autohide-hidden'));
+dockEl.addEventListener('mouseleave', () => { if (state.autohide) dockEl.classList.add('autohide-hidden'); });
+
+/* ───────────────────────── всплывающие подсказки ─────────────── */
+
+let toastTimer = null;
+function flash(text) {
+  let toast = document.getElementById('toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'toast';
+    toast.style.cssText = 'position:fixed;left:50%;bottom:150px;transform:translateX(-50%);' +
+      'padding:9px 16px;border-radius:11px;background:rgba(24,28,38,.92);border:1px solid rgba(255,255,255,.16);' +
+      'font:600 12.5px/1 Segoe UI,sans-serif;color:#eaf0fa;z-index:70;box-shadow:0 16px 34px rgba(0,0,0,.5);' +
+      'transition:opacity .2s ease;pointer-events:none;';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = text;
+  toast.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { toast.style.opacity = '0'; }, 1400);
+}
+
+/* ─────────────────────────── запуск ────────────────────────── */
+
+buildDock();
+setInterval(() => { const clock = document.getElementById('clock'); if (clock) clock.textContent = timeText(); }, 1000);
+window.addEventListener('resize', () => { measureBase(); layoutDock(true); });
+</script>
+</body>
+</html>

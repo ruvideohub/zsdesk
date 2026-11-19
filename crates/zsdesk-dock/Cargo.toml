@@ -1,0 +1,44 @@
+[package]
+name = "zsdesk-dock"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ZSDesk dock: macOS-style application strip with pinned and running apps, all-applications grid and clock."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+
+# The portable logic (config, geometry, grouping, catalogue) is unit-tested on
+# any host, so the Windows-only crates are target-scoped.
+[target.'cfg(windows)'.dependencies]
+zsdesk-core = { path = "../zsdesk-core" }
+zsdesk-windows = { path = "../zsdesk-windows" }
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Globalization",
+  "Win32_Graphics_Direct2D",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Graphics_Imaging",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_Networking_WinInet",
+  "Win32_System_Power",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Variant",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Ole",
+  "Win32_Security",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_Common",
+  "Win32_UI_WindowsAndMessaging",
+] }
