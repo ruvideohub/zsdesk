@@ -4524,10 +4524,11 @@ impl Dock {
                 self.taskbar_hidden = false;
             }
         }
-        // The panel takes the edge the Windows taskbar leaves free. With the taskbar on
-        // screen (the "Hide the Windows Taskbar" switch off) it keeps the bottom, so the
-        // panel goes to the top of the monitor instead of sitting on top of it.
-        let panel_top = !self.cfg.hide_windows_taskbar || !self.taskbar_hidden && taskbar::tray_visible();
+        // The edge follows the checkbox and nothing else: the panel must never sniff
+        // Explorer's taskbar while running. "Hide the Windows Taskbar" on — the bottom edge is
+        // free, the panel sits at the bottom; off — the taskbar keeps the bottom, so the panel
+        // goes to the top of the monitor instead of sitting on top of it.
+        let panel_top = !self.cfg.hide_windows_taskbar;
         if panel_top != self.panel_top {
             trace!("panel edge -> {}", if panel_top { "top" } else { "bottom" });
             self.panel_top = panel_top;

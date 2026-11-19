@@ -12,12 +12,11 @@
 use windows::core::w;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, RECT};
 use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, INFINITE, PROCESS_SYNCHRONIZE};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::Shell::{
     SHAppBarMessage, ABE_BOTTOM, ABE_TOP, ABM_GETSTATE, ABM_NEW, ABM_QUERYPOS, ABM_REMOVE, ABM_SETPOS, ABM_SETSTATE,
     ABS_AUTOHIDE, APPBARDATA,
 };
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNA};
+use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, ShowWindow, SW_HIDE, SW_SHOWNA};
 
 use crate::dock::WM_APP_APPBAR;
 
@@ -37,24 +36,9 @@ fn trays() -> Vec<HWND> {
     v
 }
 
-/// Is Explorer's own taskbar on screen right now? The panel takes the edge the taskbar
-/// does not use: hidden taskbar, the panel keeps the bottom; taskbar on screen, the panel
-/// moves to the top of the monitor instead of stacking on top of it.
-pub fn tray_visible() -> bool {
-    let Some(h) = trays().first().copied() else { return false };
-    unsafe {
-        if !IsWindowVisible(h).as_bool() { return false; }
-        // An auto-hidden taskbar keeps WS_VISIBLE and only slides off the edge: a few pixels
-        // of it stay inside the monitor. A taskbar that really keeps the bottom edge shows its
-        // full height, and only that one may push the panel to the top.
-        let mut r = RECT::default();
-        if GetWindowRect(h, &mut r).is_err() { return true; }
-        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-        if !GetMonitorInfoW(MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST), &mut info).as_bool() { return true; }
-        let monitor = info.rcMonitor;
-        (monitor.bottom.min(r.bottom) - monitor.top.max(r.top)).max(0) >= 12
-    }
-}
+// The panel used to ask here whether Explorer's taskbar was on screen and move to the top
+// when it was. That probe is gone: an auto-hiding or briefly shown taskbar flipped the panel
+// between edges. The edge now follows the "Hide the Windows Taskbar" checkbox alone.
 
 pub fn set_visible(visible: bool) {
     for h in trays() {
