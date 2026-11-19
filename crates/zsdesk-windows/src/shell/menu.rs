@@ -158,7 +158,9 @@ extern "C" { fn zs_menu_shared_host(enabled:i32); fn zs_menu_set_working_directo
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, ShellInvoked, NativeHandled, Copy, Cut, Paste, Delete{permanent:bool} }
+pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, ShellInvoked, NativeHandled, Copy, Cut, Paste, Delete{permanent:bool},
+    /// Short-page commands that never need a Shell extension.
+    CopyPath, NewFolder, Refresh }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MenuInterceptions { pub rename: bool, pub open: bool, pub file_actions:bool }

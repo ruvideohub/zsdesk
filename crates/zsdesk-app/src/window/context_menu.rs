@@ -297,6 +297,23 @@ pub(super) fn poll(owner:HWND){
             };
             super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(message));
         },
+        Some(Ok(MenuOutcome::CopyPath)) if valid=>{
+            let message=match file_transfer::paths_from_pidls(&session.pidls){
+                Ok(paths) if !paths.is_empty()=>{
+                    let text=paths.iter().map(|path|path.display().to_string()).collect::<Vec<_>>().join("\r\n");
+                    super::input::set_clipboard_text(window,&text);
+                    zsdesk_core::tr_format!("已复制 {} 个路径", paths.len())
+                }
+                _=>zsdesk_core::i18n::text("无法读取所选项目的路径").into(),
+            };
+            super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(message));
+        },
+        Some(Ok(MenuOutcome::NewFolder)) if valid=>{
+            super::pane_input::post(owner,identity,super::pane_input::Intent::Action(Command::NewFolder.id()as usize));
+        },
+        Some(Ok(MenuOutcome::Refresh)) if valid=>{
+            super::pane_input::post(owner,identity,super::pane_input::Intent::Action(Command::Refresh.id()as usize));
+        },
         Some(Ok(MenuOutcome::Rename)) if valid=>{
             let exact=if session.pidls.len()==1{file_transfer::paths_from_pidls(&session.pidls).ok().and_then(|paths|paths.into_iter().next())}else{None};
             let child=exact.filter(|path|path.parent().zip(session.folder.as_deref()).is_some_and(|(parent,folder)|{

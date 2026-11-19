@@ -2,7 +2,7 @@
 //! immutable selection/menu; an idle STA may serve a later verified request.
 use std::{fs,io::Read,path::{Path,PathBuf},sync::{Mutex,atomic::{AtomicU64,Ordering}},time::{Duration,Instant}};
 #[cfg(test)]use std::thread;
-use std::os::windows::{fs::MetadataExt,io::AsRawHandle};
+use std::os::windows::{ffi::OsStrExt,fs::MetadataExt,io::AsRawHandle};
 use anyhow::{Context,Result,ensure};
 use serde::{Deserialize,Serialize};
 use windows::{core::{PCWSTR,w},Win32::{Foundation::{HWND,HINSTANCE,LPARAM,LRESULT,WPARAM,POINT,HANDLE,CloseHandle,FILETIME},
@@ -14,6 +14,21 @@ use zsdesk_core::model::explorer::ShellViewState;
 #[path="context_menu_child.rs"]mod child;
 #[path="context_menu_common.rs"]mod common;
 use child::OwnedChild as Child;
+
+/// Raises the Shell's own "Open with" picker for one file. The light page never
+/// enumerates extensions, so this is the only path that asks the Shell to open
+/// a chooser, and it does so on demand.
+fn open_with(owner:HWND,path:&Path)->Result<()>{
+    use windows::core::w;
+    use windows::Win32::UI::Shell::{ShellExecuteExW,SHELLEXECUTEINFOW,SEE_MASK_FLAG_NO_UI,SEE_MASK_INVOKEIDLIST};
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let mut file:Vec<u16>=path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut info=SHELLEXECUTEINFOW{cbSize:std::mem::size_of::<SHELLEXECUTEINFOW>()as u32,
+        fMask:SEE_MASK_INVOKEIDLIST|SEE_MASK_FLAG_NO_UI,hwnd:owner,lpVerb:w!("openas"),
+        lpFile:PCWSTR(file.as_mut_ptr()),nShow:SW_SHOWNORMAL.0,..Default::default()};
+    unsafe{ShellExecuteExW(&mut info)}?;
+    Ok(())
+}
 
 const MAX_REQUEST:u64=16*1024*1024;
 const MAX_STATUS:u64=2*1024*1024;
@@ -821,6 +836,15 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             match choice.as_deref(){
                 Some("more")=>{},
                 Some("properties")=>properties=true,
+                // "Open with" needs no extension enumeration either: the Shell
+                // raises its own picker and the worker owns that dialog.
+                Some("openwith")=>{
+                    state.allow(true)?;
+                    let path=zsdesk_windows::shell::file_transfer::paths_from_pidls(&state.request.pidls).ok()
+                        .and_then(|paths|paths.into_iter().next());
+                    if let Some(path)=path{open_with(window,&path)?;}
+                    return Ok(MenuOutcome::NativeHandled);
+                }
                 Some(id)=>{
                     if let Some(action)=common::outcome(id){
                         state.allow(true)?;

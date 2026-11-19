@@ -366,7 +366,7 @@ pub fn context_menu_settings_menu_for(options: &ContextMenuPreferences, _modern_
         modern,
         entry(zsdesk_core::i18n::text("自绘 Windows 11"), "context-menu-drawn-windows11", true, options.mode==ContextMenuMode::DrawnWindows11),
         entry(zsdesk_core::i18n::text("Windows 10 经典风格"), "context-menu-original", true, original),
-        entry(zsdesk_core::i18n::text("优先显示常用命令"), "context-menu-quick-first", true, options.quick_first),
+        entry(zsdesk_core::i18n::text("优先显示完整菜单"), "context-menu-full-first", true, options.full_menu_first),
         item(zsdesk_core::i18n::text("管理此处的完整右键菜单…"),"manage-context-commands"),
         MenuItemSpec::Separator,
         submenu(zsdesk_core::i18n::text("显示的命令"), vec![
@@ -386,7 +386,7 @@ pub fn apply_context_menu_setting(options: &mut ContextMenuPreferences, choice: 
     match choice {
         "context-menu-original" => options.mode = ContextMenuMode::Original,
         "context-menu-windows11" => options.mode = ContextMenuMode::Windows11,
-        "context-menu-quick-first" => options.quick_first = !options.quick_first,
+        "context-menu-full-first" => options.full_menu_first = !options.full_menu_first,
         "context-menu-drawn-windows11" => options.mode = ContextMenuMode::DrawnWindows11,
         "context-menu-defaults" => *options = ContextMenuPreferences::default(),
         "context-action-cut-copy-paste" => options.show_cut_copy_paste = !options.show_cut_copy_paste,

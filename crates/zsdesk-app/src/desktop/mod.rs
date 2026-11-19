@@ -831,12 +831,12 @@ fn finish_menu_work(){
             let owner=HWND(request.owner as*mut _);
             // Shell commands already ran against their captured PIDLs. Only
             // application actions require the current selection to still match.
-            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}));
+            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath));
             // A superseded construction can fail after another menu was
             // requested. Its error must not interrupt the newer interaction.
             if outcome.is_err()&&!menu_request_current(request.generation){continue;}
             if actionable&&(!menu_request_current(request.generation)||!menu_target_current(&request)){continue;}
-            if let Ok(action @ (MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}))=outcome{
+            if let Ok(action @ (MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath))=outcome{
                 if let Err(error)=dispatch_menu_file_action(&request,action){file_action_error(owner,&error);}continue;
             }
             if menu_request_current(request.generation)&&menu_target_current(&request){
@@ -859,6 +859,11 @@ fn dispatch_menu_file_action(request:&menu_worker::Request,action:MenuOutcome)->
     match action{
         MenuOutcome::Copy|MenuOutcome::Cut=>file_transfer::copy_paths(owner,&paths,action==MenuOutcome::Cut),
         MenuOutcome::Delete{permanent}=>file_transfer::delete_paths(owner,paths,permanent),
+        MenuOutcome::CopyPath=>{
+            if paths.is_empty(){return Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x80070057u32 as i32)));}
+            let text=paths.iter().map(|path|path.display().to_string()).collect::<Vec<_>>().join("\r\n");
+            file_transfer::set_text(owner,&text)
+        }
         MenuOutcome::Paste=>{
             let destination=match &request.target{
                 menu_worker::Target::Background{folder}=>folder.clone(),
@@ -891,6 +896,9 @@ fn finish_menu(fence:u64,hwnd:HWND,point:POINT,target_key:Option<String>,ids:&[S
                 open_with_verb(fence, index, action == MenuOutcome::Explore, Some(if action == MenuOutcome::Explore { "explore" } else { "open" }));
             }
         }
+        Ok(MenuOutcome::CopyPath) => {},
+        Ok(MenuOutcome::NewFolder) => run_verb(fence, "NewFolder", true),
+        Ok(MenuOutcome::Refresh) => refresh_fence(fence),
         Ok(MenuOutcome::Dismissed) => {},
         Ok(_) => refresh_fence(fence),
         Err(error) if zsdesk_windows::shell::file_transfer::is_cancelled(error.code())=>{},
