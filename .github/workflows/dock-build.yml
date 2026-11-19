@@ -9,8 +9,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'crates/aura-dock/**'
-      - 'crates/laminar-sys/**'
+      - 'crates/**'
       - 'packaging/windows/install.*'
       - 'packaging/windows/install-readme.txt'
       - 'scripts/make-icons.py'

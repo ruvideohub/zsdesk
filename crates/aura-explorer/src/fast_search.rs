@@ -214,6 +214,8 @@ fn fixed_roots()->Vec<PathBuf>{let mut buffer=[0u16;512];let length=unsafe{GetLo
 
 #[cfg(test)]mod tests{
     use super::*;
-        }
-        shared.maintenance_role.store(0,Ordering::Release);
+    #[test]fn selected_backend_survives_normalization(){
+        let mut session=aura_core::model::explorer::ExplorerSession::default();
+        for backend in [BackendPreference::NativeNtfs,BackendPreference::Auto,BackendPreference::DirectoryScan]{session.ui.search_backend=backend;session.normalize();assert_eq!(session.ui.search_backend,backend);}
+    }
 }
