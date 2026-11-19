@@ -13,6 +13,7 @@ use zsdesk_core::model::explorer::ShellViewState;
 #[path="context_menu_background.rs"]mod background_view;
 #[path="context_menu_child.rs"]mod child;
 #[path="context_menu_common.rs"]mod common;
+#[path="context_menu_actions.rs"]mod actions;
 use child::OwnedChild as Child;
 
 /// Raises the Shell's own "Open with" picker for one file. The light page never
@@ -826,7 +827,12 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
         }
         let mut properties=request.mode==Mode::Properties;
         if common::enabled(&request){
-            let first=common::specification(&request);
+            // The selection is resolved once: the page needs it for "Open with"
+            // and the same paths serve the actions that follow the choice.
+            let selected=zsdesk_windows::shell::file_transfer::paths_from_pidls(&request.pidls).unwrap_or_default();
+            let handlers=if selected.len()==1&&request.file_actions{actions::open_with_handlers(&selected[0])}else{Vec::new()};
+            let names:Vec<String>=handlers.iter().map(|(name,_)|name.clone()).collect();
+            let first=common::specification(&request,&names);
             state.allow(false)?;
             unsafe{let _=ShowWindow(window,SW_SHOWNOACTIVATE);let _=SetForegroundWindow(window);}
             if unsafe{GetForegroundWindow()}!=window{return Ok(MenuOutcome::Dismissed);}
@@ -836,13 +842,42 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             match choice.as_deref(){
                 Some("more")=>{},
                 Some("properties")=>properties=true,
-                // "Open with" needs no extension enumeration either: the Shell
-                // raises its own picker and the worker owns that dialog.
+                // A listed application is invoked through its own handler; no
+                // extension enumeration happens anywhere on this page.
+                Some(id) if id.starts_with("openwith:")=>{
+                    state.allow(true)?;
+                    let index=id["openwith:".len()..].parse::<usize>().ok();
+                    if let Some((_,handler))=index.and_then(|index|handlers.get(index)){
+                        let data=zsdesk_windows::desktop::data_object(window,&state.request.pidls)?;
+                        actions::invoke_handler(handler,&data)?;
+                    }
+                    return Ok(MenuOutcome::NativeHandled);
+                }
+                // "Choose another app" raises the Shell's own picker.
                 Some("openwith")=>{
                     state.allow(true)?;
-                    let path=zsdesk_windows::shell::file_transfer::paths_from_pidls(&state.request.pidls).ok()
-                        .and_then(|paths|paths.into_iter().next());
-                    if let Some(path)=path{open_with(window,&path)?;}
+                    if let Some(path)=selected.first(){open_with(window,path)?;}
+                    return Ok(MenuOutcome::NativeHandled);
+                }
+                Some("shortcut")=>{
+                    state.allow(true)?;
+                    let Some(item)=selected.first()else{return Ok(MenuOutcome::Dismissed)};
+                    let created=actions::create_shortcut(item)?;
+                    state.status.created.push(zsdesk_windows::shell::new_menu::CreatedItem{path:created,rename:false});
+                    return Ok(MenuOutcome::ShellInvoked);
+                }
+                Some("compress")=>{
+                    state.allow(true)?;
+                    let folder=state.request.folder.clone()
+                        .or_else(||selected.first().and_then(|path|path.parent().map(Path::to_path_buf)))
+                        .context("压缩目标目录缺失")?;
+                    let created=actions::compress(&selected,&folder)?;
+                    state.status.created.push(zsdesk_windows::shell::new_menu::CreatedItem{path:created,rename:false});
+                    return Ok(MenuOutcome::ShellInvoked);
+                }
+                Some("terminal")=>{
+                    state.allow(true)?;
+                    if let Some(folder)=state.request.folder.as_deref(){actions::open_terminal(folder)?;}
                     return Ok(MenuOutcome::NativeHandled);
                 }
                 Some(id)=>{

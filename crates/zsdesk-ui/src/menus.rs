@@ -1,5 +1,5 @@
 //! Menu definitions shared by the native Explorer chrome and desktop fences.
-pub use zsui::{core::Command as UiCommand, menu::{MenuItemSpec, MenuSpec}};
+pub use zsui::{core::Command as UiCommand, menu::{MenuItemSpec, MenuSpec, ZsAccelerator, ZsAcceleratorKey}};
 use zsdesk_core::model::explorer::{AppearancePreferences, BackdropStyle, ColorScheme, CommandBarItem, CommandBarPreferences, ContextMenuMode, ContextMenuPreferences, ExplorerUi, PreviewProviderPreference, SearchBackendPreference};
 
 pub fn entry(label: &str, id: &str, enabled: bool, checked: bool) -> MenuItemSpec {
@@ -7,6 +7,10 @@ pub fn entry(label: &str, id: &str, enabled: bool, checked: bool) -> MenuItemSpe
     if enabled { item } else { item.disabled() }
 }
 pub fn item(label: &str, id: &str) -> MenuItemSpec { entry(label, id, true, false) }
+/// A command row whose shortcut is rendered in the menu's accelerator column.
+pub fn keyboard(label: &str, id: &str, accelerator: ZsAccelerator) -> MenuItemSpec {
+    MenuItemSpec::command(label, UiCommand::custom(id)).accelerator(accelerator)
+}
 pub fn menu(items: Vec<MenuItemSpec>) -> MenuSpec { let mut m = MenuSpec::new(); m.items = items; m }
 pub fn submenu(label: &str, items: Vec<MenuItemSpec>) -> MenuItemSpec {
     MenuItemSpec::Submenu { id: None, label: label.into(), enabled: true, menu: menu(items) }

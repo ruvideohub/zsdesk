@@ -4,6 +4,7 @@
 
 #[macro_use]
 pub mod i18n;
+pub mod archive;
 pub mod error;
 pub mod model;
 pub mod path;
