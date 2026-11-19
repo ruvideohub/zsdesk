@@ -689,6 +689,12 @@ struct Dock {
     /// The panel hangs from the top edge of the monitor, because Explorer's taskbar keeps
     /// the bottom one. Everything that pops out of the panel follows this.
     panel_top: bool,
+    /// Whether the panel window currently sits in the topmost band (`WS_EX_TOPMOST`). A
+    /// bottom panel belongs there; a top panel must be taken out of it, and Windows keeps a
+    /// window topmost until it is told otherwise.
+    band_topmost: bool,
+    /// Whether the panel has been put into its band at least once (see `place_window`).
+    z_placed: bool,
     start_panes: Vec<StartPane>,
     start_open: bool,
 }
@@ -924,7 +930,33 @@ impl Dock {
 
     fn pin_matches(&mut self, pin: &str, w: &Win) -> bool {
         let p = pin.to_lowercase();
-        p == w.app || p == w.exe || self.pin_path(pin).map(|r| r == w.exe).unwrap_or(false)
+        if p == w.app || p == w.exe {
+            return true;
+        }
+        // The target comes back from the shell, so its case is whatever the shell felt like;
+        // the window's path is already lower-cased. Comparing the raw strings missed the
+        // match and the same program then sat on the panel twice (once pinned, once running).
+        self.pin_path(pin).map(|r| r.to_lowercase() == w.exe).unwrap_or(false)
+    }
+
+    /// Every identity one running app answers to: its id and the executables of its windows.
+    fn app_keys(&self, app: &str) -> Vec<String> {
+        let mut keys = vec![app.to_lowercase()];
+        for w in self.windows.iter().filter(|w| w.app == app) {
+            if !w.exe.is_empty() && !keys.contains(&w.exe) {
+                keys.push(w.exe.clone());
+            }
+        }
+        keys
+    }
+
+    /// Claim the identities a pin stands for — its own id and the program it points at — so
+    /// a running window of the same program doesn't earn a second icon.
+    fn claim_pin(&mut self, pin: &str, taken: &mut std::collections::HashSet<String>) {
+        taken.insert(pin.to_lowercase());
+        if let Some(p) = self.pin_path(pin) {
+            taken.insert(p.to_lowercase());
+        }
     }
 
     /// Windows belonging to a dock item, front to back.
@@ -948,11 +980,28 @@ impl Dock {
         // The control centre is a pinned widget, but it belongs at the right-hand end of
         // the panel (where the Recycle Bin used to sit), after the running apps.
         let mut cc_item: Option<Item> = None;
+        // Identities already on the panel. One program, one icon: two pins for the same app,
+        // a stack member that is also running, a window that reports its AppUserModelID while
+        // its twin reports the executable path — all of those used to draw twice.
+        let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut pin_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (n, p) in pins.iter().enumerate() {
             match p {
                 Pin::Id(id) if id == SEPARATOR => v.push(Item { kind: Kind::Separator, key: format!("::sep{n}"), pinned: true }),
-                Pin::Id(id) => v.push(Item { kind: Kind::App, key: id.clone(), pinned: true }),
-                Pin::Stack { .. } => v.push(Item { kind: Kind::Stack, key: format!("::stack{n}"), pinned: true }),
+                Pin::Id(id) => {
+                    // The same program pinned twice: keep the first, leave the config alone.
+                    if !pin_ids.insert(id.to_lowercase()) {
+                        continue;
+                    }
+                    self.claim_pin(id, &mut taken);
+                    v.push(Item { kind: Kind::App, key: id.clone(), pinned: true });
+                }
+                Pin::Stack { apps, .. } => {
+                    for a in apps {
+                        self.claim_pin(a, &mut taken);
+                    }
+                    v.push(Item { kind: Kind::Stack, key: format!("::stack{n}"), pinned: true });
+                }
                 Pin::Widget { widget, size } => {
                     let sz = size.or_else(|| crate::widgets::catalog::get(widget).map(|d| d.size)).unwrap_or_default();
                     let code = match sz {
@@ -969,15 +1018,19 @@ impl Dock {
                 }
             }
         }
-        // Running apps that aren't pinned, in the order they first appeared.
+        // Running apps that aren't already on the panel, in the order they first appeared.
+        // An app is identified by the program, not by the id Windows happens to report for
+        // one of its windows: the same program can show up under an AppUserModelID and under
+        // its executable path at once, and both must land on the same icon.
         let order = self.running_order.clone();
         let mut extra = Vec::new();
         for app in order {
-            let wins: Vec<Win> = self.windows.iter().filter(|w| w.app == app).cloned().collect();
-            let pinned = wins.iter().any(|w| pins.iter().filter_map(|p| p.app()).any(|p| self.pin_matches(p, w)));
-            if !pinned {
-                extra.push(Item { kind: Kind::App, key: app, pinned: false });
+            let keys = self.app_keys(&app);
+            if keys.iter().any(|k| taken.contains(k)) {
+                continue;
             }
+            taken.extend(keys);
+            extra.push(Item { kind: Kind::App, key: app, pinned: false });
         }
         if !extra.is_empty() {
             v.push(Item { kind: Kind::Separator, key: "::sep-run".into(), pinned: false });
@@ -1085,17 +1138,7 @@ impl Dock {
     fn rebuild(&mut self) -> Result<()> {
         trace!("rebuild: {} items on monitor ({}, {})-({}, {}) scale {}", self.items.len(), self.monitor.left, self.monitor.top, self.monitor.right, self.monitor.bottom, self.scale);
         self.geo = Geo::new(&self.items, &self.cfg, self.scale, (self.monitor.right - self.monitor.left) as f32, self.panel_top);
-        unsafe {
-            SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOPMOST),
-                self.monitor.left,
-                self.win_top(),
-                self.geo.win_w as i32,
-                self.geo.win_h as i32,
-                SWP_NOACTIVATE,
-            )?;
-        }
+        self.place_window()?;
         let c = self.compositor.clone();
         let geo_k = self.geo.m / self.geo.b - 1.0;
 
@@ -3330,9 +3373,12 @@ impl Dock {
             self.monitor.right - self.monitor.left,
             self.monitor.bottom - self.monitor.top
         );
-        // Keep the dock above the Launchpad.
+        // Keep the dock above the Launchpad — but only where it is topmost to begin with.
+        // A top panel is a plain window and the Launchpad is meant to cover it.
         unsafe {
-            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            if !self.panel_top {
+                let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
             SetTimer(Some(self.hwnd), T_LP_TICK, 1000, None);
         }
         self.ind_state.iter_mut().for_each(|s| *s = IndState::default());
@@ -4554,6 +4600,46 @@ impl Dock {
         self.use_floor(assigned);
     }
 
+    /// Move the panel window into place and into its z-order band.
+    ///
+    /// The band follows the edge. A bottom panel is topmost on purpose: it lives in the strip
+    /// Windows reserved for it, so it overlaps no window, and it has to stay visible over
+    /// maximised ones. A top panel is a second taskbar rather than an overlay, so it goes into
+    /// the ordinary band and sits *under every window* — maximised windows stop above the
+    /// reserved strip anyway, and anything that does reach the panel keeps the click.
+    fn place_window(&mut self) -> Result<()> {
+        let (x, y, w, h) = (self.monitor.left, self.win_top(), self.geo.win_w as i32, self.geo.win_h as i32);
+        let want_topmost = !self.panel_top;
+        // Only band changes and the first placement touch the z-order; every later move keeps
+        // the place it has, so resizing doesn't reshuffle the panel on top of anything.
+        if self.band_topmost == want_topmost && self.z_placed {
+            unsafe {
+                SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER)?;
+            }
+            return Ok(());
+        }
+        unsafe {
+            if want_topmost {
+                SetWindowPos(self.hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE)?;
+            } else {
+                // Leave the topmost band first: Windows keeps a window there until it is told
+                // otherwise, and a window that was topmost would keep floating over the work.
+                if self.band_topmost {
+                    let _ = SetWindowPos(self.hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                }
+                match crate::desktop_clock::app_in_front() {
+                    // Just under the app in front: below the work, above the desktop.
+                    Some(front) => SetWindowPos(self.hwnd, Some(front), x, y, w, h, SWP_NOACTIVATE)?,
+                    // Nothing in front (the desktop is): move without touching the z-order.
+                    None => SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_NOZORDER)?,
+                }
+            }
+        }
+        self.band_topmost = want_topmost;
+        self.z_placed = true;
+        Ok(())
+    }
+
     /// Screen y of the panel window's top edge. `floor_y` is the shelf's outer edge: the
     /// window hangs above it at the bottom of the screen and below it at the top.
     fn win_top(&self) -> i32 {
@@ -4584,17 +4670,7 @@ impl Dock {
         if self.geo.win_w <= 0.0 {
             return;
         }
-        unsafe {
-            let _ = SetWindowPos(
-                self.hwnd,
-                Some(HWND_TOPMOST),
-                self.monitor.left,
-                self.win_top(),
-                self.geo.win_w as i32,
-                self.geo.win_h as i32,
-                SWP_NOACTIVATE,
-            );
-        }
+        let _ = self.place_window();
         // Everything that hangs off the panel follows it.
         let anchor = self.cc_anchor();
         self.control_center.reposition(self.monitor, anchor, self.panel_top);
@@ -5502,7 +5578,10 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         };
         RegisterClassW(&wc);
         let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            // No `WS_EX_TOPMOST` up front: the band depends on the edge (see
+            // `Dock::place_window`), and a window created topmost would have to be talked
+            // back out of it before the first rebuild.
+            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
             class,
             w!("AuraDock"),
             WS_POPUP,
@@ -5649,6 +5728,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             clock: None,
             floor_y: 0,
             panel_top: false,
+            band_topmost: false,
+            z_placed: false,
             start_panes: Vec::new(),
             start_open: false,
         };

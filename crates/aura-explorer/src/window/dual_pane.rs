@@ -412,7 +412,7 @@ impl WindowState {
     pub(super) fn poll_folder_sizes_inner(&mut self) {
         let previous=self.folder_sizes.status().clone();
         let location=self.current_location().clone();
-        let enabled=self.session.ui.everything_folder_sizes;
+        let enabled=self.session.ui.show_folder_sizes;
         let message=self.folder_sizes.poll(self.browser.as_ref(),&location,enabled,self.pending.is_some(),&self.config_path);
         let other_location=self.session.secondary_pane.tabs.get(self.session.secondary_pane.active_tab).map(|tab|tab.current().clone());
         let other_message=other_location.and_then(|location|self.other_pane.folder_sizes.poll(self.other_pane.browser.as_ref(),&location,
@@ -423,7 +423,7 @@ impl WindowState {
     }
     pub(super) fn folder_sizes_changed(&mut self){
         self.folder_sizes.invalidate();self.other_pane.folder_sizes.invalidate();
-        if self.session.ui.everything_folder_sizes{unsafe{SetTimer(Some(self.hwnd),TIMER_FOLDER_SIZES,100,None);}}
+        if self.session.ui.show_folder_sizes{unsafe{SetTimer(Some(self.hwnd),TIMER_FOLDER_SIZES,100,None);}}
     }
 
     pub(super) fn cancel_all_search_backends(&mut self){

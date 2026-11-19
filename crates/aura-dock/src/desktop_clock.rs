@@ -142,7 +142,7 @@ fn is_shell(h: HWND) -> bool {
 
 /// The app window that is in front, if any. The card belongs to the desktop, so it goes
 /// under that window and never over it.
-fn app_in_front() -> Option<HWND> {
+pub(crate) fn app_in_front() -> Option<HWND> {
     unsafe {
         let fg = GetForegroundWindow();
         if fg.is_invalid() || is_own(fg) || is_shell(fg) {

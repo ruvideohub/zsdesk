@@ -227,7 +227,7 @@ fn run(output:&std::path::Path)->Result<serde_json::Value>{
     let files=output.join("files");fs::create_dir_all(&files)?;
     for name in ["中文 文件.txt","second.txt","third.txt"]{fs::write(files.join(name),b"Native regression fixture")?;}
     let mut session=storage::default_session();session.tabs=vec![ExplorerTab::new(1,ShellLocation::Path(files))];session.next_id=2;
-    session.ui.show_tree=true;session.ui.show_preview=false;session.ui.everything_folder_sizes=true;
+    session.ui.show_tree=true;session.ui.show_preview=false;session.ui.show_folder_sizes=true;
     let config=output.join("profile/explorer-session.json");
     storage::save(&config,&session)?;
     let slot=Box::new(RefCell::new(Some(WindowState::new(session,config.clone(),None,false))));

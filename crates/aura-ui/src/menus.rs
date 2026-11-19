@@ -60,7 +60,7 @@ fn current_view(mode: i32, icon: i32) -> &'static str {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ShowState {
     pub navigation: bool, pub preview: bool, pub details: bool, pub bookmarks: bool,
-    pub checkboxes: bool, pub extensions: bool, pub hidden: bool,
+    pub checkboxes: bool, pub extensions: bool, pub hidden: bool, pub folder_sizes: bool,
 }
 
 pub fn view_menu(mode: i32, icon: i32, show: ShowState) -> MenuSpec {
@@ -76,6 +76,10 @@ pub fn view_menu(mode: i32, icon: i32, show: ShowState) -> MenuSpec {
         entry(aura_core::i18n::text("项目复选框"), "show-checkboxes", true, show.checkboxes),
         entry(aura_core::i18n::text("文件扩展名"), "show-extensions", true, show.extensions),
         entry(aura_core::i18n::text("隐藏的项目"), "show-hidden", true, show.hidden),
+        MenuItemSpec::Separator,
+        // Sizes are computed here, locally; the switch belongs with the other view switches
+        // rather than under search, where it used to ride on the search index.
+        entry(aura_core::i18n::text("显示文件夹大小"), "show-folder-sizes", true, show.folder_sizes),
     ]));
     menu(items)
 }
@@ -257,14 +261,14 @@ fn preview_settings(ui: &ExplorerUi) -> MenuItemSpec {
 
 fn search_settings(ui: &ExplorerUi) -> MenuItemSpec {
     // One engine, no choice to make: the built-in index. The Everything backend, its program
-    // picker, its service and its status window are gone from the product.
+    // picker, its service and its status window are gone from the product, so the group no
+    // longer offers a backend at all — an always-checked "built-in search" entry was a switch
+    // that could not be switched.
     let builtin=ui.search_backend.is_builtin();
     group(aura_core::i18n::text("搜索"), "settings-search", vec![
-        entry(aura_core::i18n::text("自带搜索"), "search-backend-native", true, true),
         submenu(aura_core::i18n::text("自带搜索选项"),vec![
             entry(aura_core::i18n::text("收录开发和缓存目录内容"), "search-native-development",builtin,ui.search_include_development),
             entry(aura_core::i18n::text("索引文件大小和修改时间"), "search-native-metadata",builtin,ui.search_index_metadata),
-            entry(aura_core::i18n::text("拼音首字母匹配"), "search-native-pinyin",builtin,ui.search_pinyin_initials),
             entry(aura_core::i18n::text("空闲 1 分钟释放索引"), "search-native-idle-60",builtin,ui.search_idle_seconds==60),
             entry(aura_core::i18n::text("空闲 5 分钟释放索引"), "search-native-idle-300",builtin,ui.search_idle_seconds==300),
             entry(aura_core::i18n::text("空闲 15 分钟释放索引"), "search-native-idle-900",builtin,ui.search_idle_seconds==900),
@@ -272,7 +276,6 @@ fn search_settings(ui: &ExplorerUi) -> MenuItemSpec {
         MenuItemSpec::Separator,
         entry(aura_core::i18n::text("搜索全部本地磁盘"), "search-all-files", true, ui.search_all_files),
         entry(aura_core::i18n::text("仅搜索当前文件夹"), "search-current-folder", true, !ui.search_all_files),
-        entry(aura_core::i18n::text("显示文件夹大小"), "everything-folder-sizes", true, ui.everything_folder_sizes),
         MenuItemSpec::Separator,
         item(aura_core::i18n::text("重建文件名索引"), "search-rebuild-index"),
     ])
@@ -309,7 +312,6 @@ pub fn apply_interface_setting(ui: &mut ExplorerUi, choice: &str) -> bool {
         "show-tab-count"|"show-tab-list"=>{let visible=!ui.tab_count_button_visible();ui.show_tab_count=visible;ui.show_tab_list=visible;},
         "tab-selection-emphasis"=>ui.tab_selection_emphasis=!ui.tab_selection_emphasis,
         "mouse-gestures" => ui.mouse_gestures = !ui.mouse_gestures,
-        "everything-folder-sizes" => ui.everything_folder_sizes = !ui.everything_folder_sizes,
         "tab-placement-top"=>ui.tab_placement=aura_core::model::explorer::TabPlacement::Top,
         "tab-placement-left"=>ui.tab_placement=aura_core::model::explorer::TabPlacement::Left,
         "tab-placement-right"=>ui.tab_placement=aura_core::model::explorer::TabPlacement::Right,
@@ -326,7 +328,6 @@ pub fn apply_interface_setting(ui: &mut ExplorerUi, choice: &str) -> bool {
         "search-backend-auto"|"search-backend-native"|"search-backend-directory" => ui.search_backend = SearchBackendPreference::NativeNtfs,
         "search-native-development"=>ui.search_include_development=!ui.search_include_development,
         "search-native-metadata"=>ui.search_index_metadata=!ui.search_index_metadata,
-        "search-native-pinyin"=>ui.search_pinyin_initials=!ui.search_pinyin_initials,
         "search-native-idle-60"=>ui.search_idle_seconds=60,
         "search-native-idle-300"=>ui.search_idle_seconds=300,
         "search-native-idle-900"=>ui.search_idle_seconds=900,
@@ -672,7 +673,7 @@ mod tests {
         for id in ["search-backend-native","search-backend-auto","search-backend-directory"]{
             assert!(apply_interface_setting(&mut ui,id));assert_eq!(ui.search_backend,SearchBackendPreference::NativeNtfs);
         }
-        assert!(!ui.search_include_development&&!ui.search_index_metadata&&!ui.search_pinyin_initials);
+        assert!(!ui.search_include_development&&!ui.search_index_metadata);
         assert!(apply_interface_setting(&mut ui,"search-native-metadata"));assert!(ui.search_index_metadata);assert!(ui.search_backend.is_builtin());
     }
     #[test]

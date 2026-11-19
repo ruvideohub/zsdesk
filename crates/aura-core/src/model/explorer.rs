@@ -348,8 +348,9 @@ pub struct ExplorerUi {
     /// Opt-in stronger selected-tab appearance; legacy profiles keep the existing style.
     pub tab_selection_emphasis: bool,
     pub mouse_gestures: bool,
-    /// Show view-local totals; native calculation is available without an index.
-    pub everything_folder_sizes: bool,
+    /// Show folder sizes in the list; the totals are computed locally, no index involved.
+    #[serde(alias="everything_folder_sizes")]
+    pub show_folder_sizes: bool,
     pub show_tree: bool,
     /// Navigation tree width in DIP.
     pub tree_width: i32,
@@ -366,7 +367,6 @@ pub struct ExplorerUi {
     pub search_backend: SearchBackendPreference,
     pub search_include_development: bool,
     pub search_index_metadata: bool,
-    pub search_pinyin_initials: bool,
     pub search_idle_seconds: u32,
     pub space_preview: bool,
     pub hover_preview: bool,
@@ -395,22 +395,22 @@ pub struct SearchPreferences {
 impl ExplorerUi{
     pub fn tab_count_button_visible(&self)->bool{self.show_tab_count&&self.show_tab_list}
     pub fn search_preferences(&self)->SearchPreferences{SearchPreferences{backend:self.search_backend,include_development:self.search_include_development,
-        index_metadata:self.search_index_metadata,pinyin_initials:self.search_pinyin_initials,idle_seconds:self.search_idle_seconds,
-        folder_sizes:self.everything_folder_sizes}}
+        index_metadata:self.search_index_metadata,pinyin_initials:false,idle_seconds:self.search_idle_seconds,
+        folder_sizes:self.show_folder_sizes}}
     pub fn apply_search_preferences(&mut self,prefs:&SearchPreferences){self.search_backend=prefs.backend;self.search_include_development=prefs.include_development;
-        self.search_index_metadata=prefs.index_metadata;self.search_pinyin_initials=prefs.pinyin_initials;self.search_idle_seconds=prefs.idle_seconds;
-        self.everything_folder_sizes=prefs.folder_sizes;}
+        self.search_index_metadata=prefs.index_metadata;self.search_idle_seconds=prefs.idle_seconds;
+        self.show_folder_sizes=prefs.folder_sizes;}
 }
 
 impl Default for ExplorerUi {
     fn default() -> Self {
         Self { language:crate::i18n::LanguagePreference::System,startup_location:StartupLocation::default(),new_tab_location:NewTabLocation::default(), tab_placement:TabPlacement::Top, side_tabs_width:210,side_tabs_compact:true,dual_pane:false, pane_ratio:500,
-            double_click_close_tab:true, mouse_gestures:true, everything_folder_sizes:false,
+            double_click_close_tab:true, mouse_gestures:true, show_folder_sizes:false,
             close_window_on_last_tab:true,double_click_blank_up:true,show_tab_count:true,show_tab_list:true,tab_selection_emphasis:false,
             show_tree: true, tree_width: 220, show_bookmarks: true, bookmarks_on_right:false, bookmarks_width:210, explorer_tray:false, show_preview: false, show_details: false,
             command_bar: CommandBarPreferences::default(), context_menu: ContextMenuPreferences::default(),
             search_all_files: true, search_backend: SearchBackendPreference::NativeNtfs, space_preview: true,
-            search_include_development:false,search_index_metadata:false,search_pinyin_initials:false,search_idle_seconds:300,
+            search_include_development:false,search_index_metadata:false,search_idle_seconds:300,
             hover_preview: false, archives_open_externally: false, preview_provider: PreviewProviderPreference::System,
             forward_unhandled_windows: true,
             forward_while_running: false,
@@ -732,7 +732,7 @@ mod tests {
         assert!(!ui.space_preview && !ui.hover_preview && ui.navigation_auto_expand.is_none());
         assert_eq!(ui.appearance, AppearancePreferences::default());
         assert_eq!(ui.search_backend, SearchBackendPreference::NativeNtfs);
-        assert!(!ui.dual_pane && !ui.everything_folder_sizes);
+        assert!(!ui.dual_pane && !ui.show_folder_sizes);
         assert!(ui.close_window_on_last_tab && ui.show_tab_count);
         assert!(ui.navigation_show_recycle_bin && ui.navigation_show_network);
         assert_eq!(ui.navigation_expand_this_pc,None);

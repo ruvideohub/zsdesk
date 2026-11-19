@@ -521,7 +521,7 @@ impl WindowState {
         let show = ShowState {
             navigation: self.session.ui.show_tree, preview: self.session.ui.show_preview, details: self.session.ui.show_details,
             bookmarks: self.session.ui.show_bookmarks, checkboxes: self.browser.as_ref().is_some_and(|b| b.checkboxes()),
-            extensions, hidden,
+            extensions, hidden, folder_sizes: self.session.ui.show_folder_sizes,
         };
         let anchor = self.layout.command_rect(CommandId::View);
         let choice = popup(self.hwnd, &menus::view_menu(mode, icon, show), anchor);
@@ -540,6 +540,13 @@ impl WindowState {
             Some("show-checkboxes") => { if let Some(b) = &self.browser { let _ = b.set_checkboxes(!show.checkboxes); } }
             Some("show-extensions") => { set_folder_settings(None, Some(!show.extensions)); unsafe { self.execute(Command::Refresh); } }
             Some("show-hidden") => { set_folder_settings(Some(!show.hidden), None); unsafe { self.execute(Command::Refresh); } }
+            Some("show-folder-sizes") => {
+                // Off stops the work as well: a size pass over a big folder shouldn't keep
+                // running for a column the user just hid.
+                self.session.ui.show_folder_sizes = !show.folder_sizes;
+                if !self.session.ui.show_folder_sizes { self.cancel_folder_sizes(); }
+                self.save();
+            }
             Some(id) => self.set_view(menus::view_choice(id)),
             None => {}
         }
@@ -559,7 +566,7 @@ impl WindowState {
         spec.items.push(menus::entry(aura_core::i18n::text("文件夹大小概览…"),"folder-size-ranking",ordinary,false));
         let choice = popup(self.hwnd, &spec, anchor);
         if choice.as_deref()==Some("folder-size-sort"){
-            if !self.session.ui.everything_folder_sizes{self.session.ui.everything_folder_sizes=true;if !self.persist_search_preferences(){return;}self.cancel_folder_sizes();}
+            if !self.session.ui.show_folder_sizes{self.session.ui.show_folder_sizes=true;if !self.persist_search_preferences(){return;}self.cancel_folder_sizes();}
             let result=self.browser.as_ref().map(|browser|{browser.set_view_mode(4,16)?;aura_windows::shell::folder_totals::ensure_size_visible(&unsafe{browser.current_view()}?) });
             if result.as_ref().is_some_and(|result|result.is_err()){self.shell_result(result);return;}
             self.poll_folder_sizes();
