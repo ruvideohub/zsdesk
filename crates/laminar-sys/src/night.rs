@@ -11,7 +11,21 @@
 //!
 //! No COM needed, both calls return in a few milliseconds.
 
-use windows::Win32::Graphics::Gdi::{GetDC, GetDeviceGammaRamp, ReleaseDC, SetDeviceGammaRamp};
+use windows::core::{s, w};
+use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC, HDC};
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+
+/// `GetDeviceGammaRamp`/`SetDeviceGammaRamp` are gdi32 exports; the metadata doesn't put
+/// them in a module this crate enables, so they are looked up at run time.
+type Ramp = unsafe extern "system" fn(HDC, *mut core::ffi::c_void) -> i32;
+
+fn gdi(name: windows::core::PCSTR) -> Option<Ramp> {
+    unsafe {
+        let module = GetModuleHandleW(w!("gdi32.dll")).ok()?;
+        let proc = GetProcAddress(module, name)?;
+        Some(std::mem::transmute_copy(&proc))
+    }
+}
 
 const RAMP_LEN: usize = 256;
 
@@ -31,10 +45,11 @@ fn identity() -> [u16; 3 * RAMP_LEN] {
 fn current() -> [u16; 3 * RAMP_LEN] {
     let mut ramp = identity();
     unsafe {
-        let dc = GetDC(None);
-        if !dc.is_invalid() {
-            let _ = GetDeviceGammaRamp(dc, ramp.as_mut_ptr() as *mut core::ffi::c_void);
-            ReleaseDC(None, dc);
+        if let (Some(get), dc) = (gdi(s!("GetDeviceGammaRamp")), GetDC(None)) {
+            if !dc.is_invalid() {
+                let _ = get(dc, ramp.as_mut_ptr() as *mut core::ffi::c_void);
+                ReleaseDC(None, dc);
+            }
         }
     }
     ramp
@@ -53,12 +68,13 @@ fn warm(strength: f32) -> [u16; 3 * RAMP_LEN] {
 }
 
 fn apply(ramp: &mut [u16; 3 * RAMP_LEN]) -> bool {
+    let Some(set) = gdi(s!("SetDeviceGammaRamp")) else { return false };
     unsafe {
         let dc = GetDC(None);
         if dc.is_invalid() {
             return false;
         }
-        let ok = SetDeviceGammaRamp(dc, ramp.as_ptr() as *const core::ffi::c_void).as_bool();
+        let ok = set(dc, ramp.as_mut_ptr() as *mut core::ffi::c_void) != 0;
         ReleaseDC(None, dc);
         ok
     }
