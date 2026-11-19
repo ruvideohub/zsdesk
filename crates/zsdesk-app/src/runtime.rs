@@ -214,7 +214,10 @@ pub fn run(profile:PathBuf,args:Vec<OsString>)->Result<()>{
         Err(error)=>{crate::window::diagnostics::record("folder-dde","startup-failed",None);trace(&format!("folder DDE startup: {error:#}"));None},
     };
     ingress.tray.borrow_mut().update(hwnd,crate::storage::load(&profile).is_ok_and(|session|session.ui.explorer_tray));
+    let panel_wanted=crate::shell_dock::wanted(&args);
     ingress.tx.try_send(Request{args}).context("初始启动请求失败")?;
+    // One launch: the panel comes up with the desktop and leaves with it.
+    let mut panel=panel_wanted.then(crate::shell_dock::Panel::start);
     let (finished_tx,finished_rx)=mpsc::channel::<Notice>();let mut workers:Vec<Worker>=Vec::new();let mut pool:Vec<WindowWorker>=Vec::new();
     let mut queued:VecDeque<WindowJob>=VecDeque::new();let mut last_error=None;let mut serial=0u64;let mut shutting_down=false;let mut previous_status=None;let mut accepted_request=None;let mut quit_started=false;
     loop{
@@ -223,6 +226,8 @@ pub fn run(profile:PathBuf,args:Vec<OsString>)->Result<()>{
             ingress.tray.borrow_mut().remove();queued.clear();accepted_request=None;while rx.try_recv().is_ok(){}
             let _=crate::quick_search::control::signal(&profile,"stop");
             if let Ok(exe)=std::env::current_exe(){crate::update_shutdown::request_windows(&exe);}
+            // Put the taskbar back before this process disappears (the dock restores it on exit).
+            if let Some(panel)=panel.as_mut(){panel.stop();}
             crate::context_menu_process::shutdown_idle_worker();
         }
         while !quit_started&&queued.len()<MAX_QUEUED_WINDOWS{let Some(request)=accepted_request.take().or_else(||rx.try_recv().ok())else{break;};

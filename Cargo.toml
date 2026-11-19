@@ -7,6 +7,7 @@ members = [
     "crates/zsdesk-ui",
     "crates/zsdesk-windows",
     "crates/zsdesk-dock",
+    "crates/laminar-sys",
 ]
 
 [workspace.package]

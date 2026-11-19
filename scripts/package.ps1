@@ -208,7 +208,7 @@ try {
         }
         $readme=@("ZSDesk $version $($definition.Name) — Windows x64",'',
             '运行 ZSDesk.exe 打开文件管理器；--classic-menu 使用原版菜单。',
-            '码头：运行 zsdesk-dock.exe 在屏幕底部显示应用栏，右键菜单可设置开机启动与退出。',
+            '码头：ZSDesk.exe 启动时自动带起 zsdesk-dock.exe（面板与 Launchpad），退出时一并结束；右键菜单可退出面板。',
             'Ctrl+F 在主窗口搜索文件；Alt+P 切换预览窗格；空格打开快速预览。',
             'Ctrl+Shift+A 反向选择；地址栏支持 pwsh、powershell、nu 和 nushell。',
             '≡ → 系统集成 → 开机启动与全局快捷键：设置登录常驻及唤起主窗口搜索的全局快捷键。',
@@ -237,7 +237,7 @@ try {
             'File manager: menu → Language. Application text switches immediately.',
             'File names and Windows Shell labels retain their original language.',
             'Run ZSDesk.exe. Ctrl+F searches files; Alt+P toggles the preview pane; Space opens quick preview.',
-            'Dock: run zsdesk-dock.exe for the application strip at the bottom of the screen; its menu offers start at login and exit.',
+            'Dock: ZSDesk.exe starts zsdesk-dock.exe with it (panel and Launchpad) and stops it on exit; its menu can quit the panel.',
             'Network share searches stay within the selected UNC folder or existing mapped network folder.',
             'Settings are preserved during updates. Exit ZSDesk before replacing portable files.',
             'Use portable.flag for a data folder beside the program, or --profile-dir for a separate configuration.',

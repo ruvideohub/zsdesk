@@ -1,44 +1,74 @@
+# ZSDesk Dock — vendored from Laminar Dock 0.2.9 (MIT, Copyright (c) 2026 Dave Sousa).
+# The panel, tray, stacks, previews and search are Laminar's; the Launchpad is
+# reduced to one quiet panel (see docs/dock.md) and the updater is left inert,
+# because ZSDesk ships and updates itself.
 [package]
 name = "zsdesk-dock"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-rust-version.workspace = true
-description = "ZSDesk dock: macOS-style application strip with pinned and running apps, all-applications grid and clock."
+version = "0.3.18"
+edition = "2021"
+rust-version = "1.88"
+description = "ZSDesk Dock: the panel and Launchpad of the ZSDesk desktop (Rust + Windows Composition)"
+publish = false
 
 [dependencies]
-serde.workspace = true
-serde_json.workspace = true
-dirs.workspace = true
+windows-numerics = "0.3.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+laminar-sys = { path = "../laminar-sys" }
+# Same version the windows crate already uses; needed directly for #[implement] (COM objects).
+windows-core = "0.62.2"
 
-# The portable logic (config, geometry, grouping, catalogue) is unit-tested on
-# any host, so the Windows-only crates are target-scoped.
-[target.'cfg(windows)'.dependencies]
-zsdesk-core = { path = "../zsdesk-core" }
-zsdesk-windows = { path = "../zsdesk-windows" }
-windows = { version = "0.62.2", features = [
-  "Win32_Foundation",
-  "Win32_Globalization",
-  "Win32_Graphics_Direct2D",
-  "Win32_Graphics_Dwm",
-  "Win32_Graphics_Gdi",
-  "Win32_Graphics_Imaging",
-  "Win32_Media_Audio",
-  "Win32_Media_Audio_Endpoints",
-  "Win32_Networking_WinInet",
-  "Win32_System_Power",
-  "Win32_System_Com",
-  "Win32_System_Com_StructuredStorage",
-  "Win32_System_Variant",
-  "Win32_System_LibraryLoader",
-  "Win32_System_Ole",
-  "Win32_Security",
-  "Win32_System_SystemInformation",
-  "Win32_System_Threading",
-  "Win32_UI_HiDpi",
-  "Win32_UI_Input_KeyboardAndMouse",
-  "Win32_Storage_FileSystem",
-  "Win32_UI_Shell",
-  "Win32_UI_Shell_Common",
-  "Win32_UI_WindowsAndMessaging",
-] }
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Foundation",
+    "Foundation_Numerics",
+    "Graphics",
+    "Graphics_DirectX",
+    "Graphics_Effects",
+    "System",
+    "UI",
+    "UI_Composition",
+    "UI_Composition_Desktop",
+    "Win32_Foundation",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Gdi",
+    "Win32_Graphics_Imaging",
+    "Win32_Security",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Console",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Ole",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemInformation",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Memory",
+    "Win32_System_Variant",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Composition",
+    "Win32_System_WinRT_Graphics",
+    "Win32_System_WinRT_Graphics_Direct2D",
+    "Win32_UI_Accessibility",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+]

@@ -30,7 +30,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.0
       - name: Test
         working-directory: zsdesk
-        run: cargo test --workspace --release --locked
+        run: cargo test --workspace --exclude zsdesk-dock --exclude laminar-sys --release --locked
       - name: Check all editions
         working-directory: zsdesk
         shell: pwsh

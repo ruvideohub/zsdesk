@@ -1,3 +1,36 @@
+Laminar Dock (the ZSDesk panel)
+================================
+The panel — the dock strip, its tray, stacks, previews, search and the Launchpad
+frame in crates/zsdesk-dock and crates/laminar-sys — is vendored from Laminar Dock
+0.2.9 by Dave Sousa, commit bcf3f33 (https://github.com/davesousa/Laminar_Dock).
+ZSDesk changes it: the Launchpad keeps one panel instead of three, the panel is
+started by ZSDesk.exe instead of a separate shortcut, Velopack is replaced with
+ZSDesk's own upgrade path, and the settings file lives in %APPDATA%\ZSDesk\Dock.
+The upstream source declares @license MIT. The full licence text is in
+packaging\licenses\Laminar-MIT.txt.
+
+MIT License
+
+Copyright (c) 2026 Dave Sousa
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 Private context-menu interface declarations were adapted from Explorer Column
 View by ItsMikesch, commit 979767ccedef11d2768bffb4f82722ea68b4dedc.
 Source: https://github.com/ramensoftware/windhawk-mods/blob/979767ccedef11d2768bffb4f82722ea68b4dedc/mods/explorer-column-view.wh.cpp

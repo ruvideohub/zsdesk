@@ -10,6 +10,7 @@ on:
     branches: [main]
     paths:
       - 'crates/zsdesk-dock/**'
+      - 'crates/laminar-sys/**'
       - '.github/workflows/dock-build.yml'
 
 permissions:

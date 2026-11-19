@@ -1,291 +1,331 @@
-//! `dock.json`: pins and appearance, stored next to the other ZSDesk profile
-//! files so a portable copy keeps its dock.
+//! The dock's settings file: `%APPDATA%\ZSDesk\Dock\config.json`.
 //!
-//! Reading never fails: a missing, unreadable or corrupt file falls back to
-//! the defaults, because a dock that refuses to start is worse than a dock
-//! with factory settings. Writing is atomic (temporary file + rename) so a
-//! power loss cannot leave half a JSON document behind.
-
-use std::path::{Path, PathBuf};
+//! This is the same idea as the prototype's settings object. Until the native
+//! Settings window exists, edit the file (right-click the dock, choose
+//! "Edit settings file…"); the dock notices the save and applies it live.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-use crate::model::normalize_exe;
+/// Marks a separator in `pins`.
+pub const SEPARATOR: &str = "|";
 
-/// Bumped only when an older reader could misinterpret a newer file.
-pub const SCHEMA: u32 = 1;
+/// One entry in the dock: an app id, a separator ("|"), or a stack of apps.
+/// In config.json: `"MSEdge"`, `"|"`, or `{ "stack": "Creative", "apps": ["...", "..."] }`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum Pin {
+    Id(String),
+    Stack { stack: String, apps: Vec<String> },
+    /// A widget in the dock: `{ "widget": "clock" }` or `{ "widget": "clock", "size": "small" }`
+    /// (ids in widgets/catalog.rs).
+    Widget {
+        widget: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<crate::widgets::catalog::Size>,
+    },
+}
 
-/// One pinned icon.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pin {
-    /// What the dock launches: an `.exe`, a `.lnk` or a `shell:`/`ms-settings:` URI.
-    pub path: String,
-    /// Executable the `.lnk` points at; empty when `path` already is the executable.
-    #[serde(default)]
-    pub target: String,
-    /// Title override; `None` uses the file name.
-    #[serde(default)]
-    pub label: Option<String>,
+/// A widget in a Launchpad column: `"clock"` or `{ "id": "clock", "size": "small" }`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum WRef {
+    Id(String),
+    Sized { id: String, size: crate::widgets::catalog::Size },
+}
+
+impl WRef {
+    pub fn new(id: &str, size: crate::widgets::catalog::Size) -> Self {
+        // Keep the short form when the size is the widget's own default.
+        match crate::widgets::catalog::get(id) {
+            Some(d) if d.size == size => WRef::Id(id.to_string()),
+            _ => WRef::Sized { id: id.to_string(), size },
+        }
+    }
+    pub fn id(&self) -> &str {
+        match self {
+            WRef::Id(s) | WRef::Sized { id: s, .. } => s,
+        }
+    }
+    pub fn size(&self) -> crate::widgets::catalog::Size {
+        match self {
+            WRef::Sized { size, .. } => *size,
+            WRef::Id(id) => crate::widgets::catalog::get(id).map(|d| d.size).unwrap_or_default(),
+        }
+    }
 }
 
 impl Pin {
-    pub fn new(path: impl Into<String>, target: impl Into<String>, label: Option<String>) -> Self {
-        Self { path: path.into(), target: target.into(), label }
+    pub fn sep() -> Self {
+        Pin::Id(SEPARATOR.to_string())
     }
-
-    /// Executable used to match running windows and to load the icon.
-    pub fn executable(&self) -> &str {
-        if self.target.trim().is_empty() { &self.path } else { &self.target }
+    pub fn is_sep(&self) -> bool {
+        matches!(self, Pin::Id(s) if s == SEPARATOR)
     }
-
-    pub fn matches_exe(&self, executable: &str) -> bool {
-        let wanted = normalize_exe(self.executable());
-        wanted == normalize_exe(executable) || normalize_exe(&self.path) == normalize_exe(executable)
-    }
-}
-
-/// Appearance and behaviour of the dock.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DockConfig {
-    pub schema: u32,
-    pub pins: Vec<Pin>,
-    /// macOS-style hover magnification.
-    pub magnification: bool,
-    /// Largest icon scale under the pointer (1.0 = off).
-    pub magnify_scale: f32,
-    /// Influence radius of the magnification, in icon pitches.
-    pub magnify_influence: f32,
-    /// Icon edge length in DIPs at 100 % DPI.
-    pub icon_size: f32,
-    /// Slide the dock off screen when the pointer leaves it.
-    pub autohide: bool,
-    pub show_launcher: bool,
-    pub show_trash: bool,
-    pub show_clock: bool,
-    /// Network, volume and battery indicators next to the clock.
-    pub show_status: bool,
-    /// 24-hour clock; `false` appends AM/PM.
-    pub clock_24h: bool,
-}
-
-impl Default for DockConfig {
-    fn default() -> Self {
-        Self {
-            schema: SCHEMA,
-            pins: default_pins(),
-            magnification: true,
-            magnify_scale: 1.85,
-            magnify_influence: 2.5,
-            icon_size: 48.0,
-            autohide: false,
-            show_launcher: true,
-            show_trash: true,
-            show_clock: true,
-            show_status: true,
-            clock_24h: true,
+    /// The app id, for plain app pins.
+    pub fn app(&self) -> Option<&str> {
+        match self {
+            Pin::Id(s) if s != SEPARATOR => Some(s),
+            _ => None,
         }
     }
 }
 
-impl DockConfig {
-    /// Keeps a hand-edited file from producing an unusable dock.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(default)]
+pub struct Config {
+    // Dock appearance (device-independent pixels)
+    pub icon_size: f32,
+    pub magnify: bool,
+    pub magnified_size: f32,
+    /// How many icons either side grow, roughly.
+    pub magnify_range: f32,
+    pub icon_spacing: f32,
+    pub padding: f32,
+    pub corner_radius: f32,
+    /// 0–0.8 opacity of the dark tint over the blurred desktop.
+    pub glass_tint: f32,
+    /// 0–1 strength of the specular rim.
+    pub edge_highlight: f32,
+    /// Light glass when Windows' apps use light mode, dark glass when they use dark mode.
+    /// Off: always dark.
+    pub match_windows_theme: bool,
+    /// Extra blur (pixels) on top of Windows' own background blur. 0: Windows' blur only.
+    pub extra_blur: f32,
+
+    // Install and updates (installed copies only; see updater.rs)
+    /// Start Laminar when the user signs in to Windows.
+    pub start_at_login: bool,
+    /// Check GitHub for new versions and download them quietly.
+    pub check_updates: bool,
+    /// How often the automatic check runs, in hours: 0 = only when Laminar starts,
+    /// 24 = once a day (default), 168 = once a week.
+    pub update_check_hours: u32,
+    /// Unix time (seconds) of the last automatic check, so restarts don't check again.
+    pub last_update_check: u64,
+    /// Unix time (seconds) before which the update icon stays hidden ("Remind me later").
+    pub update_snooze_until: u64,
+    /// A version the user chose to skip.
+    pub update_skip: String,
+
+    // Behaviour
+    /// Slide the dock off-screen; bring it back by pushing the pointer into the bottom edge.
+    pub auto_hide: bool,
+    /// Height in pixels of the bottom-edge band that reveals a hidden dock.
+    pub reveal_zone: f32,
+    pub reveal_delay_ms: u32,
+    pub hide_delay_ms: u32,
+    /// Hide the Windows taskbar while Laminar runs (a watchdog restores it on exit or crash).
+    pub hide_windows_taskbar: bool,
+    /// Clicking the app that is already in front minimizes it (Windows behaviour).
+    pub click_to_minimize: bool,
+    /// Pressing the Windows key on its own opens Launchpad instead of Start.
+    pub win_key_launchpad: bool,
+    /// Show a dock on every display (otherwise only the main display).
+    pub show_on_all_displays: bool,
+    /// Each display's dock lists only the apps with windows on that display.
+    pub per_display_windows: bool,
+    /// Apps shown under "Pinned" in Launchpad (empty: use the dock's pinned apps).
+    pub launchpad_pins: Vec<String>,
+    /// Weather location (default Toronto).
+    pub weather_city: String,
+    pub weather_lat: f32,
+    pub weather_lon: f32,
+    /// Widgets in Launchpad's left column, top to bottom (ids in widgets/catalog.rs).
+    pub launchpad_widgets: Vec<WRef>,
+    /// Widgets in Launchpad's right column (Control Center), top to bottom.
+    pub right_widgets: Vec<WRef>,
+    /// Always-on widgets (turn off here to remove them).
+    pub show_background_apps: bool,
+    pub show_windows_update: bool,
+    pub show_windows_settings: bool,
+    /// 0–1 strength of the shadow under Launchpad's panels.
+    pub panel_shadow: f32,
+    /// 0–1 strength of the shadow under widgets and tiles.
+    pub card_shadow: f32,
+    /// Widget and connector settings that aren't secret, by connector id
+    /// (e.g. "github": {"username": "…"}). API keys live in Windows Credential Manager.
+    pub widget_settings: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
+
+    /// Pinned apps, left to right. Each entry is an AppUserModelID (as used by
+    /// `shell:AppsFolder`) or a full .exe path; `"|"` is a separator; an object is a stack.
+    pub pins: Vec<Pin>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            icon_size: 54.0,
+            magnify: true,
+            magnified_size: 88.0,
+            magnify_range: 2.6,
+            icon_spacing: 8.0,
+            padding: 8.0,
+            corner_radius: 24.0,
+            glass_tint: 0.24,
+            edge_highlight: 0.55,
+            match_windows_theme: true,
+            extra_blur: 0.0,
+            // Off until the user turns it on (see updater::sync_start_at_login).
+            start_at_login: false,
+            check_updates: false,
+            update_check_hours: 24,
+            last_update_check: 0,
+            update_snooze_until: 0,
+            update_skip: String::new(),
+            auto_hide: false,
+            reveal_zone: 4.0,
+            reveal_delay_ms: 120,
+            hide_delay_ms: 450,
+            hide_windows_taskbar: true,
+            click_to_minimize: true,
+            win_key_launchpad: true,
+            show_on_all_displays: true,
+            per_display_windows: false,
+            launchpad_pins: Vec::new(),
+            weather_city: "Toronto".into(),
+            weather_lat: 43.65,
+            weather_lon: -79.38,
+            launchpad_widgets: crate::widgets::catalog::default_launchpad(),
+            right_widgets: crate::widgets::catalog::default_right(),
+            show_background_apps: true,
+            show_windows_update: true,
+            show_windows_settings: true,
+            panel_shadow: 0.42,
+            card_shadow: 0.35,
+            widget_settings: Default::default(),
+            pins: Vec::new(),
+        }
+    }
+}
+
+pub fn dir() -> PathBuf {
+    let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    base.join("ZSDesk").join("Dock")
+}
+
+pub fn path() -> PathBuf {
+    dir().join("config.json")
+}
+
+impl Config {
+    /// Load the settings file. Returns None if it doesn't exist or can't be parsed;
+    /// a running dock then keeps its current settings until the file is fixed.
+    /// (Never write anything here: the dock watches this folder, so a write would retrigger a reload.)
+    pub fn load() -> Option<Config> {
+        let text = std::fs::read_to_string(path()).ok()?;
+        // Some editors (and PowerShell) save UTF-8 with a byte-order mark.
+        let text = text.trim_start_matches('\u{feff}');
+        serde_json::from_str::<Config>(text).ok().map(Config::sanitized)
+    }
+
+    /// True if a settings file exists (even if it currently fails to parse).
+    pub fn exists() -> bool {
+        path().exists()
+    }
+
+    /// Clamp values so a typo in the file can't break the dock.
     pub fn sanitized(mut self) -> Self {
-        self.schema = SCHEMA;
-        self.magnify_scale = if self.magnify_scale.is_finite() { self.magnify_scale.clamp(1.0, 3.0) } else { 1.85 };
-        self.magnify_influence = if self.magnify_influence.is_finite() { self.magnify_influence.clamp(0.5, 8.0) } else { 2.5 };
-        self.icon_size = if self.icon_size.is_finite() { self.icon_size.clamp(24.0, 96.0) } else { 48.0 };
-        self.pins.retain(|pin| !pin.path.trim().is_empty());
-        let mut seen: Vec<String> = Vec::with_capacity(self.pins.len());
-        self.pins.retain(|pin| {
-            let key = normalize_exe(pin.executable());
-            if seen.contains(&key) { false } else { seen.push(key); true }
-        });
+        self.icon_size = self.icon_size.clamp(24.0, 128.0);
+        self.magnified_size = self.magnified_size.clamp(self.icon_size, 192.0);
+        self.magnify_range = self.magnify_range.clamp(1.0, 8.0);
+        self.icon_spacing = self.icon_spacing.clamp(0.0, 32.0);
+        self.padding = self.padding.clamp(2.0, 24.0);
+        self.corner_radius = self.corner_radius.clamp(0.0, 64.0);
+        self.glass_tint = self.glass_tint.clamp(0.0, 0.9);
+        self.edge_highlight = self.edge_highlight.clamp(0.0, 1.0);
+        self.reveal_zone = self.reveal_zone.clamp(1.0, 40.0);
+        self.extra_blur = self.extra_blur.clamp(0.0, 40.0);
+        // Forget widgets this version doesn't know (e.g. after a downgrade).
+        self.launchpad_widgets.retain(|w| crate::widgets::catalog::get(w.id()).is_some());
+        self.right_widgets.retain(|w| crate::widgets::catalog::get(w.id()).is_some());
+        self.pins.retain(|p| !matches!(p, Pin::Widget { widget, .. } if crate::widgets::catalog::get(widget).is_none()));
+        // Always-on widgets: present (in either column) when switched on, gone when off.
+        for (key, id) in crate::widgets::catalog::PINNED {
+            let on = match *key {
+                "show_background_apps" => self.show_background_apps,
+                "show_windows_update" => self.show_windows_update,
+                _ => self.show_windows_settings,
+            };
+            let present = self.launchpad_widgets.iter().chain(self.right_widgets.iter()).any(|w| w.id() == *id);
+            if on && !present {
+                self.right_widgets.push(WRef::Id(id.to_string()));
+            } else if !on {
+                self.launchpad_widgets.retain(|w| w.id() != *id);
+                self.right_widgets.retain(|w| w.id() != *id);
+            }
+        }
+        self.panel_shadow = self.panel_shadow.clamp(0.0, 1.0);
+        self.card_shadow = self.card_shadow.clamp(0.0, 1.0);
+        // Pins saved before version-folder handling point into a folder an update deletes.
+        // (In memory only: the next save writes the stable path.)
+        let fix = |s: &mut String| {
+            if crate::apps::is_path(s) {
+                *s = crate::apps::stable_path(s).to_lowercase();
+            }
+        };
+        for p in &mut self.pins {
+            match p {
+                Pin::Id(s) => fix(s),
+                Pin::Stack { apps, .. } => apps.iter_mut().for_each(fix),
+                Pin::Widget { .. } => {}
+            }
+        }
         self
     }
 
-    /// Loads the profile; anything unreadable yields the defaults. On a fresh
-    /// profile the seeded pins are pruned so only installed tools remain.
-    pub fn load(path: &Path) -> Self {
-        let Ok(text) = std::fs::read_to_string(path) else { return Self::fresh() };
-        match serde_json::from_str::<Self>(&text) {
-            Ok(config) => config.sanitized(),
-            Err(_) => Self::fresh(),
+    pub fn save(&self) {
+        let _ = std::fs::create_dir_all(dir());
+        if let Ok(text) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(path(), text);
         }
     }
 
-    /// Defaults with the seeded pins reduced to the tools that exist here.
-    pub fn fresh() -> Self {
-        let mut config = Self::default();
-        config.pins = existing_pins(config.pins);
-        config.sanitized()
+    /// True if anything that changes the dock's layout or look differs.
+    pub fn visuals_differ(&self, o: &Config) -> bool {
+        self.icon_size != o.icon_size
+            || self.magnify != o.magnify
+            || self.magnified_size != o.magnified_size
+            || self.magnify_range != o.magnify_range
+            || self.icon_spacing != o.icon_spacing
+            || self.padding != o.padding
+            || self.corner_radius != o.corner_radius
+            || self.glass_tint != o.glass_tint
+            || self.edge_highlight != o.edge_highlight
+            || self.match_windows_theme != o.match_windows_theme
+            || self.extra_blur != o.extra_blur
+            || self.pins != o.pins
+            || self.auto_hide != o.auto_hide
+            || self.per_display_windows != o.per_display_windows
+            || self.card_shadow != o.card_shadow
     }
-
-    /// Writes the profile beside `path`, creating the directory when needed.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(directory) = path.parent() { std::fs::create_dir_all(directory)?; }
-        let bytes = serde_json::to_vec_pretty(&self.clone().sanitized())
-            .map_err(std::io::Error::other)?;
-        let temporary = path.with_extension(format!("{}-{}.tmp", std::process::id(), unique()));
-        std::fs::write(&temporary, bytes)?;
-        // `rename` replaces the target atomically on NTFS and on Unix.
-        match std::fs::rename(&temporary, path) {
-            Ok(()) => Ok(()),
-            Err(error) => { let _ = std::fs::remove_file(&temporary); Err(error) }
-        }
-    }
-
-    pub fn is_pinned(&self, executable: &str) -> bool {
-        self.pins.iter().any(|pin| pin.matches_exe(executable))
-    }
-
-    /// Adds a pin unless the executable already has one. Returns `true` when
-    /// the list changed.
-    pub fn pin(&mut self, pin: Pin) -> bool {
-        if self.is_pinned(pin.executable()) { return false; }
-        self.pins.push(pin);
-        true
-    }
-
-    /// Removes the pin of `executable`, returning the removed entry.
-    pub fn unpin(&mut self, executable: &str) -> Option<Pin> {
-        let index = self.pins.iter().position(|pin| pin.matches_exe(executable))?;
-        Some(self.pins.remove(index))
-    }
-
-}
-
-fn unique() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static CLOCK: AtomicU64 = AtomicU64::new(1);
-    let tick = CLOCK.fetch_add(1, Ordering::Relaxed);
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.subsec_nanos() as u64 + tick)
-        .unwrap_or(tick)
-}
-
-/// What a first start shows: common tools that exist on every Windows 10/11
-/// installation. Missing entries are pruned by `existing_pins`.
-pub fn default_pins() -> Vec<Pin> {
-    let windows = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-    let system = PathBuf::from(&windows).join("System32");
-    let mut pins = Vec::new();
-    let mut add = |path: PathBuf, label: Option<&str>| {
-        let path = path.to_string_lossy().to_string();
-        pins.push(Pin::new(path.clone(), path, label.map(str::to_string)));
-    };
-    add(PathBuf::from(&windows).join("explorer.exe"), None);
-    add(system.join("notepad.exe"), None);
-    add(system.join("calc.exe"), None);
-    add(system.join("mspaint.exe"), None);
-    add(system.join("WindowsPowerShell/v1.0/powershell.exe"), None);
-    pins.push(Pin::new("ms-settings:", "SystemSettings.exe", None));
-    pins
-}
-
-/// Drops pins whose executable does not exist, keeping `shell:` style entries.
-pub fn existing_pins(pins: Vec<Pin>) -> Vec<Pin> {
-    // A pin is usable when either what it launches or the executable behind it
-    // exists; `ms-settings:` and `shell:` URIs have no file on disk.
-    let usable = |value: &str| {
-        let value = value.trim();
-        !value.is_empty() && (is_shell_uri(value) || Path::new(value).is_file())
-    };
-    pins.into_iter()
-        .filter(|pin| usable(&pin.path) || usable(pin.executable()))
-        .collect()
-}
-
-fn is_shell_uri(value: &str) -> bool {
-    value.contains(':') && !value.contains('\\') && !value.contains('/')
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::widgets::catalog::Size;
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let directory = std::env::temp_dir().join(format!("zsdesk-dock-{tag}-{}", unique()));
-        std::fs::create_dir_all(&directory).unwrap();
-        directory
+    #[test]
+    fn widget_entries_old_and_new() {
+        let c: Config = serde_json::from_str(r#"{"launchpad_widgets": ["clock", {"id": "analog", "size": "large"}], "pins": ["|", {"widget": "clock"}, {"widget": "weather", "size": "small"}]}"#).unwrap();
+        assert_eq!(c.launchpad_widgets[0].size(), Size::Medium);
+        assert_eq!(c.launchpad_widgets[1].size(), Size::Large);
+        assert!(matches!(&c.pins[1], Pin::Widget { widget, size: None } if widget == "clock"));
+        assert!(matches!(&c.pins[2], Pin::Widget { size: Some(Size::Small), .. }));
     }
 
     #[test]
-    fn defaults_round_trip_through_json() {
-        let config = DockConfig::default();
-        let text = serde_json::to_string(&config).unwrap();
-        let parsed: DockConfig = serde_json::from_str(&text).unwrap();
-        assert_eq!(parsed.sanitized(), config.sanitized());
-        assert!(DockConfig::default().magnification);
-    }
-
-    #[test]
-    fn partial_files_keep_the_remaining_defaults() {
-        let parsed: DockConfig = serde_json::from_str(r#"{"magnification":false}"#).unwrap();
-        assert!(!parsed.magnification);
-        assert_eq!(parsed.icon_size, DockConfig::default().icon_size);
-        assert!(parsed.show_clock);
-    }
-
-    #[test]
-    fn hand_edited_values_are_clamped() {
-        let parsed = serde_json::from_str::<DockConfig>(
-            r#"{"magnify_scale":99.0,"icon_size":-4.0,"magnify_influence":0.0}"#).unwrap().sanitized();
-        assert_eq!(parsed.magnify_scale, 3.0);
-        assert_eq!(parsed.icon_size, 24.0);
-        assert_eq!(parsed.magnify_influence, 0.5);
-    }
-
-    #[test]
-    fn a_corrupt_or_missing_file_falls_back_to_defaults() {
-        let directory = temp_dir("corrupt");
-        let path = directory.join("dock.json");
-        assert_eq!(DockConfig::load(&path), DockConfig::fresh());
-        std::fs::write(&path, b"{ not json").unwrap();
-        assert_eq!(DockConfig::load(&path), DockConfig::fresh());
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn saving_is_atomic_and_reloads_identically() {
-        let directory = temp_dir("save");
-        let path = directory.join("profile/dock.json");
-        let mut config = DockConfig::default();
-        config.magnification = false;
-        config.pins = vec![Pin::new(r"C:\Tools\App.exe", "", Some("Приложение".into()))];
-        config.save(&path).unwrap();
-        assert_eq!(DockConfig::load(&path), config.clone().sanitized());
-        // No temporary files are left behind.
-        let leftovers = std::fs::read_dir(path.parent().unwrap()).unwrap()
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
-            .count();
-        assert_eq!(leftovers, 0);
-        std::fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn pins_are_unique_and_can_be_removed() {
-        let mut config = DockConfig { pins: Vec::new(), ..DockConfig::default() };
-        assert!(config.pin(Pin::new(r"C:\Tools\App.exe", "", None)));
-        assert!(!config.pin(Pin::new(r"c:\tools\APP.exe", "", None)));
-        assert!(config.is_pinned(r"C:\TOOLS\app.exe"));
-        assert!(config.pin(Pin::new(r"C:\Start\Editor.lnk", r"C:\Tools\Editor.exe", None)));
-        assert!(config.is_pinned(r"C:\Tools\Editor.exe"));
-        assert!(config.unpin(r"C:\tools\app.exe").is_some());
-        assert!(!config.is_pinned(r"C:\Tools\App.exe"));
-        assert!(config.unpin(r"C:\Tools\App.exe").is_none());
-    }
-
-    #[test]
-    fn shell_uris_survive_pruning_but_missing_files_do_not() {
-        let pins = vec![
-            Pin::new("ms-settings:", "SystemSettings.exe", None),
-            Pin::new(r"C:\does\not\exist.exe", "", None),
-        ];
-        let kept = existing_pins(pins);
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].path, "ms-settings:");
+    fn always_on_widgets_follow_their_switches() {
+        let mut c = Config { right_widgets: Vec::new(), ..Config::default() };
+        c = c.sanitized();
+        assert!(c.right_widgets.iter().any(|w| w.id() == "background-apps"));
+        c.show_windows_update = false;
+        c = c.sanitized();
+        assert!(!c.right_widgets.iter().any(|w| w.id() == "windows-update"));
+        // A widget id this version doesn't know is dropped instead of breaking the column.
+        c.launchpad_widgets.push(WRef::Id("no-such-widget".into()));
+        c = c.sanitized();
+        assert!(!c.launchpad_widgets.iter().any(|w| w.id() == "no-such-widget"));
     }
 }
