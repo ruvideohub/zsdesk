@@ -171,16 +171,9 @@ pub fn group(label: &str, id: &str, items: Vec<MenuItemSpec>) -> MenuItemSpec {
 /// Every entry is a checkable state or a radio choice; actions that open a
 /// window end with "…".
 pub fn interface_settings_menu(ui: &ExplorerUi) -> MenuSpec {
-    menu(vec![layout_settings(ui),tab_settings(ui),preview_settings(ui),search_settings(ui),language_menu(ui.language)])
-}
-
-pub fn language_menu(preference:aura_core::i18n::LanguagePreference)->MenuItemSpec{
-    use aura_core::i18n::LanguagePreference;
-    submenu(aura_core::i18n::text("语言 / Language"),vec![
-        entry(aura_core::i18n::text("跟随系统 / System default"),"language-system",true,preference==LanguagePreference::System),
-        entry(aura_core::i18n::text("简体中文"),"language-zh",true,preference==LanguagePreference::Chinese),
-        entry("English","language-en",true,preference==LanguagePreference::English),
-    ])
+    // No language picker: the interface is Russian, always (see aura-explorer's
+    // language module). The pack the code calls "English" is the Russian one.
+    menu(vec![layout_settings(ui),tab_settings(ui),preview_settings(ui),search_settings(ui)])
 }
 
 fn layout_settings(ui: &ExplorerUi) -> MenuItemSpec {
@@ -309,9 +302,6 @@ pub fn apply_interface_setting(ui: &mut ExplorerUi, choice: &str) -> bool {
         "navigation-this-pc-auto"=>ui.navigation_expand_this_pc=None,
         "navigation-this-pc-expand"=>ui.navigation_expand_this_pc=Some(true),
         "navigation-this-pc-collapse"=>ui.navigation_expand_this_pc=Some(false),
-        "language-system"=>ui.language=aura_core::i18n::LanguagePreference::System,
-        "language-zh"=>ui.language=aura_core::i18n::LanguagePreference::Chinese,
-        "language-en"=>ui.language=aura_core::i18n::LanguagePreference::English,
         "explorer-tray" => ui.explorer_tray=!ui.explorer_tray,
         "interface-bookmarks" => ui.show_bookmarks = !ui.show_bookmarks,
         "bookmarks-placement-top"=>ui.bookmarks_on_right=false,

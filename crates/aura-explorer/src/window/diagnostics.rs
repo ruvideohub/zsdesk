@@ -206,6 +206,21 @@ fn configure_report(hwnd:HWND,pointer:*mut DiagnosticWindow){
     if !live_window(hwnd,pointer){return;}
     if matches!(kind,ReportKind::Search(_)){unsafe{SetTimer(Some(hwnd),REPORT_TIMER,2000,None);}}else{let _=unsafe{KillTimer(Some(hwnd),REPORT_TIMER)};}
 }
+/// Queue-latency watchdog. `MSG::time` is the tick at which the event was posted, so the
+/// difference at dequeue time is exactly how long this thread failed to pump its queue —
+/// which is what makes Windows flip the pointer into the "working in background" cursor.
+/// Only records new records, so a healthy session writes nothing.
+pub(super) fn note_queue_latency(message:&MSG) {
+    use std::sync::atomic::AtomicU32;
+    static WORST:AtomicU32=AtomicU32::new(0);
+    let now=unsafe{windows::Win32::System::SystemInformation::GetTickCount64()}as u32;
+    let waited=now.wrapping_sub(message.time);
+    if waited<150{return;}
+    if WORST.load(Ordering::Relaxed)>=waited{return;}
+    WORST.store(waited,Ordering::Relaxed);
+    record("ui",&format!("queue-latency-{waited}ms"),Some(message.message as i32));
+}
+
 pub(super) fn dispatch(message:&MSG)->bool {
     let root=unsafe{GetAncestor(message.hwnd,GA_ROOT)};
     let owns=WINDOWS.with(|windows|windows.borrow().values().any(|window|*window==root));

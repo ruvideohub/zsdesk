@@ -39,6 +39,11 @@ pub fn scale(value: i32, dpi: u32) -> i32 {
 pub enum CommandId { New, Cut, Copy, Paste, Rename, Share, Delete, Sort, View, More, PreviewPane, DetailsPane }
 
 impl CommandId {
+    /// Every command, in enum order: the host measures labels against this list.
+    pub const ALL: [CommandId; 12] = [
+        Self::New, Self::Cut, Self::Copy, Self::Paste, Self::Rename, Self::Share, Self::Delete,
+        Self::Sort, Self::View, Self::More, Self::PreviewPane, Self::DetailsPane,
+    ];
     pub const fn preference(self) -> CommandBarItem {
         match self {
             Self::New => CommandBarItem::New, Self::Cut => CommandBarItem::Cut, Self::Copy => CommandBarItem::Copy,
@@ -63,7 +68,10 @@ impl CommandId {
         })
     }
     pub const fn has_dropdown(self) -> bool { matches!(self, Self::New | Self::Sort | Self::View) }
-    const fn width(self) -> i32 {
+    /// Smallest width the button is laid out at, in DIPs. Russian labels are wider
+    /// than the sizes these were picked for, so the host measures the real text
+    /// (`ChromeInput::command_widths`) and the larger of the two wins.
+    pub const fn width(self) -> i32 {
         match self { Self::New | Self::Sort | Self::View => 82, Self::PreviewPane => 72, Self::DetailsPane => 100, _ => 40 }
     }
 }
@@ -104,6 +112,25 @@ pub struct ChromeInput<'a> {
     pub status_bar: bool,
     /// Measured chip widths in pixels (icon + text + padding).
     pub bookmark_widths: &'a [i32],
+    /// Measured command-bar button widths in pixels (padding + icon + gap + text +
+    /// trailing space), indexed like [`CommandId::ALL`]. Empty: use the built-in
+    /// widths, which is what every label-less or unmeasured host gets.
+    pub command_widths: &'a [i32],
+}
+
+impl<'a> ChromeInput<'a> {
+    /// Laid-out width of a command-bar button: the measured label if the host has one,
+    /// never less than the built-in minimum.
+    fn command_width(&self, id: CommandId) -> i32 {
+        let base = scale(id.width(), self.dpi);
+        let measured = CommandId::ALL
+            .iter()
+            .position(|candidate| *candidate == id)
+            .and_then(|index| self.command_widths.get(index))
+            .copied()
+            .unwrap_or(0);
+        base.max(measured)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -387,7 +414,7 @@ impl ChromeLayout {
         let gap = s(2);
         let group_gap = s(13);
         let count: usize = groups.iter().map(|(_, items)| items.len()).sum();
-        let natural_width: i32 = groups.iter().flat_map(|(_, items)| items).map(|id| s(id.width())).sum::<i32>()
+        let natural_width: i32 = groups.iter().flat_map(|(_, items)| items).map(|id| input.command_width(*id)).sum::<i32>()
             + gap * count.saturating_sub(1) as i32 + group_gap * groups.len().saturating_sub(1) as i32;
         let compact = natural_width > available;
         layout.compact_commands = compact;
@@ -396,7 +423,7 @@ impl ChromeLayout {
         let mut cx = margin;
         if input.command_bar.visible && available > 0 {
             for (group_index, group) in &groups {
-                let button_width = |id: CommandId| if compact { s(40) } else { s(id.width()) };
+                let button_width = |id: CommandId| if compact { s(40) } else { input.command_width(id) };
                 let first_width = button_width(group[0]).min(available);
                 let panes_on_right = *group_index == COMMAND_GROUPS.len() - 1 && !compact;
                 if panes_on_right {
@@ -656,7 +683,8 @@ mod tests {
     fn input(width: i32, tabs: usize, active: usize, dpi: u32) -> ChromeInput<'static> {
         ChromeInput { tab_placement:aura_core::model::explorer::TabPlacement::Top, side_tabs_width:210,side_tabs_compact:true,width, height: 800, dpi, caption_width: scale(138, dpi), caption_button: None,
             tab_count: tabs, active_tab: active, show_tab_list:true, show_tree: true, tree_width: scale(220, dpi), show_bookmarks: true,bookmarks_on_right:false,bookmarks_width:scale(210,dpi),
-            command_bar: &DEFAULT_COMMAND_BAR, status_bar: true, bookmark_widths: &[], search_panel_open: false }
+            command_bar: &DEFAULT_COMMAND_BAR, status_bar: true, bookmark_widths: &[], search_panel_open: false,
+            command_widths: &[] }
     }
 
     #[test]fn bookmark_panel_resizes_without_covering_the_view_or_side_tabs(){

@@ -2235,7 +2235,6 @@ impl DesktopHost {
             entry(&label, &format!("opacity-{opacity}"), true, s.opacity == opacity)
         };
         vec![
-            aura_ui::menus::language_menu(crate::storage::load(&self.explorer_config).map(|s|s.ui.language).unwrap_or_default()),
             submenu(aura_core::i18n::text("配置目录"),vec![
                 entry(aura_core::i18n::text("选择默认配置目录…"),"profile-folder",true,false),
                 entry(aura_core::i18n::text("恢复默认配置目录"),"profile-default",true,false),
@@ -2284,10 +2283,6 @@ impl DesktopHost {
     /// Runs a fence/tray menu command. Returns work that needs a modal context.
     pub fn menu_command(&mut self, fence_id: Option<u64>, id: &str, point: POINT) -> After {
         let fid = fence_id.unwrap_or(0);
-        if let Some(language)=crate::language::choice(id){
-            if let Err(e)=crate::language::save_and_apply(&self.explorer_config,language){self.show_notice(fid,e.to_string());}
-            return After::Nothing;
-        }
         match id {
             "folder-system-menu" if self.target_folder(fid).is_some()=>return After::FolderSystemMenu{fence:fid,point},
             "paste" if self.target_folder(fid).is_some()=>return After::Verb{fence:fid,verb:"paste",background:true},

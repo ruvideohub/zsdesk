@@ -232,6 +232,7 @@ unsafe fn run_window(session: ExplorerSession, config_path: PathBuf, selection: 
     loop {
         let result = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
         if result <= 0 { break; }
+        diagnostics::note_queue_latency(&msg);
         if crate::utility_panel::dispatch_if_owned(&msg){continue;}
         if matches!(msg.message,WM_KEYDOWN|WM_SYSKEYDOWN|WM_LBUTTONDOWN|WM_LBUTTONDBLCLK|WM_RBUTTONDOWN|WM_MBUTTONDOWN|WM_XBUTTONDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL|WM_POINTERDOWN){
             aura_windows::shell::file_transfer::note_user_input(msg.hwnd);
@@ -400,6 +401,8 @@ struct WindowState {
     session_ending:bool,
     shell_registry: Option<crate::shell_window_registry::Registry>,
     shell_registration_warning: bool,
+    /// When the folder-integration registry state was last read; see `SHELL_RECHECK`.
+    shell_checked: Option<std::time::Instant>,
     modern: bool,
     browser: Option<ExplorerBrowserHost>,
     destroyed:bool,
@@ -449,6 +452,8 @@ struct WindowState {
     view_status: ViewStatus,
     view_mode: (i32, i32),
     bookmark_widths: Vec<i32>,
+    /// Measured command-bar widths, indexed like `CommandId::ALL`.
+    command_widths: Vec<i32>,
     bookmark_order:Vec<usize>,
     drop_registration: Option<DropRegistration>,
     drop_zones: Rc<Cell<DropZones>>,
@@ -501,7 +506,7 @@ impl WindowState {
             crumbs: Vec::new(), crumb_slots: Vec::new(), crumbs_for: None, address_editing: false, open_chevron: None,
             hover: Hit::None, hover_crumb: None, pressed: None, tracking_mouse: false, right_tab_press:None, tab_drag: None,bookmark_drag:None, splitter_drag: None,bookmark_resize:None,
             side_tab_resize:None,side_tab_scroll_drag:None,side_tab_first:None,side_tab_wheel:0,
-            icons: HashMap::new(), view_status: ViewStatus::default(), view_mode: (0, 0), bookmark_widths: Vec::new(),bookmark_order:Vec::new(),
+            icons: HashMap::new(), view_status: ViewStatus::default(), view_mode: (0, 0), bookmark_widths: Vec::new(),command_widths:Vec::new(),bookmark_order:Vec::new(),
             drop_registration: None, drop_zones: Rc::new(Cell::new(DropZones::default())), last_focus: HWND::default(),
             pending: None, queued: None, shown_tab: None, closed_tabs: Vec::new(), status: String::new(),
             launch_selection, launch_selections:Vec::new(), deferred_selection:None, open_requests: Default::default(), search_scope: None, search_result: None,
@@ -513,7 +518,7 @@ impl WindowState {
             session_ownership:None,
             preview_rect:None,
             shell_registry:None,
-            shell_registration_warning:false,
+            shell_registration_warning:false,shell_checked:None,
         }
     }
 
@@ -547,7 +552,7 @@ impl WindowState {
         unsafe { self.update_font(); }
         let handler = Rc::new(ChromeDrop { hwnd: hwnd.0 as isize, zones: self.drop_zones.clone(), accepted: Cell::new(false) });
         self.drop_registration = unsafe { DropRegistration::register(hwnd, handler) }.ok();
-        self.measure_bookmarks();
+        self.measure_commands();self.measure_bookmarks();
         self.relayout();
         let browser = self.create_browser()?;
         self.browser = Some(browser);
@@ -639,6 +644,7 @@ impl WindowState {
             show_tab_list:self.session.ui.tab_count_button_visible(),
             show_tree: self.session.ui.show_tree && self.tree.is_some() && (!self.session.ui.show_preview || width>=self.s(if self.session.ui.tab_placement==aura_core::model::explorer::TabPlacement::Top{900}else{1110})), tree_width: self.s(self.session.ui.tree_width),
             show_bookmarks: self.session.ui.show_bookmarks,bookmarks_on_right:self.session.ui.bookmarks_on_right,bookmarks_width:self.s(self.session.ui.bookmarks_width), status_bar: true, bookmark_widths: &self.bookmark_widths,
+            command_widths: &self.command_widths,
         };
         let mut layout=ChromeLayout::new(&input);
         layout.retain_tab_viewport(&self.layout,self.session.tabs.len(),self.session.active_tab);
@@ -700,7 +706,7 @@ impl WindowState {
             self.dpi = dpi;
             unsafe { self.update_font(); }
             self.icons.clear();
-            self.measure_bookmarks();
+            self.measure_commands();self.measure_bookmarks();
         }
         // Keep native panes at their normal dimensions while the main window
         // is iconic; a zero-sized Shell view can retain stale layout on restore.
@@ -833,7 +839,7 @@ impl WindowState {
                 if self.session.bookmarks!=bookmarks{
                     self.session.bookmarks=bookmarks.clone();
                     if self.rename_id.is_some()&&self.renamed_bookmark_index().is_none(){unsafe{self.cancel_rename();}}
-                    self.measure_bookmarks();self.relayout();self.position_children();
+                    self.measure_commands();self.measure_bookmarks();self.relayout();self.position_children();
                 }
                 self.bookmarks_saved=bookmarks;
             },
@@ -1493,7 +1499,7 @@ impl WindowState {
             WM_DIAGNOSTIC=>if lp.0!=0{let request=unsafe{Box::from_raw(lp.0 as *mut crate::instance::DiagnosticRequest)};let _=self.write_diagnostics(&request);},
             crate::language::CHANGED=>{
                 if let Ok(saved)=storage::load(&self.config_path){self.session.ui.language=saved.ui.language;}
-                self.crumbs_for=None;self.measure_bookmarks();self.relayout();self.position_children();
+                self.crumbs_for=None;self.measure_commands();self.measure_bookmarks();self.relayout();self.position_children();
                 unsafe{self.update_address();}self.refresh_status();self.invalidate();
             },
             WM_TAB_EMPHASIS_CHANGED=>if let Ok(saved)=storage::load(&self.config_path){

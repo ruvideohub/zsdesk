@@ -32,9 +32,30 @@ pub(super) fn same_location(left:&ShellLocation,right:&ShellLocation)->bool {
     }
 }
 
+/// How often the folder-integration state is re-read from the registry. It only changes
+/// when the user installs, repairs or uninstalls the handler, yet the check reads a few
+/// dozen registry values; it used to run on the 1.2 s status tick, i.e. constantly on the
+/// UI thread, which is exactly the kind of background work that keeps the CPU warm and the
+/// pointer flipping into the busy cursor.
+const SHELL_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
+
 impl WindowState {
     pub(super) fn update_shell_registry(&mut self) {
         if cfg!(test)||self.picker.is_some(){return;}
+        let due=self.shell_checked.is_none_or(|checked:std::time::Instant|checked.elapsed()>=SHELL_RECHECK);
+        if due {
+            self.shell_checked=Some(std::time::Instant::now());
+            if !self.recheck_shell_ownership(){return;}
+        }
+        if let Some(registry)=&self.shell_registry {
+            if let Some(error)=registry.take_error(){diagnostics::record("shell-registration",&error,None);}
+        }
+        self.publish_shell_windows();
+    }
+
+    /// The expensive half: is this copy still the registered folder handler? Returns false
+    /// when it is not, in which case no shell window may be published.
+    fn recheck_shell_ownership(&mut self) -> bool {
         let default_profile=std::path::absolute(&self.config_path).ok().zip(std::path::absolute(storage::config_path()).ok())
             .is_some_and(|(actual,default)|crate::explorer_forwarder::same_path(&actual,&default));
         let executable=std::env::current_exe().ok();
@@ -46,7 +67,7 @@ impl WindowState {
                 self.show_message(aura_core::i18n::text("文件夹接管的处理程序或隐藏标志已被修改；可在“系统集成”中恢复后重新启用。").into());
             }
             self.shell_registration_warning=changed;
-            return;
+            return false;
         }
         self.shell_registration_warning=false;
         if self.shell_registry.is_none(){
@@ -55,11 +76,11 @@ impl WindowState {
                 Err(error)=>diagnostics::record("shell-registration","start-failed",Some(error.code().0)),
             }
         }
-        if let Some(registry)=&self.shell_registry {
-            if let Some(error)=registry.take_error(){diagnostics::record("shell-registration",&error,None);}
-        }
-        self.publish_shell_windows();
+        true
     }
+
+    /// Ask for a re-read on the next tick, e.g. right after the settings changed.
+    pub(super) fn invalidate_shell_registry(&mut self) { self.shell_checked=None; }
 
     pub(super) fn publish_shell_windows(&mut self) {
         if self.shell_registry.is_none(){return;}

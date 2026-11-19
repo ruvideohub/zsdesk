@@ -42,7 +42,7 @@ impl WindowState {
         unsafe { self.rebuild_bookmarks(); }
     }
     pub(super) unsafe fn rebuild_bookmarks(&mut self) {
-        self.measure_bookmarks();
+        self.measure_commands();self.measure_bookmarks();
         unsafe { self.resize(); }
     }
     pub(super) unsafe fn open_bookmark(&mut self, index: usize, new_tab: bool) {

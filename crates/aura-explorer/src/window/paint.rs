@@ -453,6 +453,25 @@ impl WindowState {
         self.crumb_slots.iter().find(|s| s.rect.contains(x, y)).map(|s| s.part)
     }
 
+    /// Command-bar buttons sized to their real labels. Russian is wider than the Chinese
+    /// the fixed widths were picked for, so a label that fits there gets cut here; the bar
+    /// wraps onto a second row instead.
+    pub(super) fn measure_commands(&mut self) {
+        let Some(gfx) = self.gfx.as_ref() else { return };
+        let style = self.ui_style();
+        let head = self.s(8) + self.s(20) + self.s(6);
+        let widths: Vec<i32> = CommandId::ALL.iter().map(|&id| match id.label() {
+            None => 0,
+            Some(label) => {
+                let tail = if id.has_dropdown() { self.s(20) } else { self.s(6) };
+                // Round up: the paint side subtracts exactly `tail`, so a truncated
+                // fractional width would still clip the last pixel of the label.
+                (gfx.measure(label, &style, 480.0).0.ceil() as i32 + 2 + head + tail).max(self.s(id.width()))
+            }
+        }).collect();
+        self.command_widths = widths;
+    }
+
     pub(super) fn measure_bookmarks(&mut self) {
         self.bookmark_order=self.session.visible_bookmarks();
         let Some(gfx) = self.gfx.as_ref() else { return };

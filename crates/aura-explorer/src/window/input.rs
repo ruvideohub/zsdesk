@@ -842,12 +842,6 @@ impl WindowState {
                 Err(error)=>self.show_message(aura_core::tr_format!("无法保存标签显示设置：{error:#}", error=error)),
             }return;
         }
-        if let Some(language)=crate::language::choice(id){
-            match crate::language::save_and_apply(&self.config_path,language){
-                Ok(())=>{self.session.ui.language=language;self.show_message(aura_core::i18n::text("界面语言已切换").into());},
-                Err(error)=>self.show_message(aura_core::tr_format!("无法保存语言设置：{error:#}", error=error)),
-            }return;
-        }
         if id=="explorer-tray"{
             let enabled=!storage::load(&self.config_path).map_or(self.session.ui.explorer_tray,|saved|saved.ui.explorer_tray);
             match storage::save_explorer_tray(&self.config_path,enabled){Ok(())=>{self.session.ui.explorer_tray=enabled;crate::runtime::refresh_tray();},Err(error)=>self.show_message(aura_core::tr_format!("无法保存托盘设置：{error:#}", error=error))}return;
@@ -868,7 +862,7 @@ impl WindowState {
         }
         self.save();
         if id=="explorer-tray"{crate::runtime::refresh_tray();}
-        self.measure_bookmarks();self.relayout();self.position_children();
+        self.measure_commands();self.measure_bookmarks();self.relayout();self.position_children();
         if id=="everything-folder-sizes" {self.poll_folder_sizes();}
         if id.starts_with("search-backend-")||id.starts_with("search-native-")||id=="search-everything-auto"{self.search_backend_changed();}
         if (id=="navigation-auto-expand" || id=="navigation-expand-system" || id=="interface-navigation") && self.pending.is_none() && self.session.ui.show_tree {
@@ -903,6 +897,9 @@ impl WindowState {
         let backup = self.config_path.with_file_name("takeover-backup.json");
         match integration::apply(level, &exe, &backup) {
             Ok(()) => {
+                // The registry just changed under us: re-read it on the next tick instead
+                // of waiting out the slow beat.
+                self.invalidate_shell_registry();
                 let message=match level {
                 Integration::Off => aura_core::i18n::text("已恢复接管前的文件夹设置").into(),
                 Integration::ContextMenu => aura_core::i18n::text("已添加右键菜单“使用 AuraExplorer 打开”").into(),
