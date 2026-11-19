@@ -328,7 +328,7 @@ pub static ALL: &[Def] = &[
     // ------------------------------------------------------------ System
     tall(w("top-cpu", "Top CPU", "The apps using the most processor time.", &[System], Face::List { conn: "top_cpu", badge: B_CPU, open: "taskmgr" })),
     tall(w("top-memory", "Top Memory", "The apps using the most memory.", &[System], Face::List { conn: "top_memory", badge: B_MEM, open: "taskmgr" })),
-    w("resource-monitor", "Resource Monitor", "CPU and memory at a glance.", &[Highlights, System], Face::Sys(SysKind::Resource)),
+    dock(w("resource-monitor", "Resource Monitor", "CPU and memory at a glance.", &[Highlights, System], Face::Sys(SysKind::Resource)), 3.0),
     dock(w("cpu", "CPU", "Processor load.", &[System], Face::Sys(SysKind::Cpu)), 2.0),
     dock(w("memory", "Memory", "Memory in use.", &[System], Face::Sys(SysKind::Memory)), 2.0),
     w("network", "Network", "Download and upload speed.", &[System], Face::Sys(SysKind::Network)),

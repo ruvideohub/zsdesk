@@ -2273,12 +2273,23 @@ fn sys(c: &Canvas, out: &mut Painted, k: SysKind, x: &Ctx, sh: Shape) {
         SysKind::Resource => match sh {
             Shape::Mini => compact_sum(c, &Sum::new(Vis::Ring(cpu / 100.0, BLUE, format!("{cpu:.0}")), "", ""), sh),
             Shape::Dock => {
-                let r = c.h * 0.3;
-                c.ring(c.h / 2.0, c.h / 2.0, r, 4.0, cpu / 100.0, BLUE);
-                let tx = c.h;
-                let fs = (c.h * 0.22).max(10.0);
-                c.tw(&format!("CPU {cpu:.0}%"), tx, c.h * 0.2, fs, 600, c.text1(), c.w - tx - 6.0);
-                c.tw(&format!("RAM {:.0}%", memf * 100.0), tx, c.h * 0.54, fs, 600, c.text2(), c.w - tx - 6.0);
+                // Ring on the left, two readings on the right. The panel gives this face a
+                // fixed width, so the type shrinks until both readings fit instead of the
+                // right-hand digits getting clipped at medium size.
+                let r = (c.h * 0.3).max(9.0);
+                c.ring(r + 5.0, c.h / 2.0, r, 4.0, cpu / 100.0, BLUE);
+                let tx = r * 2.0 + 12.0;
+                let avail = (c.w - tx - 6.0).max(20.0);
+                let top = format!("CPU {cpu:.0}%");
+                let bottom = format!("RAM {:.0}%", memf * 100.0);
+                let mut fs = (c.h * 0.22).max(10.0);
+                while fs > 8.5
+                    && (c.measure(&top, fs, 600, Font::Text).0 > avail || c.measure(&bottom, fs, 600, Font::Text).0 > avail)
+                {
+                    fs -= 0.5;
+                }
+                c.tw(&top, tx, c.h * 0.2, fs, 600, c.text1(), avail);
+                c.tw(&bottom, tx, c.h * 0.54, fs, 600, c.text2(), avail);
             }
             Shape::Small => {
                 let r = 28.0;

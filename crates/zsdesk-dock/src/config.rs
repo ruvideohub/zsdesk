@@ -159,6 +159,8 @@ pub struct Config {
     pub hide_delay_ms: u32,
     /// Hide the Windows taskbar while Laminar runs (a watchdog restores it on exit or crash).
     pub hide_windows_taskbar: bool,
+    /// Hide the panel while a full-screen app (a game, a video) is in front.
+    pub hide_fullscreen: bool,
     /// Clicking the app that is already in front minimizes it (Windows behaviour).
     pub click_to_minimize: bool,
     /// Pressing the Windows key on its own opens Launchpad instead of Start.
@@ -238,6 +240,7 @@ impl Default for Config {
             reveal_delay_ms: 120,
             hide_delay_ms: 450,
             hide_windows_taskbar: true,
+            hide_fullscreen: true,
             click_to_minimize: true,
             win_key_launchpad: true,
             show_on_all_displays: true,

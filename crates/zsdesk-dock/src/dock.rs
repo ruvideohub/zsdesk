@@ -512,6 +512,10 @@ struct Dock {
     windows: Vec<Win>,
     running_order: Vec<String>,
     fg: HWND,
+    /// Set while the panel is hidden because a full-screen app is in front.
+    hidden_for_fullscreen: bool,
+    /// Windows changed light/dark: repaint everything on the next tick.
+    retheme_pending: bool,
     resolved: HashMap<String, Option<String>>,
     // interaction
     hovering: bool,
@@ -2795,7 +2799,7 @@ impl Dock {
                 },
                 WM_LBUTTONUP => match self.preview.on_click(x, y) {
                     Some(PreviewHit::Card(h)) => {
-                        self.hide_preview();
+                        self.preview.hide();
                         tracker::activate(h);
                     }
                     Some(PreviewHit::Close(h)) => {
@@ -4386,11 +4390,20 @@ impl Dock {
     }
 
     /// Redraw everything in the new theme (Windows switched light/dark, or the setting changed).
+    ///
+    /// Runs on the next tick after the switch, so it never rebuilds the panel under a click
+    /// that is still being handled (that is what left the panel in pieces when the dark-mode
+    /// tile was pressed). Everything that baked a colour is rebuilt against the new theme.
     fn retheme(&mut self) {
+        // Icons and widget bitmaps were painted for the old theme.
+        self.brushes.clear();
+        self.update_glass();
         self.refresh(true);
         let _ = self.build_label();
+        self.restart_clock();
         if self.launchpad.open {
-            // Panels take their glass tint when opened: reopen, keeping the Settings view.
+            // Panels take their glass tint when they open: reopen with the new tint,
+            // keeping the Launchpad Settings section the user was on.
             let settings = self.launchpad.settings;
             self.close_launchpad();
             self.open_launchpad();
@@ -4398,6 +4411,12 @@ impl Dock {
                 self.launchpad.settings = Some(sec);
                 self.lp_render("all");
             }
+        }
+        self.paint_dock_widgets(true);
+        self.apply_region();
+        // Windows repaints Explorer on a theme flip, which can bring its taskbar back.
+        if self.integrate && self.cfg.hide_windows_taskbar && self.taskbar_hidden {
+            taskbar::set_visible(false);
         }
     }
 
@@ -4631,6 +4650,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 }
                 if wp.0 as u32 == EVENT_SYSTEM_FOREGROUND {
                     d.fg = tracker::foreground();
+                    // A game or a video went full screen: get out of its way.
+                    d.update_fullscreen();
                     // Another program came to the front (from the dock, Alt+Tab, a
                     // notification...): leave Launchpad. Its own focus-loss message isn't
                     // enough, because Windows doesn't always give Launchpad focus to lose.
@@ -4728,7 +4749,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 T_WEATHER => {
                     d.services.send(Req::Weather(d.cfg.weather_lat, d.cfg.weather_lon));
                 }
-                T_WIDGETS => d.widget_tick(),
+                T_WIDGETS => {
+                    if d.retheme_pending {
+                        d.retheme_pending = false;
+                        d.retheme();
+                    }
+                    d.widget_tick();
+                    // Some games go full screen without a foreground event.
+                    d.update_fullscreen();
+                }
                 T_LP_HOLD => unsafe {
                     let _ = KillTimer(Some(hwnd), T_LP_HOLD);
                     // Held still: lift the card so it's clearly ready to move.
@@ -4852,7 +4881,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             if area == "ImmersiveColorSet" {
                 with_dock(|d| {
                     if d.update_theme() {
-                        d.retheme();
+                        // Rebuilding the glass must not happen inside whatever click caused the
+                        // switch: mark it and repaint on the next tick.
+                        d.retheme_pending = true;
                     }
                 });
             }
@@ -5026,6 +5057,76 @@ impl Dock {
     fn tick_clock(&mut self) {
         if let Some(clock) = self.clock.as_mut() {
             let _ = clock.tick(&self.compositor, &self.gfx);
+        }
+    }
+
+    /// Is a full-screen app in front of this display?
+    ///
+    /// Games, video players and presentations cover the whole monitor and must not get a
+    /// panel drawn over them. A window counts when it takes the whole monitor and is not
+    /// merely maximized: maximized windows stay behind the panel, the way a taskbar does,
+    /// while exclusive and borderless full screen gets the display to itself.
+    fn fullscreen_in_front(&self) -> bool {
+        let fg = self.fg;
+        if fg.0.is_null() || is_own_window(fg) {
+            return false;
+        }
+        unsafe {
+            if !IsWindowVisible(fg).as_bool() || IsIconic(fg).as_bool() || IsZoomed(fg).as_bool() {
+                return false;
+            }
+            let mut window = RECT::default();
+            if GetWindowRect(fg, &mut window).is_err() {
+                return false;
+            }
+            // The desktop and the taskbar are not apps.
+            let mut name = [0u16; 64];
+            let length = GetClassNameW(fg, &mut name).max(0) as usize;
+            let class = String::from_utf16_lossy(&name[..length.min(name.len())]);
+            if matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "ZsDesktop" | "ZSFence") {
+                return false;
+            }
+            if tracker::is_explorer_taskbar(fg) {
+                return false;
+            }
+            // Two pixels of slack: full-screen windows often report one pixel less.
+            let monitor = self.monitor;
+            let slack = 2;
+            window.left <= monitor.left + slack
+                && window.top <= monitor.top + slack
+                && window.right >= monitor.right - slack
+                && window.bottom >= monitor.bottom - slack
+        }
+    }
+
+    /// Show the panel only while no full-screen app is in front.
+    fn update_fullscreen(&mut self) {
+        self.fg = tracker::foreground();
+        let hidden = self.cfg.hide_fullscreen && self.fullscreen_in_front();
+        if hidden == self.hidden_for_fullscreen {
+            return;
+        }
+        self.hidden_for_fullscreen = hidden;
+        if hidden {
+            trace!("full-screen app in front: hiding the panel");
+            if self.launchpad.open {
+                self.close_launchpad();
+            }
+            self.menu.hide(false);
+            self.menu_open = false;
+            self.preview.hide();
+            self.stack_view.hide();
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_HIDE);
+            }
+        } else {
+            trace!("full-screen app gone: showing the panel");
+            unsafe {
+                let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            }
+            self.refresh(true);
+            self.resync_hover();
+            self.apply_region();
         }
     }
 
@@ -5208,6 +5309,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             windows: Vec::new(),
             running_order: Vec::new(),
             fg: HWND::default(),
+            hidden_for_fullscreen: false,
+            retheme_pending: false,
             resolved: HashMap::new(),
             hovering: false,
             hover: None,
