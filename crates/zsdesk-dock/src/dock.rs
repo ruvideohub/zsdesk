@@ -195,7 +195,7 @@ const CMD_CLOCK_HIDE: usize = 3623;
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
 /// Widgets one click away from the panel's own menu: the everyday ones.
-const DOCK_WIDGETS: [&str; 8] = [
+const DOCK_WIDGETS: [&str; 9] = [
     "clock",
     "weather-hourly",
     "month",
@@ -204,6 +204,7 @@ const DOCK_WIDGETS: [&str; 8] = [
     "now-playing-compact",
     "network",
     "control-tiles",
+    "control-center",
 ];
 /// The card's three sizes, as multipliers.
 const CLOCK_SCALES: [f32; 3] = [0.85, 1.0, 1.2];
@@ -359,6 +360,22 @@ impl Geo {
 
     fn center_abs(&self, i: usize) -> f32 {
         self.x0 + self.p + self.left[i] + self.width[i] / 2.0
+    }
+
+    /// Which item is under (x, y), measured in the unmagnified layout: hovering must not
+    /// depend on where the animation happens to be this frame.
+    fn hit_base(&self, x: f32, y: f32) -> Option<usize> {
+        let top = self.y0 + self.p + self.b - self.m - self.g;
+        for i in 0..self.left.len() {
+            if !(self.icon[i] || self.wid[i]) {
+                continue;
+            }
+            let l = self.x0 + self.p + self.left[i];
+            if x >= l && x < l + self.width[i] && y >= top {
+                return Some(i);
+            }
+        }
+        None
     }
 
     /// Rust mirror of the compositor expressions: (shelf x, per-item scale).
@@ -602,6 +619,8 @@ struct Dock {
     wviews: HashMap<usize, WView>,
     /// Pointer position (window px) at the last move or click.
     ptr_xy: (f32, f32),
+    /// Where the magnification peak sits: the centre of the slot under the pointer.
+    anchor_x: f32,
     /// Pin index of the widget a dock menu is about.
     menu_widget: Option<usize>,
     /// Launchpad widget (list index) a menu is about.
@@ -1032,7 +1051,8 @@ impl Dock {
 
         self.root.SetSize(v2(self.geo.win_w, self.geo.win_h))?;
         if !self.hovering {
-            self.ptr.InsertScalar(&hs("PointerX"), self.geo.x0 + self.geo.shelf_w / 2.0)?;
+            self.anchor_x = self.geo.x0 + self.geo.shelf_w / 2.0;
+            self.ptr.InsertScalar(&hs("PointerX"), self.anchor_x)?;
         }
 
         let geo = &self.geo;
@@ -1651,9 +1671,19 @@ impl Dock {
             self.apply_region();
             let _ = self.animate_amount(1.0, 160);
         }
-        let _ = self.ptr.InsertScalar(&hs("PointerX"), x);
+        // Which item is under the pointer, measured before any magnification: the answer
+        // doesn't change as the icons grow, so neither does the layout.
+        let hit = self.geo.hit_base(x, y);
+        // The peak snaps to that item's centre and stays there for as long as the pointer
+        // stays on it. Following the pointer per pixel made the shelf slide under the
+        // cursor and the whole bar twitch; macOS holds still, and so do we.
+        // center_abs() is the unmagnified centre of a slot: the peak snaps to it.
+        let anchor = hit.map(|i| self.geo.center_abs(i)).unwrap_or(self.anchor_x);
+        if (anchor - self.anchor_x).abs() > 0.5 {
+            self.anchor_x = anchor;
+            let _ = self.ptr.InsertScalar(&hs("PointerX"), anchor);
+        }
         self.ptr_xy = (x, y);
-        let hit = self.geo.hit(x, y, 1.0);
         if hit != self.hover {
             let launch = |h: Option<usize>| h.map(|i| self.items.get(i).map(|it| it.kind == Kind::Launch).unwrap_or(false)).unwrap_or(false);
             self.start_hover(launch(hit));
@@ -1678,7 +1708,7 @@ impl Dock {
             return false;
         }
         // Top edge of whatever is drawn at x (magnified item, or the shelf).
-        let (dx, scales) = g.layout(x, if self.hovering { 1.0 } else { 0.0 });
+        let (dx, scales) = g.layout(if self.hovering { self.anchor_x } else { x }, if self.hovering { 1.0 } else { 0.0 });
         let mut acc = 0.0;
         let mut top = g.y0;
         for i in 0..g.left.len() {
@@ -1858,7 +1888,7 @@ impl Dock {
 
     /// Right-click: build the menu for whatever is under the pointer and open it above the dock.
     fn context_menu(&mut self, x: f32, y: f32, anchor: Option<POINT>) {
-        let hit = self.geo.hit(x, y, if self.hovering { 1.0 } else { 0.0 });
+        let hit = self.geo.hit(if self.hovering { self.anchor_x } else { x }, y, if self.hovering { 1.0 } else { 0.0 });
         let item = hit.map(|i| self.items[i].clone());
         let app = item.clone().filter(|it| it.kind == Kind::App);
         let wins = app.as_ref().map(|it| self.item_windows(it)).unwrap_or_default();
@@ -1986,7 +2016,8 @@ impl Dock {
 
     /// Index into cfg.pins of a separator the pointer is on, if any.
     fn separator_at(&self, x: f32) -> Option<usize> {
-        let (dx, scales) = self.geo.layout(x, if self.hovering { 1.0 } else { 0.0 });
+        let px = if self.hovering { self.anchor_x } else { x };
+        let (dx, scales) = self.geo.layout(px, if self.hovering { 1.0 } else { 0.0 });
         let mut acc = 0.0;
         for (i, it) in self.items.iter().enumerate() {
             let l = dx + self.geo.p + self.geo.left[i] + acc;
@@ -2912,7 +2943,8 @@ impl Dock {
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
         let win_top = self.monitor.bottom - self.geo.win_h as i32;
-        let (cx, sc) = self.geo.slot_center((p.x - self.monitor.left) as f32, if self.hovering { 1.0 } else { 0.0 }, i);
+        let cx_px = if self.hovering { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
+        let (cx, sc) = self.geo.slot_center(cx_px, if self.hovering { 1.0 } else { 0.0 }, i);
         let icon_top = self.geo.y0 + self.geo.p + self.geo.b - self.geo.b * sc;
         let bottom = win_top + (icon_top - 8.0 * self.scale) as i32;
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
@@ -3918,9 +3950,9 @@ impl Dock {
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
         let win_top = self.monitor.bottom - self.geo.win_h as i32;
-        let local_x = (p.x - self.monitor.left) as f32;
         // Drags don't magnify the icons.
         let amount = if self.hovering && self.file_drag.is_none() { 1.0 } else { 0.0 };
+        let local_x = if amount > 0.0 { self.anchor_x } else { (p.x - self.monitor.left) as f32 };
         let (cx, sc) = self.geo.slot_center(local_x, amount, i);
         self.drag_preview = self.file_drag.is_some();
         let icon_top = self.geo.y0 + self.geo.p + self.geo.b - self.geo.b * sc;
@@ -5275,6 +5307,10 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
     if apps::ensure_own_pin(&mut cfg) && Config::exists() {
         cfg.save();
     }
+    // The control centre's own button: added once, and only if the panel never had it.
+    if cfg.ensure_control_center_pin() && Config::exists() {
+        cfg.save();
+    }
 
     unsafe {
         TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), std::sync::atomic::Ordering::Relaxed);
@@ -5428,6 +5464,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             hub: crate::widgets::Hub::new(hwnd),
             wviews: HashMap::new(),
             ptr_xy: (0.0, 0.0),
+            anchor_x: 0.0,
             menu_widget: None,
             menu_lpw: None,
             lpw_press: None,

@@ -120,7 +120,10 @@ impl Dock {
     pub(super) fn widget_click(&mut self, i: usize) {
         let Some(v) = self.wviews.get(&i) else { return };
         let (x, y) = self.ptr_xy;
-        let (left, top, sc) = self.geo.item_rect(x, if self.hovering { 1.0 } else { 0.0 }, i);
+        // The rect has to come from the layout that was drawn: while hovering that is the
+        // anchored one, not whatever the raw pointer would produce.
+        let px = if self.hovering { self.anchor_x } else { x };
+        let (left, top, sc) = self.geo.item_rect(px, if self.hovering { 1.0 } else { 0.0 }, i);
         let k = self.scale * sc;
         let (lx, ly) = ((x - left) / k, (y - top) / k);
         trace!("widget {} clicked at ({lx:.0}, {ly:.0})", v.def.id);
@@ -219,6 +222,7 @@ impl Dock {
                 self.services.send(Req::SetVolume(frac));
             }
             WAct::Brightness => self.hub.set_brightness(frac),
+            WAct::ControlCenter => self.toggle_control_center(),
             WAct::SetWallpaper => {
                 if let Some(p) = self.hub.feed("wallpaper").and_then(|f| f.extra.get("image_path").cloned()) {
                     self.hub.apply_wallpaper(p);

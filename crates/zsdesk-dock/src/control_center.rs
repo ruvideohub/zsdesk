@@ -85,6 +85,8 @@ pub struct Data<'a> {
     pub tray: &'a [(u64, String)],
     pub mic_muted: bool,
     pub brightness: Option<f32>,
+    /// The display takes no DDC/CI brightness commands: the row shows a dash.
+    pub brightness_unsupported: bool,
     pub night_light: bool,
     pub airplane: bool,
     pub dnd: bool,
@@ -316,6 +318,10 @@ fn separator(c: &Canvas, y: f32) {
     c.rr(PAD, y, c.w - 2.0 * PAD, 1.0, 0.0, c.sep());
 }
 
+/// Plates inside the card. The shared 6% ink is right on a glass shelf, but on a card this
+/// light it disappears; 11% still reads as a surface.
+const PLATE: Col = (0.0, 0.0, 0.0, 0.11);
+
 /// Draw the whole drop-down. Returns its clickable areas and the tray icons to place on top.
 fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec<Hit>, Vec<(f32, f32, f32, String)>) {
     let mut hits: Vec<Hit> = Vec::new();
@@ -323,14 +329,18 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
     let mut y = PAD;
     let inner = c.w - 2.0 * PAD;
 
-    // The card itself, over the blurred desktop the window shows.
-    c.rr(0.0, 0.0, c.w, c.h, RADIUS, c.card());
-    c.rr_stroke(0.5, 0.5, c.w - 1.0, c.h - 1.0, RADIUS, c.card_edge(), 1.0);
+    // The card itself, over the blurred desktop the window shows. It used to be 62% white
+    // with a 6% edge, which vanished on a white app window: the plate is now nearly solid
+    // and its edge dark enough to hold the shape on anything.
+    c.rr(0.0, 0.0, c.w, c.h, RADIUS, (1.0, 1.0, 1.0, 0.965));
+    c.rr_stroke(0.75, 0.75, c.w - 1.5, c.h - 1.5, RADIUS - 0.5, (0.0, 0.0, 0.0, 0.20), 1.5);
+    // A second, fainter ring just inside: a glass rim rather than a pencil line.
+    c.rr_stroke(2.0, 2.0, c.w - 4.0, c.h - 4.0, RADIUS - 2.0, (0.0, 0.0, 0.0, 0.06), 1.0);
 
     // ---- header -----------------------------------------------------------
     label(c, "Control Center", PAD, y + 6.0, 15.0, 600, c.text1(), inner - 34.0);
     let gear = (c.w - PAD - 26.0, y + 2.0, 26.0, 26.0);
-    c.rr(gear.0, gear.1, gear.2, gear.3, 8.0, c.plate());
+    c.rr(gear.0, gear.1, gear.2, gear.3, 8.0, PLATE);
     c.glyph(G_SETTINGS, gear.0 + 13.0, gear.1 + 13.0, 15.0, c.text2());
     hits.push(Hit { rect: gear, act: CAct::Do(WAct::Open("ms-settings:".into())) });
     y += HEAD_H + 10.0;
@@ -350,7 +360,7 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
         let (row, column) = (i / 3, i % 3);
         let x = PAD + column as f32 * (tile_w + TILE_GAP);
         let ty = y + row as f32 * (TILE_H + TILE_GAP);
-        c.rr(x, ty, tile_w, TILE_H, 14.0, if *on { alpha(*col, 0.22) } else { c.plate() });
+        c.rr(x, ty, tile_w, TILE_H, 14.0, if *on { alpha(*col, 0.22) } else { PLATE });
         if *on {
             c.rr_stroke(x + 0.5, ty + 0.5, tile_w - 1.0, TILE_H - 1.0, 14.0, alpha(*col, 0.5), 1.0);
         }
@@ -369,7 +379,12 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
     // The microphone has one switch, not a level: Windows exposes mute only.
     y = slider_row(c, &mut hits, y, G_MIC, "Microphone", if d.mic_muted { "Off".to_string() } else { "On".to_string() }, if d.mic_muted { 0.0 } else { 1.0 }, Some(WAct::Mic), None, if d.mic_muted { ORANGE } else { GREEN });
     let bright = d.brightness.unwrap_or(0.7);
-    y = slider_row(c, &mut hits, y, G_SUN, "Brightness", format!("{:.0}%", bright * 100.0), bright, None, Some(WAct::Brightness), YELLOW);
+    let (bright_text, bright_frac) = if d.brightness_unsupported {
+        ("Not supported".to_string(), 0.0)
+    } else {
+        (format!("{:.0}%", bright * 100.0), bright)
+    };
+    y = slider_row(c, &mut hits, y, G_SUN, "Brightness", bright_text, bright_frac, None, Some(WAct::Brightness), YELLOW);
     y += SEP_H;
     separator(c, y - SEP_H / 2.0);
 
@@ -431,7 +446,7 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
 
     // ---- now playing ------------------------------------------------------
     let art = (PAD, y + 6.0, 44.0, 44.0);
-    c.rr(art.0, art.1, art.2, art.3, 11.0, c.plate());
+    c.rr(art.0, art.1, art.2, art.3, 11.0, PLATE);
     c.glyph(G_MUSIC, art.0 + 22.0, art.1 + 22.0, 20.0, c.text3());
     match d.control.media.as_ref() {
         Some(np) => {
@@ -440,7 +455,7 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
             label(c, &np.artist, PAD + 54.0, y + 27.0, 11.5, 400, c.text2(), c.w - PAD - 54.0 - right);
             let mut bx = c.w - PAD - 3.0 * 30.0;
             for (glyph, act) in [(G_PREV, WAct::MediaPrev), (if np.playing { G_PAUSE } else { G_PLAY }, WAct::MediaPlay), (G_NEXT, WAct::MediaNext)] {
-                c.circle(bx + 13.0, y + 28.0, 13.0, c.plate());
+                c.circle(bx + 13.0, y + 28.0, 13.0, PLATE);
                 c.glyph(glyph, bx + 13.0, y + 28.0, 13.0, c.text1());
                 hits.push(Hit { rect: (bx, y + 15.0, 26.0, 26.0), act: CAct::Do(act) });
                 bx += 30.0;
@@ -485,7 +500,7 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
 fn slider_row(c: &Canvas, hits: &mut Vec<Hit>, y: f32, glyph: &str, text: &str, value_text: String, frac: f32, button: Option<WAct>, slider: Option<WAct>, col: Col) -> f32 {
     let pad = PAD;
     if let Some(act) = &button {
-        c.circle(pad + 14.0, y + 23.0, 15.0, c.plate());
+        c.circle(pad + 14.0, y + 23.0, 15.0, PLATE);
         c.glyph(glyph, pad + 14.0, y + 23.0, 15.0, c.text1());
         hits.push(Hit { rect: (pad - 1.0, y + 8.0, 30.0, 30.0), act: CAct::Do(act.clone()) });
     } else {

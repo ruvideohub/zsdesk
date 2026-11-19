@@ -208,6 +208,8 @@ pub enum WAct {
     Airplane,
     /// Do not disturb: notification banners off.
     Dnd,
+    /// The panel button: open or close the control centre drop-down.
+    ControlCenter,
     /// Join this Wi-Fi network.
     JoinWifi(String),
 }

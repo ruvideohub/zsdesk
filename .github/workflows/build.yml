@@ -1,8 +1,10 @@
 name: Windows build
 
+# Only when asked for: this run is `cargo test` over the whole workspace and it costs a
+# lot of minutes, so pushes are left to the dock build (dock-build.yml), which is the run
+# that actually produces the executables.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read

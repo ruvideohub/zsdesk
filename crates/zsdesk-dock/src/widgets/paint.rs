@@ -2535,6 +2535,7 @@ fn tool(c: &Canvas, out: &mut Painted, k: ToolKind, x: &Ctx, sh: Shape) {
         ToolKind::Tray => tray(c, out, x, sh),
         ToolKind::Connectivity => connectivity(c, out, x, sh),
         ToolKind::ControlTiles => control_tiles(c, out, x, sh),
+        ToolKind::ControlCenter => tile(c, out, G_UP, "Control Center", false, BLUE, WAct::ControlCenter, dense),
         ToolKind::Toggles => toggles(c, out, x, sh),
         ToolKind::WinSettings => tile(c, out, G_SETTINGS, "Windows Settings", false, BLUE, WAct::Open("ms-settings:".into()), dense),
         ToolKind::WinUpdate => win_update(c, out, x, sh),

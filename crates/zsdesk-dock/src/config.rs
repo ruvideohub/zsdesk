@@ -212,6 +212,11 @@ pub struct Config {
     /// Pinned apps, left to right. Each entry is an AppUserModelID (as used by
     /// `shell:AppsFolder`) or a full .exe path; `"|"` is a separator; an object is a stack.
     pub pins: Vec<Pin>,
+
+    /// The control centre button was put on the panel once. After that it's the user's
+    /// call: drop it from the widget menu and it stays dropped.
+    #[serde(default)]
+    pub cc_pin_added: bool,
 }
 
 impl Default for Config {
@@ -264,6 +269,7 @@ impl Default for Config {
             clock_12h: false,
             clock_date: true,
             clock_seconds: false,
+            cc_pin_added: false,
             pins: Vec::new(),
         }
     }
@@ -287,6 +293,21 @@ impl Config {
         // Some editors (and PowerShell) save UTF-8 with a byte-order mark.
         let text = text.trim_start_matches('\u{feff}');
         serde_json::from_str::<Config>(text).ok().map(Config::sanitized)
+    }
+
+    /// Panels saved before the control centre had a button of its own get one, once.
+    /// Returns true when the file should be written back.
+    pub fn ensure_control_center_pin(&mut self) -> bool {
+        if self.cc_pin_added {
+            return false;
+        }
+        self.cc_pin_added = true;
+        if !self.pins.iter().any(|p| matches!(p, Pin::Widget { widget, .. } if widget == "control-center")) {
+            // In front of the other widgets, behind the apps: a system button's place.
+            let at = self.pins.iter().position(|p| matches!(p, Pin::Widget { .. })).unwrap_or(self.pins.len());
+            self.pins.insert(at, Pin::Widget { widget: "control-center".into(), size: None });
+        }
+        true
     }
 
     /// True if a settings file exists (even if it currently fails to parse).

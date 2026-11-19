@@ -146,6 +146,8 @@ pub enum ToolKind {
     Connectivity,
     /// Dark mode, mute, snip and lock.
     ControlTiles,
+    /// The button that opens the control centre above the panel.
+    ControlCenter,
     /// Windows Update status.
     WinUpdate,
     /// Opens Windows Settings.
@@ -415,6 +417,7 @@ pub static ALL: &[Def] = &[
 pub static CONTROL: &[Def] = &[
     small(w("connectivity", "Wi-Fi & Bluetooth", "Turn Wi-Fi and Bluetooth on or off; click a name for networks or devices.", &[Control], Face::Tool(ToolKind::Connectivity))),
     w("control-tiles", "Quick Controls", "Dark mode, mute, snip and lock.", &[Control], Face::Tool(ToolKind::ControlTiles)),
+    dock(w("control-center", "Control Center", "Wi-Fi, sound, brightness, night light and the tray, in one drop-down above the panel.", &[Control], Face::Tool(ToolKind::ControlCenter)), 1.0),
     tall(w("background-apps", "Background Apps", "The icons apps put beside the clock. Click to open, right-click for the app's menu.", &[Control], Face::Tool(ToolKind::Tray))),
     w("windows-update", "Windows Update", "Updates waiting or a restart needed. Click for Windows Update.", &[Control], Face::Tool(ToolKind::WinUpdate)),
     small(w("windows-settings", "Windows Settings", "Opens Windows Settings.", &[Control], Face::Tool(ToolKind::WinSettings))),

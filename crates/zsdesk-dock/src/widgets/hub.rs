@@ -2,6 +2,7 @@
 //! threads), timers, screen time, keep-awake, microphone and brightness.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -144,7 +145,8 @@ enum Job {
     Mic,
     SetMic(bool),
     Brightness,
-    SetBrightness(f32),
+    /// Apply whatever `brightness_target` holds, again and again until it stops changing.
+    SetBrightness,
     Output,
     ApplyWallpaper(String),
     Geocode(String),
@@ -154,6 +156,8 @@ enum Reply {
     Feed(String, Result<Feed, FeedError>),
     Mic(Option<bool>),
     Brightness(Option<f32>),
+    /// Nothing to apply: the job only wants the dock to look at its shared flags.
+    Touched,
     Output(Option<String>),
     Geocode(String, Option<(f32, f32, String)>),
 }
@@ -170,6 +174,15 @@ pub struct Hub {
     pub dnd: bool,
     pub mic_muted: Option<bool>,
     pub brightness: Option<f32>,
+    /// The monitor refused every write: the slider shows "—" instead of a number.
+    pub brightness_unsupported: bool,
+    /// The value the user last asked for, in f32 bits. A drag writes this and nothing
+    /// else, so the job thread always applies the newest number and a queue of stale
+    /// writes can never walk the screen down behind the user's back.
+    brightness_target: Arc<AtomicU32>,
+    /// One write at a time: a new value only starts a job when no job is running.
+    brightness_busy: Arc<AtomicBool>,
+    brightness_refused: Arc<AtomicBool>,
     pub output_name: Option<String>,
     pub screen: ScreenTime,
     screen_dirty: u32,
@@ -203,6 +216,10 @@ impl Hub {
             dnd: false,
             mic_muted: None,
             brightness: None,
+            brightness_unsupported: false,
+            brightness_target: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            brightness_busy: Arc::new(AtomicBool::new(false)),
+            brightness_refused: Arc::new(AtomicBool::new(false)),
             output_name: None,
             screen: ScreenTime::load(),
             screen_dirty: 0,
@@ -222,6 +239,9 @@ impl Hub {
     fn run(&self, job: Job) {
         let out = self.replies.clone();
         let hwnd = self.hwnd;
+        let target = self.brightness_target.clone();
+        let busy = self.brightness_busy.clone();
+        let refused = self.brightness_refused.clone();
         std::thread::Builder::new()
             .name("laminar-widget-job".into())
             .spawn(move || {
@@ -234,9 +254,38 @@ impl Hub {
                         Some(Reply::Mic(laminar_sys::audio::mic_muted()))
                     }
                     Job::Brightness => Some(Reply::Brightness(laminar_sys::display::brightness())),
-                    Job::SetBrightness(v) => {
-                        laminar_sys::display::set_brightness(v);
-                        Some(Reply::Brightness(laminar_sys::display::brightness()))
+                    Job::SetBrightness => {
+                        // Apply the newest value until nothing newer arrives. A DDC/CI write
+                        // takes tens of milliseconds, so a drag would otherwise build a queue
+                        // of stale writes and the screen would obey the wrong one.
+                        let mut applied = f32::NAN;
+                        loop {
+                            let want = f32::from_bits(target.load(Ordering::SeqCst));
+                            if want != applied {
+                                if !laminar_sys::display::set_brightness(want) {
+                                    refused.store(true, Ordering::SeqCst);
+                                }
+                                applied = want;
+                            }
+                            // Let go only when nothing newer is pending; anyone asking after
+                            // this point opens their own job.
+                            if f32::from_bits(target.load(Ordering::SeqCst)) == applied {
+                                busy.store(false, Ordering::SeqCst);
+                                if f32::from_bits(target.load(Ordering::SeqCst)) == applied {
+                                    break;
+                                }
+                                if busy.swap(true, Ordering::SeqCst) {
+                                    break;
+                                }
+                            } else {
+                                std::thread::yield_now();
+                            }
+                        }
+                        // Never read the monitor back after a write: DDC/CI answers with the
+                        // value it had a moment ago, which is how the slider used to show 27
+                        // while the screen sat at 100. The reply only wakes the dock so it can
+                        // pick up "this display takes no brightness commands".
+                        Some(Reply::Touched)
                     }
                     Job::Output => Some(Reply::Output(laminar_sys::audio::default_output_name())),
                     Job::Geocode(city) => {
@@ -261,7 +310,12 @@ impl Hub {
     /// Apply finished jobs. Returns true if anything changed (redraw).
     pub fn take_replies(&mut self) -> bool {
         let list = std::mem::take(&mut *self.replies.lock().unwrap());
-        let changed = !list.is_empty();
+        let mut changed = !list.is_empty();
+        let refused = self.brightness_refused.swap(false, Ordering::SeqCst);
+        if refused {
+            self.brightness_unsupported = true;
+            changed = true;
+        }
         for r in list {
             match r {
                 Reply::Feed(id, res) => {
@@ -286,7 +340,13 @@ impl Hub {
                     }
                 }
                 Reply::Mic(m) => self.mic_muted = m,
-                Reply::Brightness(b) => self.brightness = b,
+                Reply::Touched => {}
+                Reply::Brightness(b) => {
+                    // While a drag is writing, the answer is stale by definition.
+                    if !self.brightness_busy.load(Ordering::SeqCst) {
+                        self.brightness = b;
+                    }
+                }
                 Reply::Output(n) => self.output_name = n,
                 Reply::Geocode(city, r) => self.geocoded = Some((city, r)),
             }
@@ -333,11 +393,20 @@ impl Hub {
         self.run(Job::SetMic(m));
     }
     pub fn ask_brightness(&self) {
+        if self.brightness_busy.load(Ordering::SeqCst) {
+            return;
+        }
         self.run(Job::Brightness);
     }
+    /// The slider's value is what the user asked for: it is shown at once and written by
+    /// a single job that always takes the newest number.
     pub fn set_brightness(&mut self, v: f32) {
+        let v = v.clamp(0.0, 1.0);
         self.brightness = Some(v);
-        self.run(Job::SetBrightness(v));
+        self.brightness_target.store(v.to_bits(), Ordering::SeqCst);
+        if !self.brightness_busy.swap(true, Ordering::SeqCst) {
+            self.run(Job::SetBrightness);
+        }
     }
     pub fn ask_output(&self) {
         self.run(Job::Output);
