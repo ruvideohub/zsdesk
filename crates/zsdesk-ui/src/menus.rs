@@ -526,8 +526,15 @@ mod tests {
             interface_settings_menu(&ExplorerUi::default()),more_menu(true,true),tab_menu(2,0,true,false)]{check(&spec);}
         let spec=tab_list_menu(&["图片".into()],0,false);
         assert!(matches!(&spec.items[0],MenuItemSpec::Command{label,..}if label=="图片"));
-        assert_eq!(crate::chrome::CommandId::New.label(),Some("New"));
-        assert_eq!(crate::chrome::CommandId::Cut.tooltip(),"Cut (Ctrl+X)");
+        // The wording lives in the catalogue, which may be in any language: the
+        // contract here is that the label is translated (no CJK left over) and
+        // that the tooltip keeps its keyboard hint.
+        let label=crate::chrome::CommandId::New.label().expect("New has a label");
+        assert_eq!(label,zsdesk_core::i18n::text("新建"));
+        assert!(!label.chars().any(|c|('\u{3400}'..='\u{9fff}').contains(&c)),"Untranslated label: {label}");
+        let tooltip=crate::chrome::CommandId::Cut.tooltip();
+        assert_eq!(tooltip,zsdesk_core::i18n::text("剪切 (Ctrl+X)"));
+        assert!(tooltip.contains("Ctrl+X"),"{tooltip}");
     }
     fn ids(spec: &MenuSpec) -> Vec<String> {
         spec.items.iter().filter_map(|i| match i {
