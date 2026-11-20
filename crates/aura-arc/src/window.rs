@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use windows::core::{w, BOOL, PCWSTR, PWSTR};
+use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject, SetBkColor, SetTextColor,
@@ -138,7 +138,7 @@ impl App {
         let button_width = 150;
         for (index, button) in self.buttons.iter().enumerate() {
             let x = pad + index as i32 * (button_width + 6);
-            let _ = unsafe { MoveWindow(*button, x, pad, button_width, button_height, BOOL(1)) };
+            let _ = unsafe { MoveWindow(*button, x, pad, button_width, button_height, true) };
         }
         let list_top = pad + button_height + pad;
         let status_height = 22;
@@ -149,7 +149,7 @@ impl App {
                 list_top,
                 width - pad * 2,
                 height - list_top - status_height - pad,
-                BOOL(1),
+                true,
             )
         };
         let _ = unsafe {
@@ -159,7 +159,7 @@ impl App {
                 height - status_height - pad + 4,
                 width - pad * 2,
                 status_height,
-                BOOL(1),
+                true,
             )
         };
     }
@@ -366,7 +366,7 @@ impl Parent {
     fn child(&self, class: PCWSTR, text: PCWSTR, style: windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE, id: usize) -> HWND {
         // A child control carries its identifier in the menu slot: that number is what arrives
         // back in `WM_COMMAND` when the button is pressed.
-        let menu = (id != 0).then(|| HMENU(id as isize));
+        let menu = (id != 0).then(|| HMENU(id as usize as *mut std::ffi::c_void));
         let child = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE(0),
@@ -537,7 +537,8 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             WS_EX_CLIENTEDGE,
             w!("LISTBOX"),
             PCWSTR::null(),
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP | LBS_NOINTEGRALHEIGHT,
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP
+                | windows::Win32::UI::WindowsAndMessaging::WINDOW_STYLE(LBS_NOINTEGRALHEIGHT as u32),
             0,
             0,
             0,
@@ -582,7 +583,7 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
         });
         let pointer = Box::into_raw(state);
         SetWindowLongPtrW(window, GWLP_USERDATA, pointer as isize);
-        DragAcceptFiles(window, BOOL(1));
+        DragAcceptFiles(window, true);
         let app = &mut *pointer;
         app.allow_actions(false);
         app.say("Архив не открыт. Перетащите .zip на окно или нажмите «Открыть архив…».");
