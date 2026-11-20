@@ -271,6 +271,8 @@ impl Dock {
     /// Once a second: timers, screen time, live widgets, connector refreshes.
     pub(super) fn widget_tick(&mut self) {
         self.wtick += 1;
+        // The desktop clock is a process of its own (`widgets.exe`): keep it alive.
+        self.supervise_clock();
         let fg_app = self.windows.iter().find(|w| w.hwnd == self.fg).map(|w| {
             self.names.get(&w.app).cloned().unwrap_or_else(|| {
                 let base = w.exe.rsplit('\\').next().unwrap_or(&w.exe);

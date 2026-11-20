@@ -679,9 +679,10 @@ struct Dock {
     /// Ticks of the widget timer (seconds).
     wtick: u64,
     /// The Start button's four panes, and whether they're spread (hovered).
-    /// The desktop clock card, when the settings ask for one.
     /// The desktop clock card, hosted by `widgets.exe` in its own process.
     clock_host: Option<std::process::Child>,
+    /// When the card may be started again after it died (never on a tight loop).
+    clock_retry_at: Instant,
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -5530,6 +5531,30 @@ impl Dock {
         }
     }
 
+    /// Start the desktop clock again if its process died.
+    ///
+    /// A card that fails at once must not turn into a restart loop (the lesson of the
+    /// visibility guard): a second attempt waits, and every failed attempt waits again.
+    pub(super) fn supervise_clock(&mut self) {
+        if !self.cfg.desktop_clock || !self.is_main_dock() {
+            return;
+        }
+        let gone = match self.clock_host.as_mut() {
+            Some(child) => !matches!(child.try_wait(), Ok(None)),
+            None => false,
+        };
+        if !gone {
+            return;
+        }
+        self.clock_host = None;
+        if Instant::now() < self.clock_retry_at {
+            return;
+        }
+        self.clock_retry_at = Instant::now() + std::time::Duration::from_secs(30);
+        trace!("desktop clock: the card exited; starting it again");
+        self.restart_clock();
+    }
+
     /// The clock card's menu: where it sits, how big it is and what it shows.
     fn clock_menu(&mut self) {
         // The card runs in another process: ask the settings, which the panel owns.
@@ -5759,6 +5784,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             lpw_press: None,
             wtick: 0,
             clock_host: None,
+            clock_retry_at: Instant::now(),
             floor_y: 0,
             panel_top: false,
             band_topmost: false,
