@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn target(background: bool, count: usize, files: bool, open: bool, rename: bool, paste: bool) -> Target {
-        Target { background, count, files, open, rename, paste, folder: true }
+        Target { background, count, files, open, rename, paste, folder: true, archive: false }
     }
 
     #[test]

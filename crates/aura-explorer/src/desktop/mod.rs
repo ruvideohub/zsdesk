@@ -794,7 +794,10 @@ fn dispatch_menu_file_action(request:&menu_worker::Request,action:MenuOutcome)->
             if file_transfer::has_filesystem_clipboard(){if let Some(destination)=destination{return file_transfer::paste(owner,&destination);}}
             let mut delegated=request.clone();delegated.mode=crate::context_menu_process::Mode::Paste;delegated.layout=None;queue_menu(delegated);Ok(())
         }
-        MenuOutcome::Compress=>match crate::archive::pack(&paths,request.folder.as_deref()){
+        MenuOutcome::Compress=>match crate::archive::pack(&paths,match &request.target{
+            menu_worker::Target::Background{folder:Some(folder)}=>Some(folder.as_path()),
+            _=>paths.first().and_then(|path|path.parent()),
+        }){
             Ok(_)=>Ok(()),
             Err(message)=>Err(windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32),message)),
         },
