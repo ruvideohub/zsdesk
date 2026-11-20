@@ -16,6 +16,7 @@ mod apps;
 mod config;
 mod control_center;
 mod desktop_clock;
+mod desktop_system;
 mod displays;
 mod dock;
 mod effects;
@@ -119,6 +120,7 @@ pub fn run() -> Result<()> {
     if let Some(component) = component_arg(&args) {
         return match component.as_str() {
             "clock" => host::run_clock(dock_arg(&args)),
+            "system" => host::run_system(dock_arg(&args)),
             other => {
                 eprintln!("unknown component: {other}");
                 Ok(())
@@ -213,9 +215,10 @@ pub fn run() -> Result<()> {
 
 /// The desktop-widget host: `widgets.exe`.
 ///
-/// Right now it hosts the desktop clock card. It takes its own single-instance lock, so a
-/// second copy exits quietly instead of drawing a second card, and it quits when the panel
-/// that started it is gone.
+/// It hosts the desktop clock card (`--component clock`, the default) and the desktop load
+/// card (`--component system`). Each takes its own single-instance lock, so a second copy of
+/// one card exits quietly instead of drawing it twice, and a card quits when the panel that
+/// started it is gone.
 pub fn run_widgets() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if std::env::var_os("USERPROFILE").is_some() {
@@ -228,15 +231,23 @@ pub fn run_widgets() -> Result<()> {
             dock = it.next().and_then(|v| parse_hwnd(v));
         }
     }
+    // One card per process, and one lock per card: the clock and the load card are two
+    // processes of this same program, so a lock shared by both would keep the second card
+    // from ever appearing.
+    let component = component_arg(&args).unwrap_or_else(|| "clock".to_string());
     unsafe {
-        let mutex = CreateMutexW(None, false, &windows::core::HSTRING::from("Local\\AuraExplorer.Widgets"));
+        let name = windows::core::HSTRING::from(format!("Local\\AuraExplorer.Widgets.{component}"));
+        let mutex = CreateMutexW(None, false, &name);
         if GetLastError() == ERROR_ALREADY_EXISTS {
-            // Another widgets.exe is already drawing the desktop: nothing to do.
+            // Another widgets.exe is already drawing this card: nothing to do.
             return Ok(());
         }
         std::mem::forget(mutex);
     }
-    host::run_clock(dock)
+    match component.as_str() {
+        "system" => host::run_system(dock),
+        _ => host::run_clock(dock),
+    }
 }
 
 /// `--component <name>` from the command line.

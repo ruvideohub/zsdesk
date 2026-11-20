@@ -68,6 +68,11 @@ pub enum ClockCorner {
     BottomRight,
 }
 
+/// `1.0`, for the settings whose missing value must not read as "as small as possible".
+fn one() -> f32 {
+    1.0
+}
+
 impl ClockCorner {
     /// The order the card's menu lists the corners in.
     pub const ALL: [ClockCorner; 4] =
@@ -222,6 +227,22 @@ pub struct Config {
     #[serde(default)]
     pub clock_locked: bool,
 
+    /// A load card (processor, memory, disk) on the desktop, next to the clock.
+    #[serde(default)]
+    pub desktop_system: bool,
+    /// Which corner the load card sits in (right-click the card to change it).
+    #[serde(default)]
+    pub system_corner: ClockCorner,
+    /// Size multiplier for the load card: 0.85 compact, 1.0 normal, 1.2 large.
+    #[serde(default = "one")]
+    pub system_scale: f32,
+    /// Where the load card was dragged to (physical px on its monitor).
+    #[serde(default)]
+    pub system_pos: Option<[i32; 2]>,
+    /// The load card stays where it is: dragging does nothing.
+    #[serde(default)]
+    pub system_locked: bool,
+
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
     #[serde(default)]
@@ -280,6 +301,13 @@ impl Default for Config {
             clock_seconds: false,
             clock_pos: None,
             clock_locked: false,
+            // Off by default: the clock is the one everybody wants; the load card is opt-in
+            // from the panel's menu, so an update does not rearrange anyone's desktop.
+            desktop_system: false,
+            system_corner: ClockCorner::BottomRight,
+            system_scale: 1.0,
+            system_pos: None,
+            system_locked: false,
             cc_pin_added: false,
             pins: Vec::new(),
         }
@@ -378,6 +406,7 @@ impl Config {
             }
         }
         self.clock_scale = self.clock_scale.clamp(0.75, 1.5);
+        self.system_scale = self.system_scale.clamp(0.75, 1.5);
         self.panel_shadow = self.panel_shadow.clamp(0.0, 1.0);
         self.card_shadow = self.card_shadow.clamp(0.0, 1.0);
         // Pins saved before version-folder handling point into a folder an update deletes.

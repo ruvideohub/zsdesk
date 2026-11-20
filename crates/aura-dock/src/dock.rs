@@ -80,6 +80,10 @@ pub const WM_APP_WINKEY: u32 = WM_APP + 4;
 pub const WM_APP_CLOCK_MENU: u32 = WM_APP + 12;
 /// The desktop clock card was dragged to a corner: wparam is the corner code.
 pub const WM_APP_CLOCK_MOVED: u32 = WM_APP + 13;
+/// The desktop load card's own menu, asked for with a right-click on the card.
+pub const WM_APP_SYSTEM_MENU: u32 = WM_APP + 14;
+/// Where the load card was let go, in physical px (wparam = x, lparam = y).
+pub const WM_APP_SYSTEM_MOVED: u32 = WM_APP + 15;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
 /// The tray icons changed (see tray.rs).
@@ -194,6 +198,12 @@ const CMD_CLOCK_HIDE: usize = 3623;
 const CMD_CLOCK_DESKTOP: usize = 3624;
 /// The card keeps its place while dragging is off.
 const CMD_CLOCK_LOCK: usize = 3625;
+/// The desktop load card: switch, corner, size, lock, hide.
+const CMD_SYSTEM_DESKTOP: usize = 3630;
+const CMD_SYSTEM_CORNER_BASE: usize = 3640;
+const CMD_SYSTEM_SCALE_BASE: usize = 3650;
+const CMD_SYSTEM_LOCK: usize = 3660;
+const CMD_SYSTEM_HIDE: usize = 3661;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -683,6 +693,10 @@ struct Dock {
     clock_host: Option<std::process::Child>,
     /// When the card may be started again after it died (never on a tight loop).
     clock_retry_at: Instant,
+    /// The desktop load card (processor, memory, disk), also hosted by `widgets.exe`.
+    system_host: Option<std::process::Child>,
+    /// When the load card may be started again after it died.
+    system_retry_at: Instant,
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -2108,6 +2122,7 @@ impl Dock {
         m.push(MenuItem::item("Magnification", CMD_MAGNIFY).checked(self.cfg.magnify));
         m.push(MenuItem::item("Hide the Windows Taskbar", CMD_TASKBAR).checked(self.cfg.hide_windows_taskbar));
         m.push(MenuItem::item("Clock on the Desktop", CMD_CLOCK_DESKTOP).checked(self.cfg.desktop_clock));
+        m.push(MenuItem::item("Карточка нагрузки на рабочем столе", CMD_SYSTEM_DESKTOP).checked(self.cfg.desktop_system));
         m.push(MenuItem::sep());
         // Widgets: the everyday ones are one click away, the rest live in the gallery.
         m.push(MenuItem::header("Widgets on the Panel"));
@@ -2498,6 +2513,21 @@ impl Dock {
                 });
             }
             CMD_CLOCK_LOCK => self.save_and_apply(|c| c.clock_locked = !c.clock_locked),
+            CMD_SYSTEM_DESKTOP => self.save_and_apply(|c| c.desktop_system = !c.desktop_system),
+            CMD_SYSTEM_HIDE => self.save_and_apply(|c| c.desktop_system = false),
+            CMD_SYSTEM_LOCK => self.save_and_apply(|c| c.system_locked = !c.system_locked),
+            cmd if (CMD_SYSTEM_CORNER_BASE..CMD_SYSTEM_CORNER_BASE + 4).contains(&cmd) => {
+                let corner = crate::config::ClockCorner::from_code(cmd - CMD_SYSTEM_CORNER_BASE);
+                // A corner is a preset: it drops wherever the card was dragged to.
+                self.save_and_apply(|c| {
+                    c.system_corner = corner;
+                    c.system_pos = None;
+                });
+            }
+            cmd if (CMD_SYSTEM_SCALE_BASE..CMD_SYSTEM_SCALE_BASE + CLOCK_SCALES.len()).contains(&cmd) => {
+                let scale = CLOCK_SCALES[cmd - CMD_SYSTEM_SCALE_BASE];
+                self.save_and_apply(|c| c.system_scale = scale);
+            }
             cmd if (CMD_CLOCK_SCALE_BASE..CMD_CLOCK_SCALE_BASE + CLOCK_SCALES.len()).contains(&cmd) => {
                 let scale = CLOCK_SCALES[cmd - CMD_CLOCK_SCALE_BASE];
                 self.save_and_apply(|c| c.clock_scale = scale);
@@ -4750,6 +4780,8 @@ impl Dock {
         self.refresh(true);
         let _ = self.build_label();
         self.restart_clock();
+        // The cards bake their colours when they draw: a theme flip has to start them again.
+        self.restart_system();
         if self.launchpad.open {
             // Panels take their glass tint when they open: reopen with the new tint,
             // keeping the Launchpad Settings section the user was on.
@@ -4794,6 +4826,14 @@ impl Dock {
         if old.per_display_windows != self.cfg.per_display_windows {
             self.rescan();
         }
+        if old.desktop_system != self.cfg.desktop_system
+            || old.system_corner != self.cfg.system_corner
+            || (old.system_scale - self.cfg.system_scale).abs() > f32::EPSILON
+            || old.system_locked != self.cfg.system_locked
+            || old.system_pos != self.cfg.system_pos
+        {
+            self.restart_system();
+        }
         if old.desktop_clock != self.cfg.desktop_clock
             || old.clock_corner != self.cfg.clock_corner
             || (old.clock_scale - self.cfg.clock_scale).abs() > f32::EPSILON
@@ -4821,8 +4861,9 @@ impl Dock {
     fn shutdown(&mut self) {
         self.hub.shutdown();
         self.helpers.stop();
-        // The desktop clock lives in its own process: it goes with the panel.
-        if let Some(mut child) = self.clock_host.take() {
+        // The desktop cards live in their own processes: they go with the panel.
+        for host in [self.clock_host.take(), self.system_host.take()].into_iter().flatten() {
+            let mut child = host;
             let _ = child.kill();
             let _ = child.wait();
         }
@@ -5039,6 +5080,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             // The card posts the corner it was let go in, in physical px.
             let (x, y) = (wp.0 as i32, lp.0 as i32);
             with_dock(|d| d.save_and_apply(|c| c.clock_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_SYSTEM_MENU => {
+            with_dock(|d| d.system_menu());
+            return LRESULT(0);
+        }
+        WM_APP_SYSTEM_MOVED => {
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.system_pos = Some([x, y])));
             return LRESULT(0);
         }
         WM_APP_RESYNC_HOVER => {
@@ -5555,6 +5605,101 @@ impl Dock {
         self.restart_clock();
     }
 
+    /// Start, stop or restart the desktop load card from the current settings.
+    ///
+    /// Like the clock, it is a window of `widgets.exe` — a process of its own — so a slow
+    /// reading of the processor cannot stall the panel. The panel is still the only writer of
+    /// the settings and the only thing that draws the card's menu.
+    fn restart_system(&mut self) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        if !self.is_main_dock() {
+            return;
+        }
+        if let Some(mut child) = self.system_host.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        if !self.cfg.desktop_system {
+            return;
+        }
+        let Ok(panel) = std::env::current_exe() else { return };
+        // `widgets.exe` next to the panel, or the panel itself as that same program (an
+        // installation updated by copying just the panel).
+        let exe = match panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()) {
+            Some(widgets) => widgets,
+            None => panel,
+        };
+        let mut command = std::process::Command::new(exe);
+        // Both pick their card from `--component`; without the flag they draw the clock.
+        command.arg("--component").arg("system");
+        let child = command
+            .arg("--dock")
+            .arg(format!("{:#x}", self.hwnd.0 as isize))
+            .arg("--parent")
+            .arg(std::process::id().to_string())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+        match child {
+            Ok(child) => {
+                self.system_host = Some(child);
+                trace!("desktop load card: hosted by widgets.exe (pid {})", self.system_host.as_ref().map(|c| c.id()).unwrap_or(0));
+            }
+            Err(error) => trace!("desktop load card unavailable: {error:?}"),
+        }
+    }
+
+    /// Start the desktop load card again if its process died, on the same 30-second backoff
+    /// the clock uses: a card that fails at once must not turn into a restart loop.
+    pub(super) fn supervise_system(&mut self) {
+        if !self.cfg.desktop_system || !self.is_main_dock() {
+            return;
+        }
+        let gone = match self.system_host.as_mut() {
+            Some(child) => !matches!(child.try_wait(), Ok(None)),
+            // Switched on but never started (or its start failed): try again, on the backoff.
+            None => true,
+        };
+        if !gone {
+            return;
+        }
+        self.system_host = None;
+        if Instant::now() < self.system_retry_at {
+            return;
+        }
+        self.system_retry_at = Instant::now() + std::time::Duration::from_secs(30);
+        trace!("desktop load card: starting it again");
+        self.restart_system();
+    }
+
+    /// The load card's menu: where it sits, how big it is, and how to get rid of it.
+    fn system_menu(&mut self) {
+        if !self.cfg.desktop_system {
+            return;
+        }
+        let prefs = crate::desktop_system::Prefs::from_config(&self.cfg);
+        let mut m = vec![MenuItem::header("Карточка нагрузки")];
+        for (index, corner) in crate::config::ClockCorner::ALL.iter().enumerate() {
+            m.push(MenuItem::item(format!("Угол: {}", corner.label()), CMD_SYSTEM_CORNER_BASE + index).checked(prefs.corner == *corner));
+        }
+        m.push(MenuItem::sep());
+        for (index, (name, scale)) in CLOCK_SIZE_NAMES.iter().zip(CLOCK_SCALES).enumerate() {
+            let name = match *name { "Compact" => "Компактный", "Large" => "Крупный", _ => "Обычный" };
+            m.push(MenuItem::item(format!("Размер: {name}"), CMD_SYSTEM_SCALE_BASE + index).checked((prefs.scale - scale).abs() < 0.01));
+        }
+        m.push(MenuItem::sep());
+        m.push(MenuItem::item("Закрепить положение", CMD_SYSTEM_LOCK).checked(self.cfg.system_locked));
+        m.push(MenuItem::item("Скрыть карточку", CMD_SYSTEM_HIDE).danger());
+        let mut point = POINT::default();
+        let _ = get_cursor_pos(&mut point);
+        self.hide_preview();
+        self.menu_open = true;
+        if let Err(error) = self.menu.show(&self.compositor, &self.gfx, &self.backdrop, m, point, false, self.scale, self.monitor) {
+            trace!("load card menu failed: {error:?}");
+            self.menu_open = false;
+        }
+    }
+
     /// The clock card's menu: where it sits, how big it is and what it shows.
     fn clock_menu(&mut self) {
         // The card runs in another process: ask the settings, which the panel owns.
@@ -5785,6 +5930,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             wtick: 0,
             clock_host: None,
             clock_retry_at: Instant::now(),
+            system_host: None,
+            system_retry_at: Instant::now(),
             floor_y: 0,
             panel_top: false,
             band_topmost: false,
