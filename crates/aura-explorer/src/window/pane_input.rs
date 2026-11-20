@@ -8,7 +8,7 @@ static PENDING:OnceLock<Mutex<HashMap<usize,Envelope>>>=OnceLock::new();
 static BLANK_CONTEXTS:OnceLock<Mutex<HashMap<isize,usize>>>=OnceLock::new();
 
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
-pub(super) struct Identity {pub source:usize,pub tab:u64,pub epoch:u64}
+pub(crate) struct Identity {pub source:usize,pub tab:u64,pub epoch:u64}
 pub(super) enum Intent {Action(usize),Wheel(i32),OpenFolder(PathBuf),OpenFolders(Vec<PathBuf>),NavigateFolder(ShellLocation),SubmitAddress(String),CreatedItem(aura_windows::shell::new_menu::CreatedItem),ContextCatalog(Vec<aura_windows::shell::menu::MenuCatalogItem>),ContextMenu(POINT),RenameChild(PathBuf),TransferMessage(String)}
 struct Envelope {owner:isize,identity:Identity,intent:Intent}
 

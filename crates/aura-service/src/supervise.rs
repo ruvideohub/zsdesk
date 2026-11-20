@@ -45,8 +45,9 @@ pub fn run() -> windows::core::Result<()> {
             let _ = windows::Win32::Foundation::CloseHandle(lock);
             return Ok(());
         }
-        // Held for the life of the process; nothing to release by hand.
-        std::mem::forget(lock);
+        // The handle is deliberately never closed: closing it would give the mutex up, and the
+        // lock has to stay taken for as long as this process lives.
+        let _held = std::mem::ManuallyDrop::new(lock);
     }
     log(&format!("service: started (pid {})", std::process::id()));
 

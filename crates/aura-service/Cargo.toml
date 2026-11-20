@@ -5,7 +5,7 @@
 # writer of the logon entry, so four components never mean four separate autostarts.
 [package]
 name = "aura-service"
-version = "0.3.18"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true

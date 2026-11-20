@@ -300,6 +300,7 @@ pub mod logon {
         Some(format!("\"{}\" --run", exe.display()))
     }
 
+    #[allow(dead_code)]
     pub fn current() -> Option<String> {
         let name = wide(VALUE);
         let mut bytes = 4096u32;
@@ -343,6 +344,7 @@ pub mod logon {
     }
 
     /// Is our own command the one in the logon entry?
+    #[allow(dead_code)]
     pub fn is_ours() -> bool {
         let Some(current) = current() else { return false };
         command().is_some_and(|ours| current.trim().eq_ignore_ascii_case(ours.trim()))

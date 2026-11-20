@@ -43,6 +43,19 @@ const MAX_IDLE_WORKERS:usize=1;
 static IDLE:Mutex<Vec<IdleWorker>>=Mutex::new(Vec::new());
 static DIAGNOSTICS_LOCK:Mutex<()>=Mutex::new(());
 static PREPARING:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
+
+/// One more menu being prepared, or `false` when the limit is reached. Written as a
+/// compare-and-swap loop because the atomic's update helper was renamed upstream.
+fn claim_one(queue:&std::sync::atomic::AtomicUsize,limit:usize)->bool{
+    let mut count=queue.load(Ordering::Acquire);
+    loop{
+        if count>=limit{return false;}
+        match queue.compare_exchange_weak(count,count+1,Ordering::AcqRel,Ordering::Acquire){
+            Ok(_)=>return true,
+            Err(actual)=>count=actual,
+        }
+    }
+}
 static REAPING:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
 struct Origin {thread:u32,desktop:usize,started:Instant,counter:u64,layout:Option<ShellViewState>,view_context:Option<MenuViewContext>,#[cfg(test)]probe:Option<String>}
 impl Origin {fn capture()->Self{let thread=unsafe{windows::Win32::System::Threading::GetCurrentThreadId()};Self{
@@ -392,6 +405,7 @@ impl Client{
         let mut origin=Origin::capture();origin.layout=layout;
         Self::spawn_at(owner,point,pidls,folder,options,intercept,mode,extended,origin)
     }
+    #[allow(dead_code)]
     pub fn spawn_with_context(owner:HWND,point:POINT,pidls:Vec<Vec<u8>>,folder:Option<PathBuf>,options:ContextMenuOptions,intercept:MenuInterceptions,mode:Mode,extended:bool,layout:Option<ShellViewState>,view_context:MenuViewContext)->Result<Self>{
         let mut origin=Origin::capture();origin.layout=layout;origin.view_context=Some(view_context);
         Self::spawn_at(owner,point,pidls,folder,options,intercept,mode,extended,origin)
@@ -609,7 +623,7 @@ impl AsyncClient {
     }
     pub fn spawn_with_context(owner:HWND,point:POINT,pidls:Vec<Vec<u8>>,folder:Option<PathBuf>,options:ContextMenuOptions,intercept:MenuInterceptions,mode:Mode,extended:bool,layout:Option<ShellViewState>,view_context:Option<MenuViewContext>)->Result<Self>{
         use std::sync::{Arc,atomic::{AtomicBool,AtomicU32},mpsc};
-        ensure!(PREPARING.fetch_update(Ordering::AcqRel,Ordering::Acquire,|n|(n<4).then_some(n+1)).is_ok(),"菜单正在处理其他请求，请稍后重试");
+        ensure!(claim_one(&PREPARING,4),"菜单正在处理其他请求，请稍后重试");
         struct Active;impl Drop for Active{fn drop(&mut self){PREPARING.fetch_sub(1,Ordering::AcqRel);}}
         let active=Active;
         let mut origin=Origin::capture();origin.layout=layout;origin.view_context=view_context;let owner=owner.0 as isize;let coordinates=(point.x,point.y);

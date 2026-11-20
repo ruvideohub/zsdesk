@@ -40,10 +40,19 @@ const E_NOTIMPL: HRESULT = HRESULT(0x80004001u32 as i32);
 struct WorkerPermit;
 impl WorkerPermit {
     fn acquire() -> Result<Self> {
-        ACTIVE_WORKERS.fetch_update(Ordering::AcqRel, Ordering::Acquire,
-            |count| (count < MAX_WORKERS).then_some(count + 1))
-            .map(|_| Self).map_err(|_| Error::new(HRESULT(0x800700AAu32 as i32),
-                "Shell 窗口登记线程已达到上限；此窗口尚未登记"))
+        // A compare-and-swap loop rather than the atomic's own update helper: the helper was
+        // renamed upstream, and this spelling builds on every toolchain the suite supports.
+        let mut count = ACTIVE_WORKERS.load(Ordering::Acquire);
+        loop {
+            if count >= MAX_WORKERS {
+                return Err(Error::new(HRESULT(0x800700AAu32 as i32),
+                    "Shell 窗口登记线程已达到上限；此窗口尚未登记"));
+            }
+            match ACTIVE_WORKERS.compare_exchange_weak(count, count + 1, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => return Ok(Self),
+                Err(actual) => count = actual,
+            }
+        }
     }
 }
 impl Drop for WorkerPermit { fn drop(&mut self) { ACTIVE_WORKERS.fetch_sub(1, Ordering::AcqRel); } }
