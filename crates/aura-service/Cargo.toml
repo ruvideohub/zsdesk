@@ -8,7 +8,7 @@ name = "aura-service"
 version = "0.3.18"
 edition.workspace = true
 license.workspace = true
-rust-version = "0.3.18"
+rust-version.workspace = true
 description = "auraservice: launches and supervises the AuraUI components and keeps their launch settings"
 publish = false
 
