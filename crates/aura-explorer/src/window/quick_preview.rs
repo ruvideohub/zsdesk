@@ -37,6 +37,7 @@ use media_preview::MediaPreview;
 /// Renderer window on its host's STA; production uses a disposable helper process.
 pub(super) struct QuickPreview { state: Rc<PreviewState> }
 
+#[allow(dead_code)]
 impl QuickPreview {
     pub(super) fn create_worker(owner:HWND,provider:PreviewProviderPreference,dark:bool,hover:bool,bounds:Option<RECT>)->Result<Self>{
         let preview=Self::open_impl(owner,Path::new(""),true,true,provider,dark,hover,bounds)?;

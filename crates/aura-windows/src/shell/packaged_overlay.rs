@@ -50,8 +50,8 @@ fn wide(text: &str) -> Vec<u16> {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct Diagnostic {
 #[allow(dead_code)]
+pub(super) struct Diagnostic {
     pub package_family: Option<String>,
     pub verb_id: Option<String>,
     pub stage: &'static str,

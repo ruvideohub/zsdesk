@@ -14,6 +14,7 @@
 //! person would, which is why it prints what it did and returns an exit code:
 //! 0 — всё в порядке, 1 — не понял, что просят, 2 — что-то не получилось.
 
+mod window;
 mod zip;
 
 use std::path::{Path, PathBuf};
@@ -40,6 +41,11 @@ fn main() {
     console_utf8();
     let args: Vec<String> = std::env::args().skip(1).collect();
     std::process::exit(run(&args));
+}
+
+/// Text as the wide strings the Windows API takes, ending in a zero.
+pub(crate) fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(Some(0)).collect()
 }
 
 /// The Windows console starts in the system code page; Russian has to be asked for.
@@ -83,6 +89,15 @@ fn run(args: &[String]) -> i32 {
     let (options, words, early) = parse(args);
     if let Some(code) = early {
         return code;
+    }
+    // No command at all, or just a name that is an archive: a person double-clicked a `.zip`
+    // or started the program from the Start menu, and expects a window rather than a usage note.
+    match words.as_slice() {
+        [] => return window::run(None),
+        [only] if only.to_ascii_lowercase().ends_with(".zip") => {
+            return window::run(Some(PathBuf::from(only)))
+        }
+        _ => {}
     }
     let Some(verb) = words.first().map(|word| word.to_ascii_lowercase()) else {
         println!("{HELP}");
@@ -227,7 +242,7 @@ fn entry_count(count: usize) -> String {
 }
 
 /// Russian counts: 1 файл, 2 файла, 5 файлов — and 11 файлов, 21 файл.
-fn plural(count: usize, one: &str, few: &str, many: &str) -> String {
+pub(crate) fn plural(count: usize, one: &str, few: &str, many: &str) -> String {
     let last_two = count % 100;
     let last = count % 10;
     let word = if (11..=14).contains(&last_two) {
@@ -243,7 +258,7 @@ fn plural(count: usize, one: &str, few: &str, many: &str) -> String {
 }
 
 /// Bytes the way a person reads them: 12,3 КБ.
-fn size(bytes: u64) -> String {
+pub(crate) fn size(bytes: u64) -> String {
     const KIB: f64 = 1024.0;
     let value = bytes as f64;
     let text = if value < KIB {
@@ -259,7 +274,7 @@ fn size(bytes: u64) -> String {
 }
 
 /// Where a person expects an archive to open: a folder named after the archive, beside it.
-fn beside(archive: &Path) -> PathBuf {
+pub(crate) fn beside(archive: &Path) -> PathBuf {
     let name = archive.file_stem().map(|stem| stem.to_string_lossy().into_owned()).unwrap_or_else(|| "архив".to_string());
     match archive.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.join(name),

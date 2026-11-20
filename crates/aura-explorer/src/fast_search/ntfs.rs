@@ -41,9 +41,8 @@ impl Journal {
 }
 
 #[derive(Clone, Debug)]
-pub struct Record {
-    #[allow(dead_code)]
 #[allow(dead_code)]
+pub struct Record {
     pub id: u64, pub parent: u64, pub usn: i64, pub reason: u32,
     pub attributes: u32, pub name: OsString,
 }
@@ -85,9 +84,8 @@ fn parse_records(bytes:&[u8],nameless:bool)->Result<Page> {
     Ok(Page { next: u64_at(bytes, 0), records })
 }
 
-pub struct Volume {
 #[allow(dead_code)]
-    #[allow(dead_code)]
+pub struct Volume {
     pub root: PathBuf, pub serial: u32, pub root_id: u64,
     handle: Handle, event: Handle, buffer: Vec<u8>,
     unprivileged:bool,

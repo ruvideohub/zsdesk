@@ -60,9 +60,8 @@ pub(super) struct DiscoveryFailure {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct ExcludedPackage {
-    #[allow(dead_code)]
 #[allow(dead_code)]
+pub(super) struct ExcludedPackage {
     pub package_full_name: String,
     pub reason: &'static str,
 }

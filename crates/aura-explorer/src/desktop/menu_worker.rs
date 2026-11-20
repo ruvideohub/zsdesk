@@ -22,9 +22,8 @@ pub(super) const READY:u32=super::protocol::Message::MenuReady as u32;
 #[derive(Clone)]
 pub(super) enum Target{Items{pidls:Vec<Vec<u8>>,key:Option<String>},Background{folder:Option<PathBuf>}}
 #[derive(Clone)]
-pub(super) struct Request{
-    #[allow(dead_code)]
 #[allow(dead_code)]
+pub(super) struct Request{
     pub fence:u64,pub owner:isize,pub point:POINT,pub profile:PathBuf,pub items:Vec<MenuItemSpec>,pub target:Target,pub extended:bool,
     pub generation:u64,pub queued:Instant,pub input_started:Instant,pub ui_thread:u32,pub foreground:isize,
     pub mode:crate::context_menu_process::Mode,
