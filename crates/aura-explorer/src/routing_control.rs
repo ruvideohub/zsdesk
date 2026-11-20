@@ -122,6 +122,7 @@ enum Action {
     AddWithCaller(PathBuf, PathBuf),
     Apply,
     Disable,
+    #[allow(dead_code)]
     Refresh,
 }
 struct Request {
@@ -407,6 +408,7 @@ pub fn request_add(profile: &Path, path: PathBuf, window: HWND) -> Result<()> {
 pub fn request_add_with_caller(profile: &Path, executable: PathBuf, caller_module: PathBuf, window: HWND) -> Result<()> {
     enqueue(profile, Action::AddWithCaller(executable, caller_module), window)
 }
+#[allow(dead_code)]
 pub fn diagnostic_reason(code: u32) -> (&'static str, bool) {
     (match code {
         0 => aura_core::i18n::text("暂无拒绝记录"), 1 => aura_core::i18n::text("调用来自尚未绑定的辅助模块"), 2 => aura_core::i18n::text("此打开方式保持系统处理"),
@@ -443,6 +445,7 @@ pub fn configure(profile: &Path, enabled: bool, window: HWND) -> Result<bool> {
     )?;
     Ok(true)
 }
+#[allow(dead_code)]
 pub fn refresh_owned_target(profile: &Path, window: HWND) -> Result<()> {
     if config_file(profile).exists() {
         enqueue(profile, Action::Refresh, window)?;

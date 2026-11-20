@@ -269,6 +269,7 @@ fn catch_up(volume:&mut VolumeIndex,options:&SearchOptions,shared:&Shared,sender
 }
 pub(super) fn prepare(core:&Core,options:&SearchOptions,roots:Option<&[PathBuf]>,shared:&Shared,sender:&SyncSender<SearchEvent>)->Result<()>{lock(core,shared)?.prepare(options,roots,shared,sender,false)}
 
+#[allow(dead_code)]
 pub(super) fn execute(core:&Core,options:&SearchOptions,roots:Option<&[PathBuf]>,shared:&Shared,sender:&SyncSender<SearchEvent>,request:&Request)->Result<()>{
     execute_inner(core,options,roots,shared,sender,request,false)
 }

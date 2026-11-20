@@ -154,6 +154,7 @@ fn check_paths(paths:&[PathBuf])->Result<()>{
         if bytes>MAX_PATH_BYTES{return Err(invalid("文件路径总量过大"));}
     }Ok(())
 }
+#[allow(dead_code)]
 fn hdrop_bytes(paths:&[PathBuf])->Result<Vec<u8>>{
     check_paths(paths)?;
     let mut bytes=vec![0u8;20];bytes[..4].copy_from_slice(&20u32.to_le_bytes());bytes[16..20].copy_from_slice(&1u32.to_le_bytes());

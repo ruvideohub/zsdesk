@@ -28,6 +28,7 @@ pub fn initialize_profile(_path: &Path) {
 
 pub const CHANGED: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 219;
 
+#[allow(dead_code)]
 pub fn notify_windows() {
     use windows::core::BOOL;
     use windows::Win32::{Foundation::{HWND, LPARAM, WPARAM}, UI::WindowsAndMessaging::*};

@@ -70,6 +70,7 @@ pub(super) struct Diagnostics {
     pub issues: Vec<Diagnostic>,
 }
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub(super) struct CommandMetadata {
     pub absolute_id: u32,
     pub registration: Registration,
@@ -96,6 +97,7 @@ fn find(menu: &IContextMenu) -> Option<Rc<Shared>> {
     let id = identity(menu)?;
     OVERLAYS.with(|items| items.try_borrow().ok()?.get(&id)?.upgrade())
 }
+#[allow(dead_code)]
 pub(super) fn diagnostics(menu: &IContextMenu) -> Option<Diagnostics> {
     let shared = find(menu)?;
     let state = shared.state.try_borrow().ok()?;
@@ -106,6 +108,7 @@ pub(super) fn diagnostics(menu: &IContextMenu) -> Option<Diagnostics> {
     result.supported_sources_complete &= shared.dropped.get() == 0;
     Some(result)
 }
+#[allow(dead_code)]
 pub(super) fn command_metadata(menu: &IContextMenu, absolute_id: u32) -> Option<CommandMetadata> {
     let shared = find(menu)?;
     let node = shared.node(absolute_id).ok()??;
@@ -525,6 +528,7 @@ struct Node {
     stable: bool,
     verb: String,
     title: String,
+    #[allow(dead_code)]
     icon: Option<String>,
     icon_hresult: Option<i32>,
     bitmap: Option<Rc<Bitmap>>,
@@ -543,6 +547,7 @@ impl Node {
     fn token(&self) -> usize {
         (&*self.marker as *const u8) as usize
     }
+    #[allow(dead_code)]
     fn metadata(&self) -> CommandMetadata {
         CommandMetadata {
             absolute_id: self.id,
@@ -577,6 +582,7 @@ struct Shared {
     base: IContextMenu,
     // Production construction always retains both real interfaces. Test doubles
     // can exercise COM/menu lifetime contracts without creating an Explorer view.
+    #[allow(dead_code)]
     browser: Option<IExplorerBrowser>,
     view: Option<IShellView>,
     owner: HWND,

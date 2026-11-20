@@ -2,6 +2,7 @@
 //! The original caller still performs its own validation and receives results.
 use std::{collections::{HashSet,HashMap},path::{Path,PathBuf},sync::{Arc,atomic::{AtomicBool,Ordering},mpsc},thread::{self,JoinHandle},time::{Duration,Instant}};
 use anyhow::{Context,Result,ensure};
+#[allow(unused_imports)]
 use windows::{core::{w,BOOL,Interface,PCWSTR},Win32::{Foundation::{HWND,LPARAM,WPARAM},System::{Com::{CoCreateInstance,CoInitializeEx,CoUninitialize,CLSCTX_INPROC_SERVER,COINIT_MULTITHREADED},Variant::VARIANT},UI::{Accessibility::*,Controls::*,Input::KeyboardAndMouse::IsWindowEnabled,WindowsAndMessaging::*}}};
 use crate::window::picker::{Event,FileType,NativeReply,Options,Outcome,SelectionKind};
 pub(crate) mod guard;

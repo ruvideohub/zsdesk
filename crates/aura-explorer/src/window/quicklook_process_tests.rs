@@ -41,7 +41,7 @@ unsafe extern "system" fn enumerate(window:HWND,lp:LPARAM)->BOOL{
 }
 fn titles(desktop:&Desktop,pid:u32)->Vec<String>{
     let mut titles=Titles{pid,values:Vec::new()};
-    unsafe{EnumDesktopWindows(desktop.0,Some(enumerate),LPARAM((&mut titles as*mut Titles)as isize));}
+    unsafe{let _=EnumDesktopWindows(desktop.0,Some(enumerate),LPARAM((&mut titles as*mut Titles)as isize));}
     titles.values
 }
 fn limited_token()->anyhow::Result<Handle>{

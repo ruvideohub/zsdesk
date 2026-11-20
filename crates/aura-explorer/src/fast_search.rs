@@ -38,6 +38,7 @@ pub struct SearchEvent{
     pub backend:BackendKind,pub phase:IndexPhase,pub volumes:Vec<VolumeStatus>,pub read_only:bool,
 }
 #[derive(Clone)]struct Request{generation:u64,query:String,preferred:Option<PathBuf>,invalid:Option<String>,offset:u32,limit:u32,sort:SearchSort}
+#[allow(dead_code)]
 #[derive(Clone,Copy,Default,PartialEq)]enum ScanAction{#[default]None,Refresh,Rebuild}
 #[derive(Default)]struct Control{request:Option<Request>,action:ScanAction,release_idle:bool,settings_changed:bool}
 struct Shared{
@@ -82,6 +83,7 @@ impl FastSearch{
     pub fn new_with_options(path:PathBuf,hwnd:HWND,message:u32,options:SearchOptions)->Result<Self>{Self::create(path,hwnd,message,options,None,None,None)}
     pub fn new_with_notifier(path:PathBuf,options:SearchOptions,notifier:Arc<dyn Fn()+Send+Sync>)->Result<Self>{Self::create(path,HWND::default(),0,options,None,Some(notifier),None)}
     pub fn for_profile(profile:&Path,hwnd:HWND,message:u32,options:SearchOptions)->Result<Self>{
+        #[allow(unused_imports)]
         use sha2::{Digest,Sha256};let profile=std::path::absolute(profile)?;
         #[cfg(test)]let path=profile.with_file_name("search-index.zsi");
         #[cfg(not(test))]let path={let identity=fs::canonicalize(&profile).map(|p|path_key_native(&p)).unwrap_or_else(|_|profile.clone());

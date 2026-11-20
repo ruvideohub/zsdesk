@@ -1,5 +1,6 @@
 //! Modeless, DPI-aware utility panels sharing the application palette.
 use std::{cell::{RefCell,Cell},rc::Rc,path::{Path,PathBuf},sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}}};
+#[allow(unused_imports)]
 use anyhow::{Result,Context,ensure};
 use windows::{core::{w,PCWSTR},Win32::{Foundation::*,Graphics::Gdi::*,System::LibraryLoader::GetModuleHandleW,
     UI::{Controls::*,HiDpi::GetDpiForWindow,Input::KeyboardAndMouse::*,Shell::{ShellExecuteW,SetWindowSubclass,RemoveWindowSubclass,DefSubclassProc},WindowsAndMessaging::*}}};
@@ -44,7 +45,7 @@ pub(crate) fn show_search(profile:&Path)->Result<()>{
         let dark=dark&&!aura_windows::theme::high_contrast();
         let pointer=unsafe{GetWindowLongPtrW(hwnd,GWLP_USERDATA)}as*const RefCell<Panel>;let slot=unsafe{&*pointer};
         {let mut panel=slot.borrow_mut();let palette=Palette::for_mode(if dark{Mode::Dark}else{Mode::Light});
-            if palette.mode!=panel.palette.mode{panel.palette=palette;unsafe{DeleteObject(panel.brush.into());DeleteObject(panel.input_brush.into());}
+            if palette.mode!=panel.palette.mode{panel.palette=palette;unsafe{let _=DeleteObject(panel.brush.into());let _=DeleteObject(panel.input_brush.into());}
                 panel.brush=unsafe{CreateSolidBrush(rgb(palette.layer))};panel.input_brush=unsafe{CreateSolidBrush(rgb(palette.input_focused))};}
         }
         aura_windows::theme::set_dark_frame(hwnd,dark);
@@ -55,6 +56,7 @@ pub(crate) fn show_search(profile:&Path)->Result<()>{
     }
     show(HWND::default(),profile,Kind::Search,String::new())?;Ok(())
 }
+#[allow(dead_code)]
 pub(crate) fn about(owner:HWND,profile:&Path)->Result<()>{show(owner,profile,Kind::About,
     aura_core::tr_format!("AuraExplorer {} {}\r\n\r\n多标签文件管理器与桌面格子\r\n\r\n项目主页  github.com/qiu7824/aura" , env!("CARGO_PKG_VERSION"), crate::edition::name())).map(|_|())}
 #[allow(dead_code)]

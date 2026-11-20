@@ -27,6 +27,7 @@ thread_local!{
 }
 
 pub(super) fn configure(enabled:bool){ENABLED.with(|slot|slot.set(enabled));if !enabled{cancel();}}
+#[allow(dead_code)]
 pub(super) fn active()->bool{OBSERVATION.with(|slot|slot.get().is_some_and(|event|!event.finished&&!event.cancelled))}
 fn post(){
     let owner=HOST_HWND.with(Cell::get);

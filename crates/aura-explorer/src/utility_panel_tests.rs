@@ -1,6 +1,7 @@
 use super::*;
 use std::{time::{Duration,Instant},fs,thread,ffi::c_void};
 #[link(name="user32")]unsafe extern "system"{fn CreateDesktopW(name:*const u16,device:*const u16,mode:*const c_void,flags:u32,access:u32,attributes:*const c_void)->*mut c_void;fn SetThreadDesktop(value:*mut c_void)->i32;fn CloseDesktop(value:*mut c_void)->i32;}
+#[allow(dead_code)]
 #[link(name="user32")]unsafe extern "system"{fn PrintWindow(window:HWND,dc:HDC,flags:u32)->i32;fn EnumDesktopWindows(desktop:*mut c_void,callback:Option<unsafe extern "system" fn(HWND,LPARAM)->windows::core::BOOL>,data:LPARAM)->windows::core::BOOL;fn GetUserObjectInformationW(handle:*mut c_void,index:i32,info:*mut c_void,length:u32,needed:*mut u32)->windows::core::BOOL;}
 #[link(name="user32")]unsafe extern "system"{
     fn CreateWindowStationW(name:*const u16,flags:u32,access:u32,security:*const c_void)->*mut c_void;
@@ -33,7 +34,7 @@ fn capture(hwnd:HWND,path:&Path)->Result<()>{
     let children={let p=panel.borrow();vec![p.edit,p.list,p.action,p.close,unsafe{GetDlgItem(Some(hwnd),14)}.unwrap_or_default()]};
     for child in children{if child.0.is_null(){continue;}let mut bounds=RECT::default();unsafe{GetWindowRect(child,&mut bounds)?;}
         let mut origin=POINT{x:bounds.left,y:bounds.top};unsafe{ScreenToClient(hwnd,&mut origin)}.ok()?;
-        let saved=unsafe{SaveDC(surface.dc)};unsafe{SetViewportOrgEx(surface.dc,origin.x,origin.y,None);
+        let saved=unsafe{SaveDC(surface.dc)};unsafe{let _=SetViewportOrgEx(surface.dc,origin.x,origin.y,None);
             SendMessageW(child,WM_PRINT,Some(WPARAM(surface.dc.0 as usize)),Some(LPARAM((PRF_CLIENT|PRF_NONCLIENT|PRF_ERASEBKGND|PRF_CHILDREN)as isize)));
             if saved!=0{RestoreDC(surface.dc,saved);}}
     }

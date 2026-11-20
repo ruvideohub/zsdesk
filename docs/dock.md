@@ -78,7 +78,7 @@
   `AuraExplorer.exe`: скруглённая полоса с тремя плитками. Размеры 16…256, каждый нарисован
   отдельно с 4-кратным запасом, поэтому 16 и 20 px читаются, а не превращаются в кашу.
 - `crates/aura-dock/resources/aura-dock.rc` — иконка `101 ICON` и `VERSIONINFO`
-  (`AuraDock`, 0.3.18, MIT и упоминание Laminar Dock).
+  (`AuraDock`, 0.3.21, MIT и упоминание Laminar Dock).
 - `crates/aura-dock/build.rs` — встраивает `.rc` через `embed-resource` (тот же приём,
   что у `aura-explorer`; манифест панели не нужен, поэтому `manifest_optional`).
 - `scripts/make-icons.py` — перерисовывает `.ico` из кода: `python3 scripts/make-icons.py`.

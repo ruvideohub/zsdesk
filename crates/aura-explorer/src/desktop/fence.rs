@@ -105,6 +105,7 @@ impl Cells {
         Self{first_cell,count,columns:columns.max(1),dx,dy:dy.max(1)}
     }
     pub fn len(&self)->usize{self.count}
+    #[allow(dead_code)]
     pub fn is_empty(&self)->bool{self.count==0}
     pub fn at(&self,i:usize)->Cell{
         debug_assert!(i<self.count);
@@ -166,6 +167,7 @@ impl Geometry {
         }
         geometry
     }
+    #[allow(dead_code)]
     pub fn new(width: i32, height: i32, dpi: u32, fence: &Fence, count: usize, scroll: i32, browsing: bool) -> Self {
         Self::with_collapse(width,height,dpi,fence,count,scroll,browsing,fence.collapsed)
     }

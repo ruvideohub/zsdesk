@@ -18,6 +18,7 @@ use windows::{
         },
     },
 };
+#[allow(unused_imports)]
 use aura_core::model::desktop::{auto_layout, categorize, distribute, sort_items, snap, drag_rect, Bounds, Category, DesktopConfig,
     Edges as CoreEdges, Fence, FenceAccent, FenceSort, FenceSource, FenceTheme, FenceView, IconSize, ItemInfo, Placement, MIN_FENCE_H, MIN_FENCE_W, TITLE_H};
 use aura_ui::{chrome::scale, menus::{entry, menu, submenu, MenuItemSpec, MenuSpec}, theme::{FencePalette, Mode}};
@@ -232,6 +233,7 @@ impl DesktopAnchor {
     }
 }
 
+#[allow(dead_code)]
 fn window_precedes(upper: HWND, lower: HWND) -> bool {
     let mut window = unsafe { GetWindow(lower, GW_HWNDPREV) }.unwrap_or_default();
     let mut visited = HashSet::new();
@@ -691,6 +693,7 @@ impl DesktopHost {
         self.refresh_desktop();
     }
 
+    #[allow(dead_code)]
     fn create_catch_all(&mut self) {
         let monitor = primary_monitor();
         let id = self.config.take_id();

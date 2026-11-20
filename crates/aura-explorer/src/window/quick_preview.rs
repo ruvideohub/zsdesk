@@ -1,8 +1,10 @@
 //! Modeless, read-only file preview with bounded local fallbacks.
 
+#[allow(unused_imports)]
 use std::{cell::{Cell, RefCell}, fs::{self, File}, io::Read, mem::size_of,
     path::{Path, PathBuf}, ptr, rc::Rc};
 use anyhow::{bail, Context, Result};
+#[allow(unused_imports)]
 use windows::{core::{implement, Error, Interface, PCWSTR, PWSTR, HRESULT}, Win32::{
     Foundation::{COLORREF, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM},
     Globalization::{MultiByteToWideChar, CP_ACP, MB_ERR_INVALID_CHARS},
@@ -530,6 +532,7 @@ fn closes_preview(message: &MSG) -> bool {
     message.message == WM_KEYDOWN && (message.wParam.0 == VK_ESCAPE.0 as usize || message.wParam.0 == VK_SPACE.0 as usize)
 }
 
+#[allow(dead_code)]
 fn system_preview(hwnd: HWND, path: &Path, rect: RECT) -> Result<SystemPreview> {
     system_preview_with_provider(hwnd, path, rect, PreviewProviderPreference::System,current_preview_colors(aura_windows::theme::system_dark_mode()))
 }
@@ -617,6 +620,7 @@ fn initialize_preview(handler: IPreviewHandler, hwnd: HWND, path: &Path, rect: R
 #[path="preview_lifecycle_regression.rs"]
 mod preview_lifecycle_regression;
 
+#[allow(dead_code)]
 fn preview_handler_clsid(path: &Path) -> Result<windows::core::GUID> {
     let extension = path.extension().and_then(|v| v.to_str()).context(aura_core::i18n::text("文件没有预览类型"))?;
     let extension = wide(&format!(".{extension}"));

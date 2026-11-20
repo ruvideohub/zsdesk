@@ -162,6 +162,7 @@ impl Index {
     }
     pub fn set_attributes(&mut self,row:u32,size:Option<u64>,modified:Option<u64>){if let Some(attrs)=&mut self.attributes{attrs.size[row as usize]=size.unwrap_or(UNKNOWN);attrs.modified[row as usize]=modified.unwrap_or(UNKNOWN);}}
     pub fn invalidate_id(&mut self,id:u64){for row in self.rows_for_id(id){self.set_attributes(row,None,None);}}
+    #[allow(dead_code)]
     pub fn apply_exclusions(&mut self,enabled:bool){for row in 1..self.len(){self.flags[row]&=!EXCLUDED;if enabled&&self.flags[row]&DIRECTORY!=0&&excluded_name(self.names.folded(self.name[row])){self.flags[row]|=EXCLUDED;}}}
     pub fn compact(&mut self)->Result<()>{
         let end=self.len() as u32;

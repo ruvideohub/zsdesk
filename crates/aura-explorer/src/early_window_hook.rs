@@ -24,7 +24,7 @@ impl Hook{
     }
 }
 impl Drop for Hook{fn drop(&mut self){unsafe{
-    if !self.event.0.is_null(){UnhookWinEvent(self.event);}
+    if !self.event.0.is_null(){let _=UnhookWinEvent(self.event);}
     if !self.window.0.is_null(){let _=DestroyWindow(self.window);}
     let _=UnregisterClassW(self.class,Some(self.instance));
     if !self.module.0.is_null(){let _=FreeLibrary(self.module);}

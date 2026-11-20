@@ -53,6 +53,7 @@ use windows::{
     },
 };
 use aura_ui::menus::{MenuItemSpec, MenuSpec, UiCommand};
+#[allow(unused_imports)]
 use aura_windows::{desktop::{self, DesktopHit}, gfx::Gfx, ole::DropHandler, shell::{menu::{forward_menu_message, HistoryAction, MenuInterceptions, MenuOutcome, ShellMenu, APP_FIRST}, notify::read_change}};
 
 use host::{After, DesktopHost, TIMER_AUTOSCROLL, TIMER_DESKTOP, TIMER_FOLDER, TIMER_PEEK, TIMER_SAVE, TIMER_ICONS, WM_DESKTOP_CHANGED, WM_DESKTOP_DBLCLICK, WM_FOLDER_CHANGED,
@@ -1019,6 +1020,7 @@ fn run_verb(fence: u64, verb: &'static str, background: bool) {
 }
 
 /// Inserts application items (ZSUI spec) at the top of a Shell menu.
+#[allow(dead_code)]
 fn insert_top(hmenu: HMENU, items: &[MenuItemSpec]) -> Vec<String> {
     let mut ids = Vec::new();
     let mut position = 0u32;
@@ -1027,6 +1029,7 @@ fn insert_top(hmenu: HMENU, items: &[MenuItemSpec]) -> Vec<String> {
     ids
 }
 
+#[allow(dead_code)]
 fn insert_item(hmenu: HMENU, position: &mut u32, item: &MenuItemSpec, ids: &mut Vec<String>) {
     match item {
         MenuItemSpec::Command { label, command: UiCommand::Custom { id, .. }, checked, enabled, .. } => {

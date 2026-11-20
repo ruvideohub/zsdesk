@@ -51,6 +51,7 @@ fn read_snapshot(browser:&IWebBrowser2,window:HWND,pid:u32)->windows::core::Resu
     let this_pc=folder.to_string_lossy().eq_ignore_ascii_case("::{20D04FE0-3AEA-1069-A2D8-08002B30309D}");
     Ok(Snapshot{window,pid,folder,selected,browser:browser.clone(),this_pc})
 }
+#[allow(dead_code)]
 fn snapshots(shell:&IShellWindows)->Result<Snapshots>{
     snapshots_for(shell,None)
 }

@@ -277,6 +277,7 @@ impl Instance {
         if exists { return Ok(None); }
         Ok(Some(Self { _mutex: mutex, events, stop_requested: Arc::new(AtomicBool::new(false)) }))
     }
+    #[allow(dead_code)]
     pub fn stopping(&self) -> bool { self.stop_requested.load(Ordering::Acquire) }
     pub fn listen_native(&self, window:windows::Win32::Foundation::HWND, message:u32) -> Result<Listener> {
         let window=window.0 as isize;

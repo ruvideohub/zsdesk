@@ -2,8 +2,11 @@
 //! Only PIDL bytes and application command IDs cross the desktop UI boundary.
 use std::{cell::{Cell,RefCell},collections::VecDeque,path::{Path,PathBuf},sync::{Arc,Mutex,atomic::{AtomicBool,AtomicIsize,AtomicU64,Ordering},mpsc},thread::{self,JoinHandle},time::{Duration,Instant}};
 use std::os::windows::fs::MetadataExt;
+#[allow(unused_imports)]
 use windows::{core::{w,PCWSTR},Win32::{Foundation::{HINSTANCE,HWND,LPARAM,LRESULT,POINT,WPARAM},System::{LibraryLoader::GetModuleHandleW,Ole::{OleInitialize,OleUninitialize,OleFlushClipboard},Threading::GetCurrentThreadId,DataExchange::GetClipboardOwner},UI::{Input::KeyboardAndMouse::{SetActiveWindow,SetFocus},WindowsAndMessaging::*}}};
+#[allow(unused_imports)]
 use aura_ui::menus::{MenuItemSpec,MenuSpec};
+#[allow(unused_imports)]
 use aura_windows::shell::menu::{forward_menu_message,MenuInterceptions,MenuOutcome,ShellMenu};
 
 const CLASS:PCWSTR=w!("AuraExplorer.Desktop.MenuOwner");
@@ -20,6 +23,7 @@ pub(super) const READY:u32=super::protocol::Message::MenuReady as u32;
 pub(super) enum Target{Items{pidls:Vec<Vec<u8>>,key:Option<String>},Background{folder:Option<PathBuf>}}
 #[derive(Clone)]
 pub(super) struct Request{
+    #[allow(dead_code)]
     pub fence:u64,pub owner:isize,pub point:POINT,pub profile:PathBuf,pub items:Vec<MenuItemSpec>,pub target:Target,pub extended:bool,
     pub generation:u64,pub queued:Instant,pub input_started:Instant,pub ui_thread:u32,pub foreground:isize,
     pub mode:crate::context_menu_process::Mode,
@@ -46,6 +50,7 @@ impl Drop for ValidationEvent{fn drop(&mut self){let _=unsafe{windows::Win32::Fo
 pub(super) struct ValidationAnswer{sender:mpsc::SyncSender<bool>,wake:Arc<ValidationEvent>}
 impl ValidationAnswer{
     fn wake(&self){let _=unsafe{windows::Win32::System::Threading::SetEvent(windows::Win32::Foundation::HANDLE(self.wake.0 as*mut _))};}
+    #[allow(dead_code)]
     pub fn send(&self,value:bool)->Result<(),mpsc::SendError<bool>>{let result=self.sender.send(value);self.wake();result}
     pub fn try_send(&self,value:bool)->Result<(),mpsc::TrySendError<bool>>{let result=self.sender.try_send(value);self.wake();result}
 }

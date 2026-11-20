@@ -17,11 +17,16 @@ use windows::{core::PCWSTR, Win32::{
 
 const BUFFER_BYTES: usize = 256 * 1024;
 const IO_TIMEOUT: Duration = Duration::from_secs(4);
+#[allow(dead_code)]
 pub const DIRECTORY: u32 = 0x10;
 pub const REPARSE: u32 = 0x400;
+#[allow(dead_code)]
 pub const FILE_DELETE: u32 = 0x200;
+#[allow(dead_code)]
 pub const RENAME_OLD: u32 = 0x1000;
+#[allow(dead_code)]
 pub const RENAME_NEW: u32 = 0x2000;
+#[allow(dead_code)]
 pub const HARD_LINK_CHANGE: u32 = 0x10000;
 
 struct Handle(HANDLE);
@@ -37,6 +42,7 @@ impl Journal {
 
 #[derive(Clone, Debug)]
 pub struct Record {
+    #[allow(dead_code)]
     pub id: u64, pub parent: u64, pub usn: i64, pub reason: u32,
     pub attributes: u32, pub name: OsString,
 }
@@ -79,6 +85,7 @@ fn parse_records(bytes:&[u8],nameless:bool)->Result<Page> {
 }
 
 pub struct Volume {
+    #[allow(dead_code)]
     pub root: PathBuf, pub serial: u32, pub root_id: u64,
     handle: Handle, event: Handle, buffer: Vec<u8>,
     unprivileged:bool,

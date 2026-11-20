@@ -87,7 +87,7 @@ impl Panel{
                 }
             }y=bottom;
         }
-        if saved!=0{unsafe{RestoreDC(dc,saved);}}
+        if saved!=0{unsafe{let _=RestoreDC(dc,saved);}}
     }
 }
 

@@ -41,6 +41,7 @@ impl ViewSnapshot {
     }
 
     pub fn tab(&self) -> u64 { self.identity.tab }
+    #[allow(dead_code)]
     pub fn source(&self) -> usize { self.identity.source }
     pub fn input_identity(&self)->super::super::pane_input::Identity{
         super::super::pane_input::Identity{source:self.identity.source,tab:self.identity.tab,epoch:self.identity.navigation}

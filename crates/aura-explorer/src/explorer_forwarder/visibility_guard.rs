@@ -337,7 +337,7 @@ fn run_guard()->Result<()>{
     })?;
     WATCHER.with(|slot|*slot.borrow_mut()=Some(Watcher{enabled:false,heartbeat:now(),known:HashSet::new(),entries:HashMap::new(),serial:1,output}));
     COMMANDS.with(|slot|*slot.borrow_mut()=Some(commands));
-    struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in self.0.drain(..){unsafe{UnhookWinEvent(hook);}}}}
+    struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in self.0.drain(..){unsafe{let _=UnhookWinEvent(hook);}}}}
     struct Recovery;impl Drop for Recovery{fn drop(&mut self){WATCHER.with(|slot|{if let Some(mut watcher)=slot.borrow_mut().take(){watcher.restore_all("guard-exit");}});}}
     let _recovery=Recovery;let mut hooks=Hooks(Vec::new());
     // The show hook is an optimisation: without it the out-of-context events below still

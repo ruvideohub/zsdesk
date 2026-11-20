@@ -578,6 +578,7 @@ impl WindowState {
 
     /// Integration health check: if the registered executable no longer exists
     /// (moved or upgraded to another folder), point the verbs at this copy.
+    #[allow(dead_code)]
     fn check_integration(&mut self) {
         use aura_windows::integration::{self, Integration};
         let level = integration::current();

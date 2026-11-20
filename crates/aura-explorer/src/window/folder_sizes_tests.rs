@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::{Result,ensure,Context};
+#[allow(unused_imports)]
 use windows::{core::PCWSTR,Win32::{Foundation::{HINSTANCE,LPARAM,LRESULT,RECT,WPARAM},System::{LibraryLoader::GetModuleHandleW,Ole::{OleInitialize,OleUninitialize}},
     UI::{Shell::{IShellItem2,IShellItemArray,_SVGIO,SVGIO_FLAG_VIEWORDER,SORTCOLUMN,SORT_ASCENDING,SORT_DESCENDING,CM_COLUMNINFO,CM_MASK_WIDTH},WindowsAndMessaging::*}}};
 use aura_windows::shell::{Panes,commands::{PKEY_NAME,PKEY_SIZE,Column},WM_SHELL_NAVIGATED,WM_SHELL_FOLDER_INVOKED,WM_SHELL_SELECTION_CHANGED,acknowledge_selection_changed,shell_item};

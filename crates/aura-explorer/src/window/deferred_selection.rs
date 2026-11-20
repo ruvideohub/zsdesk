@@ -14,6 +14,7 @@ impl WindowState {
             names,rename,rename_requested:None,deadline:Instant::now()+duration,cursor:0,input:global_search::InputWatch::new()});
         unsafe{SetTimer(Some(self.hwnd),TIMER,50,None);}
     }
+    #[allow(dead_code)]
     pub(super) fn select_created_folder(&mut self,path:PathBuf){
         self.select_created_item(path,true);
     }

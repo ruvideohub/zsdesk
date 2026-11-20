@@ -972,6 +972,7 @@ impl WindowState {
         unsafe { self.request_integrated_search(true); }
     }
 
+    #[allow(dead_code)]
     pub(super) fn in_search_results(&self) -> bool { self.search_result.as_ref() == Some(self.current_location()) }
 
 }

@@ -1,3 +1,6 @@
+// The Windows UI Automation constants keep the names they are defined with: renaming them
+// here would make the code disagree with the documentation.
+#![allow(non_upper_case_globals)]
 use windows::{core::{Interface,IUnknown,Error,HRESULT,Result},Win32::{Foundation::{HWND,LPARAM,POINT,RECT},Graphics::Gdi::ScreenToClient,
     System::{Com::{IDispatch,CoCreateInstance,CLSCTX_INPROC_SERVER},Variant::{VARIANT,VT_I4}},UI::{Accessibility::*,Controls::*,WindowsAndMessaging::*}}};
 

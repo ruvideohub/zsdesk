@@ -1,6 +1,7 @@
 //! Read-only context construction across filesystem and Shell namespaces.
 use super::*;
 use std::{ffi::c_void,thread};
+#[allow(unused_imports)]
 use windows::core::HRESULT;
 #[link(name="user32")]unsafe extern "system"{
     fn CreateDesktopW(name:*const u16,device:*const u16,mode:*const c_void,flags:u32,access:u32,security:*const c_void)->*mut c_void;

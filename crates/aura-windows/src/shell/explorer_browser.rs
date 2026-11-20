@@ -6,6 +6,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
 #[cfg(all(target_arch = "x86_64", target_env = "msvc"))]
 extern "C" {
+    #[allow(dead_code)]
     fn zs_menu_query(browser: *mut core::ffi::c_void, service: *const windows::core::GUID,
         iid: *const windows::core::GUID, out: *mut *mut core::ffi::c_void) -> HRESULT;
     fn zs_menu_shutdown();
@@ -744,6 +745,7 @@ struct BrowserSite {
     picker:Rc<RefCell<Option<(String,bool,bool)>>>,
     hwnd: isize,
     source: usize,
+    #[allow(dead_code)]
     browser: Weak<IExplorerBrowser>,
     modern: Rc<Cell<bool>>,
     panes: Rc<Cell<Panes>>,

@@ -164,6 +164,7 @@ pub struct SearchPanelLayout {
 }
 
 impl SearchPanelLayout {
+    #[allow(dead_code)]
     fn new(width: i32, top: i32, dpi: u32) -> Self {
         let s = |v| scale(v, dpi);
         let margin = s(10).min(width / 2);

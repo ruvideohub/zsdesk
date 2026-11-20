@@ -8,6 +8,7 @@
 
 use std::{collections::{HashSet, VecDeque}, sync::{Arc, Condvar, Mutex, atomic::{AtomicUsize, Ordering}}, thread};
 
+#[allow(unused_imports)]
 use windows::{
     core::{Interface, PCWSTR},
     Win32::{

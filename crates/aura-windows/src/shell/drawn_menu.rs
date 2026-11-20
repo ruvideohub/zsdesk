@@ -597,6 +597,7 @@ fn mnemonic(session:&mut Session,character:char,gfx:&Gfx,colors:&Palette)->Resul
     if choices.len()==1{session.activate(depth,row,gfx,colors,true)}else{Ok(Step::Continue)}
 }
 
+#[allow(dead_code)]
 pub(super) fn track(owner:HWND,menu:HMENU,point:POINT,context:&IContextMenu,options:&ContextMenuOptions,filter:bool)->Result<Option<u32>>{
     track_initialized(owner,menu,point,context,options,filter,false)
 }

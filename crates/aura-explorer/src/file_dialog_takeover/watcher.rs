@@ -43,6 +43,7 @@ impl Claim{
     pub fn token(&self)->u64{self.lease.token}
     pub fn active(&self)->bool{marked(&self.lease)}
     pub fn bind(&self,window:isize)->Result<()>{ensure!(self.active(),"原文件选择窗口已恢复");command(&self.pipe,&Control::Bind(self.token(),window))}
+    #[allow(dead_code)]
     pub fn complete(mut self)->Result<()>{ensure!(self.active(),"原文件选择窗口已恢复");command(&self.pipe,&Control::Complete(self.token()))?;self.transferred=true;Ok(())}
 }
 impl Drop for Claim{fn drop(&mut self){if !self.transferred{let _=command(&self.pipe,&Control::Restore(self.token()));restore(&self.lease);}}}
@@ -204,7 +205,7 @@ fn run()->Result<()>{
         Ok(hook)=>Some(hook),
         Err(error)=>{crate::window::diagnostics::record("dialog-guard",&format!("early-hook-missing-{error:#}"),None);None},
     };
-    struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in &self.0{unsafe{UnhookWinEvent(*hook);}}}}let mut hooks=Hooks(Vec::new());
+    struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in &self.0{unsafe{let _=UnhookWinEvent(*hook);}}}}let mut hooks=Hooks(Vec::new());
     for kind in [EVENT_OBJECT_CREATE,EVENT_OBJECT_SHOW,EVENT_OBJECT_NAMECHANGE,EVENT_SYSTEM_FOREGROUND,EVENT_OBJECT_DESTROY]{let hook=unsafe{SetWinEventHook(kind,kind,None,Some(event),0,0,WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS)};ensure!(!hook.0.is_null(),"file dialog event hook unavailable");hooks.0.push(hook);}
     WATCHER.with(|slot|{if let Some(watcher)=slot.borrow_mut().as_mut(){watcher.control(Control::Enable(true));let _=watcher.output.try_send(Event::Ready);}});
     while !dead.load(Ordering::Acquire)&&unsafe{WaitForSingleObject(parent.0,0)}==WAIT_TIMEOUT{

@@ -4,7 +4,7 @@ Windows 多标签文件管理器与桌面格子。可以在一个窗口里浏览
 
 [下载安装](https://github.com/qiu7824/aura/releases/latest) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/aura/issues)
 
-适用于 Windows 10 / 11，64 位。当前版本为 **0.3.18**，支持简体中文和英文界面。
+适用于 Windows 10 / 11，64 位。当前版本为 **0.3.21**，支持简体中文和英文界面。
 
 English UI is available. Non-Chinese Windows systems use English by default. Choose **≡ → Language → English** to change the application language immediately. Each package includes `README.en.txt`.
 
@@ -51,7 +51,7 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 - **右键**：Windows 10 使用经典系统菜单；Windows 11 按系统能力选择已验证的原生呈现或公共 Shell 命令兼容呈现。Shift 右键可直接使用经典菜单。
 - **Listary**：安装和连接方式见[详细使用说明](docs/user-guide.md)及 `integrations/listary`。
 
-## 0.3.18 更新
+## 0.3.21 更新
 
 - 右键顶部标签关闭所点页，右键标签栏空白处关闭当前页，Shift+右键打开标签菜单。
 

@@ -92,6 +92,7 @@ pub fn default_session() -> ExplorerSession {
     session
 }
 
+#[allow(dead_code)]
 pub fn save(path: &Path, session: &ExplorerSession) -> Result<()> {
     let _write = SAVE_LOCK.lock().map_err(|_| anyhow::anyhow!("会话保存锁异常"))?;
     save_unlocked(path, session)
@@ -115,6 +116,7 @@ pub fn save_forwarding(path:&Path,registered:bool,enabled:bool)->Result<()>{
     if registered{session.ui.forward_unhandled_windows=enabled;}else{session.ui.forward_while_running=enabled;}
     save_unlocked(path,&session)
 }
+#[allow(dead_code)]
 pub fn save_language(path:&Path,language:aura_core::i18n::LanguagePreference)->Result<()>{
     let _write=SAVE_LOCK.lock().map_err(|_|anyhow::anyhow!("会话保存锁异常"))?;
     let mut session=if path.try_exists()?{load(path)?}else{default_session()};session.ui.language=language;save_unlocked(path,&session)
@@ -136,6 +138,7 @@ pub fn save_context_menu(path:&Path,options:&aura_core::model::explorer::Context
 
 /// A secondary window owns its appearance and bookmarks, while the primary
 /// window remains the owner of the persisted tab session.
+#[allow(dead_code)]
 pub fn save_window(path: &Path, session: &ExplorerSession, secondary: bool) -> Result<()> {
     let _write = SAVE_LOCK.lock().map_err(|_| anyhow::anyhow!("会话保存锁异常"))?;
     if secondary {

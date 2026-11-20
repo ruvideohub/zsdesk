@@ -49,6 +49,7 @@ pub(super) struct Registration {
 
 #[derive(Clone, Debug)]
 pub(super) struct DiscoveryFailure {
+    #[allow(dead_code)]
     pub package_full_name: Option<String>,
     pub manifest: Option<PathBuf>,
     pub stage: &'static str,
@@ -59,6 +60,7 @@ pub(super) struct DiscoveryFailure {
 
 #[derive(Clone, Debug)]
 pub(super) struct ExcludedPackage {
+    #[allow(dead_code)]
     pub package_full_name: String,
     pub reason: &'static str,
 }
@@ -242,6 +244,7 @@ static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 
 /// Invalidate after a known package-registration change or activation failure.
 /// Parsed manifests still reuse their identities/metadata on the next scan.
+#[allow(dead_code)]
 pub(super) fn invalidate_cache() {
     let mut cache = CACHE
         .get_or_init(Default::default)

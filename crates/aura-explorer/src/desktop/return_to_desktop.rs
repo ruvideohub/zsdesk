@@ -1,6 +1,8 @@
 //! Move out of a fence using Shell file operations, then publish loose desktop
 //! icons. Files already on either desktop only change visual membership.
+#[allow(unused_imports)]
 use std::{cell::RefCell, path::{Path, PathBuf}, rc::Rc, sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}}, time::Duration};
+#[allow(unused_imports)]
 use windows::{core::{implement, Error, HRESULT, Interface, PCWSTR, Ref, Result}, Win32::{
     Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM},
     System::{Com::{CoCreateInstance, CoTaskMemFree, IDataObject, CLSCTX_INPROC_SERVER},
@@ -22,6 +24,7 @@ fn destination()->Option<PathBuf>{
 }
 pub(super) fn pending() -> usize { usize::from(ACTIVE.load(Ordering::Acquire)) }
 fn error(message: &str) -> Error { Error::new(HRESULT(0x80004005u32 as i32), message) }
+#[allow(dead_code)]
 fn wide(path: &Path) -> Vec<u16> { use std::os::windows::ffi::OsStrExt; path.as_os_str().encode_wide().chain(Some(0)).collect() }
 fn same_path(a: &Path, b: &Path) -> bool { crate::explorer_forwarder::same_path(a, b) }
 fn completed_move(result:HRESULT)->bool {
@@ -68,9 +71,11 @@ impl IFileOperationProgressSink_Impl for Progress_Impl {
     fn ResetTimer(&self)->Result<()> { Ok(()) } fn PauseTimer(&self)->Result<()> { Ok(()) } fn ResumeTimer(&self)->Result<()> { Ok(()) }
 }
 
+#[allow(dead_code)]
 fn move_files(owner: isize, paths: Vec<PathBuf>, destination: PathBuf, progress: Arc<Mutex<ProgressState>>,copy:bool) -> Result<()> {
     move_files_inner(owner,paths,destination,progress,false,false,copy)
 }
+#[allow(dead_code)]
 fn move_files_inner(owner: isize, paths: Vec<PathBuf>, destination: PathBuf, progress: Arc<Mutex<ProgressState>>, quiet:bool, cancel_before:bool,copy:bool) -> Result<()> {
     unsafe { OleInitialize(None)?; }
     struct Apartment; impl Drop for Apartment { fn drop(&mut self) { unsafe { OleUninitialize(); } } }

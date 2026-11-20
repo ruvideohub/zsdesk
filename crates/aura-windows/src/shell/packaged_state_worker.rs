@@ -1341,6 +1341,7 @@ mod client {
         started: Instant,
     }
     impl Ticket {
+        #[allow(dead_code)]
         pub fn pid(&self) -> u32 {
             self.child.as_ref().map_or(0, |child| child.pid)
         }
@@ -1974,6 +1975,7 @@ mod client {
 pub use client::{
     cleanup_errors as packaged_state_cleanup_errors, pending as pending_packaged_state_workers,
 };
+#[allow(unused_imports)]
 pub use client::{
     run_test_entry as run_packaged_state_test_worker,
     test_entry as packaged_state_worker_test_entry, TestEntryGuard,

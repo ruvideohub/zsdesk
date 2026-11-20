@@ -4,9 +4,9 @@
 # because AuraExplorer ships and updates itself.
 [package]
 name = "aura-dock"
-version = "0.3.18"
+version.workspace = true
 edition = "2021"
-rust-version = "1.88"
+rust-version.workspace = true
 description = "AuraDock: the panel and Launchpad of the AuraExplorer desktop (Rust + Windows Composition)"
 publish = false
 

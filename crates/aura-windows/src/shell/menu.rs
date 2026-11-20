@@ -94,6 +94,7 @@ pub fn active_command_by_verb(verb:&str)->Option<u32>{
 pub type ViewMenuDelegate=fn(HWND,&IShellView,HWND,LPARAM,ViewMenuTarget)->Result<()>;
 thread_local!{static VIEW_MENU_DELEGATE:Cell<Option<ViewMenuDelegate>>=const{Cell::new(None)};}
 pub fn set_view_menu_delegate(delegate:Option<ViewMenuDelegate>){VIEW_MENU_DELEGATE.with(|current|current.set(delegate));}
+#[allow(dead_code)]
 pub(crate) fn view_menu_is_delegated()->bool{VIEW_MENU_DELEGATE.with(|current|current.get().is_some())}
 pub type MenuDiagnosticDelegate=fn(&str,windows::core::HRESULT);
 thread_local!{static DIAGNOSTIC:Cell<Option<MenuDiagnosticDelegate>>=const{Cell::new(None)};}

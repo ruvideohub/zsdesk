@@ -16,6 +16,7 @@ pub(super) fn supported(path:&Path)->bool{
         "mp4"|"m4v"|"mov"|"mkv"|"avi"|"wmv"|"webm"|"mp3"|"m4a"|"aac"|"wav"|"wma"|"flac"|"ogg"|
         "3gp"|"3g2"|"3gp2"|"3gpp"|"asf"|"adts"))
 }
+#[allow(dead_code)]
 fn wide(value:&str)->Vec<u16>{value.encode_utf16().chain(Some(0)).collect()}
 fn audio_only(path:&Path)->bool{path.extension().is_some_and(|extension|matches!(extension.to_string_lossy().to_ascii_lowercase().as_str(),"mp3"|"m4a"|"aac"|"wav"|"wma"|"flac"|"ogg"|"adts"))}
 fn playback_error(code:Option<HRESULT>)->String{
@@ -112,7 +113,7 @@ impl State{
         let mut ps=PAINTSTRUCT::default();let dc=unsafe{BeginPaint(self.hwnd.get(),&mut ps)};let rect=self.bounds();
         let old_font=unsafe{SelectObject(dc,GetStockObject(DEFAULT_GUI_FONT))};
         let color=if self.dark.get(){0x202020}else{0xf7f7f7};let brush=unsafe{CreateSolidBrush(COLORREF(color))};
-        unsafe{FillRect(dc,&rect,brush);DeleteObject(brush.into());SetBkMode(dc,TRANSPARENT);SetTextColor(dc,COLORREF(if self.dark.get(){0xf0f0f0}else{0x202020}));}
+        unsafe{FillRect(dc,&rect,brush);let _=DeleteObject(brush.into());SetBkMode(dc,TRANSPARENT);SetTextColor(dc,COLORREF(if self.dark.get(){0xf0f0f0}else{0x202020}));}
         let footer=RECT{left:12,top:(rect.bottom-self.footer_height()).max(0),right:(rect.right-12).max(12),bottom:rect.bottom};
         let text=if !self.notice.borrow().is_empty(){self.notice.borrow().clone()}else if let Some(engine)=self.engine(){
             let current=unsafe{engine.GetCurrentTime()};let duration=unsafe{engine.GetDuration()};

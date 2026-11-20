@@ -1,4 +1,5 @@
 //! Optional notification-area entry for the file manager host.
+#[allow(unused_imports)]
 use windows::{core::{w,PCWSTR},Win32::{Foundation::{HWND,LPARAM,WPARAM},System::LibraryLoader::GetModuleHandleW,
     UI::{Shell::*,WindowsAndMessaging::*}}};
 

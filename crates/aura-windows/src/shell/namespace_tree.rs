@@ -103,6 +103,7 @@ thread_local! {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn take_click_trace_for_test() -> Vec<(u32, u32, u32)> {
     CLICK_TRACE.with(|trace| std::mem::take(&mut *trace.borrow_mut()))
 }
@@ -889,7 +890,7 @@ mod tests {
         let probe=0x5a53_5245;
         unsafe{SetWindowSubclass(host.hwnd,Some(count_layout),probe,data).ok()?;
             SetWindowSubclass(actual,Some(count_layout),probe,data).ok()?;}
-        for _ in 0..16{unsafe{host.resize(rect);}}
+        for _ in 0..16{unsafe{let _=host.resize(rect);}}
         unsafe{RemoveWindowSubclass(host.hwnd,Some(count_layout),probe);
             RemoveWindowSubclass(actual,Some(count_layout),probe);}
         assert_eq!(changes.get(),0,"unchanged layout forced a native tree repaint");

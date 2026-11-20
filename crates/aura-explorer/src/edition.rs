@@ -14,6 +14,7 @@ pub const THEMED: bool = cfg!(feature = "themed")&&!DESKTOP_ONLY;
 
 pub const fn profile_name() -> &'static str { if DESKTOP_ONLY{"AuraExplorer-DesktopBox"}else if THEMED { "AuraExplorer-Theme" } else { "AuraExplorer" } }
 pub const fn application_id()->&'static str{if DESKTOP_ONLY{"AuraExplorer.DesktopBox"}else if THEMED{"AuraExplorer.Theme"}else{"AuraExplorer.Native"}}
+#[allow(dead_code)]
 pub const fn desktop_startup_value()->&'static str{if DESKTOP_ONLY{"AuraExplorer.DesktopBox.Desktop"}else if THEMED{"AuraExplorer.Theme.Desktop"}else{"AuraExplorer.Desktop"}}
 pub const fn application_mutex() -> &'static str {
     if DESKTOP_ONLY{"Local\\AuraExplorer.DesktopBox.Application"}else if THEMED { "Local\\AuraExplorer.Theme.Application" } else { "Local\\AuraExplorer.Native.Application" }
