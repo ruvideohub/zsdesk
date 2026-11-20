@@ -101,6 +101,8 @@ Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\AuraExplorer.exe"; AppUse
 #if (Int(HasDesktop) != 0) && (Edition != "desktop-box")
 Name: "{group}\{cm:Fences}"; Filename: "{app}\fences.exe"; Check: not WizardNoIcons
 #endif
+; The archiver: it needs nothing else from the bundle, so it gets its own entry.
+Name: "{group}\AuraArc — архиватор"; Filename: "{app}\AuraArc.exe"; Check: not WizardNoIcons and FileExists(ExpandConstant('{app}\AuraArc.exe'))
 ; One window for every start switch: the service's settings.
 Name: "{group}\{cm:LaunchSettings}"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Check: not WizardNoIcons
 

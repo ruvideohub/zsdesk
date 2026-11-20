@@ -50,6 +50,9 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # The launch service: one owner for everything that starts at logon.
           cargo build --locked --release -p aura-service --bins
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # The archiver: an exe of its own, so it ships in the bundle and alone.
+          cargo build --locked --release -p aura-arc --bins
           exit $LASTEXITCODE
       - name: Collect the executables
         working-directory: aura
@@ -63,6 +66,8 @@ jobs:
           Copy-Item -LiteralPath target/release/widgets.exe -Destination dist/widgets.exe
           # The service that starts and supervises the three of them.
           Copy-Item -LiteralPath target/release/auraservice.exe -Destination dist/auraservice.exe
+          # The archiver: one console exe, no service and no settings behind it.
+          Copy-Item -LiteralPath target/release/AuraArc.exe -Destination dist/AuraArc.exe
           # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
           # The window hook DLL is loaded by name from the executable folder; without it the
           # Explorer takeover guard cannot start at all.

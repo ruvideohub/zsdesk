@@ -1,0 +1,28 @@
+# AuraArc — the AuraUI archiver.
+#
+# A console program that works on its own: no panel, no service, no settings file. It makes and
+# reads `.zip` archives, so it can be shipped inside the bundle and handed out as a single exe.
+# The Explorer talks to it by starting it, the same way a user would.
+[package]
+name = "aura-arc"
+version = "0.3.18"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "AuraArc: packs and unpacks .zip archives for AuraUI"
+publish = false
+
+[[bin]]
+name = "AuraArc"
+path = "src/main.rs"
+
+[dependencies]
+flate2 = "1"
+crc32fast = "1"
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+]

@@ -162,11 +162,12 @@ if ($Remove) {
 Write-Head 'Установка AuraExplorer'
 
 # auraservice.exe — служба запуска, без неё компоненты никто не поднимает.
-# fences.exe — хост сеток рабочего стола, widgets.exe — виджет рабочего стола (часы).
+# fences.exe — хост сеток рабочего стола, widgets.exe — виджеты рабочего стола,
+# AuraArc.exe — архиватор (работает и сам по себе, без остальных файлов).
 # Оба необязательны: без них AuraExplorer сам поднимет сетки (`--desktop`), а панель —
 # часы во втором своём процессе, поэтому в списке обязательных их нет.
 $needed = @('AuraExplorer.exe', 'AuraDock.exe', 'auraservice.exe')
-$components = @('fences.exe', 'widgets.exe')
+$components = @('fences.exe', 'widgets.exe', 'AuraArc.exe')
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
