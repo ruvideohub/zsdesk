@@ -1066,6 +1066,7 @@ dependencies = [
 name = "aura-arc"
 version = "0.3.21"
 dependencies = [
+ "aura-windows",
  "crc32fast",
  "flate2",
  "windows",
