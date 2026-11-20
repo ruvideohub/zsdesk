@@ -17,14 +17,14 @@ use windows::Win32::Graphics::Gdi::{BeginPaint, BitBlt, EndPaint, InvalidateRect
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::Dialogs::{
-    GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
-    OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    GetOpenFileNameW, GetSaveFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST,
+    OFN_NOCHANGEDIR, OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
+    GetWindowLongPtrW, KillTimer, LoadCursorW, LoadIconW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
     SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
     CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCURSOR, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE,
     WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
@@ -35,8 +35,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::zip;
 
 /// Toolbar: what the window can do. The glyph is a Segoe MDL2 Assets code point.
-const TOOLS: [(&str, &str); 7] = [
+const TOOLS: [(&str, &str); 8] = [
     ("\u{e8b7}", "Открыть"),
+    // Создание архива: без этой кнопки пустое окно архиватора не давало ни одного пути к
+    // новому файлу — «Добавить» и «Извлечь» работают только с уже открытым архивом.
+    ("\u{e8f4}", "Новый архив"),
     ("\u{e710}", "Добавить"),
     ("\u{e896}", "Извлечь"),
     ("\u{e73e}", "Тест"),
@@ -458,6 +461,18 @@ impl App {
         self.load(archive);
     }
 
+    /// «Новый архив»: где будет `.zip`, а потом сразу выбор файлов для него.
+    ///
+    /// Архив создаёт первое добавление, поэтому окно сначала открывает выбранный путь как
+    /// новый архив («Новый архив: добавьте в него файлы») и лишь затем спрашивает файлы.
+    /// Отмена выбора файлов оставляет пустое окно нового архива — ничего не ломается, и
+    /// пользователь может нажать «Добавить» позже или перетащить файлы в окно.
+    fn new_archive(&mut self) {
+        let Some(path) = pick_new_archive(self.hwnd) else { return };
+        self.load(path);
+        self.add_files();
+    }
+
     fn load(&mut self, archive: PathBuf) {
         self.archive = Some(archive.clone());
         if archive.exists() && !is_archive(&archive) {
@@ -512,11 +527,12 @@ impl App {
     fn activate(&mut self, tool: usize) {
         match tool {
             0 => self.open_dialog(),
-            1 => self.add_files(),
-            2 => self.extract(),
-            3 => self.test(),
-            4 => self.copy_selected(),
-            5 => self.delete_selected(),
+            1 => self.new_archive(),
+            2 => self.add_files(),
+            3 => self.extract(),
+            4 => self.test(),
+            5 => self.copy_selected(),
+            6 => self.delete_selected(),
             _ => {
                 self.settings_open = !self.settings_open;
                 self.invalidate();
@@ -527,8 +543,10 @@ impl App {
     /// A tool is usable when it has something to work on; the row tools also need a row.
     fn enabled(&self, tool: usize) -> bool {
         match tool {
-            0 | 6 => true,
-            4 | 5 => !self.selected.is_empty(),
+            // «Открыть» и «Новый архив» нужны именно тогда, когда архива ещё нет; настройки
+            // не зависят ни от чего.
+            0 | 1 | 7 => true,
+            5 | 6 => !self.selected.is_empty(),
             _ => self.archive.is_some(),
         }
     }
@@ -776,10 +794,12 @@ impl App {
         cv.pop_clip();
 
         if self.visible.is_empty() {
-            let hint = if self.entries.is_empty() {
-                "Перетащите .zip на окно или нажмите «Открыть»"
-            } else {
+            let hint = if !self.entries.is_empty() {
                 "Ничего не найдено"
+            } else if self.archive.is_some() {
+                "Архив пуст: «Добавить» положит в него файлы, или перетащите их на окно"
+            } else {
+                "Перетащите .zip на окно, нажмите «Открыть» — или «Новый архив», чтобы создать свой"
             };
             cv.text(hint, RectF::new(l.rows.x, l.rows.y + 40.0, l.rows.w, 24.0), &style_center(13.0), p.text_secondary);
         }
@@ -1113,6 +1133,37 @@ fn pick_files(owner: HWND, several: bool, title: &str) -> Option<Vec<PathBuf>> {
     Some(claim_paths(&buffer))
 }
 
+/// The system picker for a *new* archive: a name to save under, with `.zip` filled in.
+fn pick_new_archive(owner: HWND) -> Option<PathBuf> {
+    let mut buffer = vec![0u16; 4096];
+    let suggestion = crate::wide("Архив.zip");
+    buffer[..suggestion.len()].copy_from_slice(&suggestion);
+    let filter: Vec<u16> = crate::wide("Архивы (*.zip)\0*.zip\0Все файлы\0*.*\0\0");
+    let caption = crate::wide("Новый архив");
+    let extension = crate::wide("zip");
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        hwndOwner: owner,
+        lpstrFilter: PCWSTR(filter.as_ptr()),
+        lpstrFile: PWSTR(buffer.as_mut_ptr()),
+        nMaxFile: buffer.len() as u32,
+        lpstrTitle: PCWSTR(caption.as_ptr()),
+        lpstrDefExt: PCWSTR(extension.as_ptr()),
+        Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_OVERWRITEPROMPT,
+        ..Default::default()
+    };
+    if !unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
+        return None;
+    }
+    let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
+    let mut path = PathBuf::from(String::from_utf16_lossy(&buffer[..end]));
+    // Клавиатурный ввод без расширения — обычное дело; архиватор без `.zip` не откроет.
+    if !path.to_ascii_lowercase().to_string_lossy().ends_with(".zip") {
+        path.set_extension("zip");
+    }
+    Some(path)
+}
+
 /// The picker hands back one name, or a folder followed by the names chosen inside it.
 fn claim_paths(buffer: &[u16]) -> Vec<PathBuf> {
     let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
@@ -1259,6 +1310,10 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             hInstance: instance,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or(HCURSOR(std::ptr::null_mut())),
             lpszClassName: w!("AuraArcWindow"),
+            // Значок из ресурса (resources/aura-arc.rc, id 101): иначе у окна и на панели
+            // задач остаётся стандартный значок Windows.
+            hIcon: LoadIconW(Some(instance), PCWSTR(101usize as *const u16)).unwrap_or_default(),
+            hIconSm: LoadIconW(Some(instance), PCWSTR(101usize as *const u16)).unwrap_or_default(),
             ..Default::default()
         };
         if RegisterClassExW(&class) == 0 {

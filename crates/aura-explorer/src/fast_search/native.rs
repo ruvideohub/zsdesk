@@ -130,7 +130,7 @@ impl Store{
         // Always restore owned catalogs, including cancellation and I/O errors.
         outcome?;
         ensure!(self.volumes.as_ref().unwrap().iter().map(|v|v.index.heap_bytes()+v.pending_dirs.capacity()*8).sum::<usize>()<=metadata::MAX_HEAP_BYTES,"自带索引超过内存预算，请启用开发目录排除或关闭属性索引");
-        ensure!(self.volumes.as_ref().is_some_and(|v|!v.is_empty()),"自带索引未就绪：{}",self.failures.iter().filter_map(|v|v.warning.as_deref()).collect::<Vec<_>>().join("；"));
+        ensure!(self.volumes.as_ref().is_some_and(|v|!v.is_empty()),"自带索引未就绪：{}",self.failures.iter().filter_map(|v|v.warning.as_deref()).collect::<Vec<_>>().join("; "));
         if self.dirty&&self.save_retry.is_none_or(|at|Instant::now()>=at)&&(rebuilt||(was_pending&&!self.pending)||self.last_save.elapsed()>=Duration::from_secs(if self.pending{30}else{300})){
             if let Err(error)=self.save(&||shared.cancelled()){if shared.cancelled(){return Err(error);}self.save_retry=Some(Instant::now()+FAILED_BUILD_RETRY);crate::window::diagnostics::record("search",&format!("native-snapshot-save-failed: {error:#}"),None);}
         }

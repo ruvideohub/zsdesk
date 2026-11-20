@@ -23,3 +23,7 @@
 # Packaging output: created by scripts/package.ps1 and CI, never source.
 /dist/
 /installer/
+
+# Пробные полосы значков: их рисует scripts/make-icons.py, в репозитории им не место.
+*-preview.png
+__pycache__/

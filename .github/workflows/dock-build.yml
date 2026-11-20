@@ -42,6 +42,19 @@ jobs:
           ref: ${{ steps.dependency.outputs.revision }}
           path: zsui
       - uses: dtolnay/rust-toolchain@1.99.0
+      # Two cheap checks that no compiler can make: every shipped program carries an icon and
+      # a version block, and every string the interface shows has a translation. Both kinds of
+      # defect shipped green before — a blank AuraArc in the Start menu, a Chinese row in the
+      # fence settings — so they are checked before the long build.
+      - name: Strings and icons
+        shell: pwsh
+        working-directory: aura
+        run: |
+          python scripts/check-resources.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python scripts/check-translations.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       - name: Build the host and the dock
         working-directory: aura
         shell: pwsh

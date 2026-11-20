@@ -6059,7 +6059,10 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         if let Some(secs) = dock.opts.exit_after {
             SetTimer(Some(hwnd), T_EXIT, secs * 1000, None);
         }
-        if dock.cfg.auto_hide && integrate {
+        if dock.cfg.auto_hide && integrate && !dock.opts.settings {
+            // Asked for its settings from another program (the AuraUI settings window), the
+            // panel must stay on screen: tucking away after a second and a half took the
+            // settings page with it, which read as "the dock's settings never open".
             SetTimer(Some(hwnd), T_HIDE, 1500, None); // show briefly at start, then tuck away
         }
         DOCK.with(|d| *d.borrow_mut() = Some(dock));

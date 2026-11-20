@@ -16,6 +16,10 @@ publish = false
 name = "AuraArc"
 path = "src/main.rs"
 
+[build-dependencies]
+# Gives AuraArc.exe its icon and version block (see build.rs).
+embed-resource = "3.0"
+
 [dependencies]
 flate2 = "1"
 crc32fast = "1"

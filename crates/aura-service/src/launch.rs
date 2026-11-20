@@ -37,6 +37,14 @@ pub struct Component {
     /// of its own — the window then draws no button, because a button that does nothing is
     /// worse than no button.
     pub settings: &'static [&'static str],
+    /// What the program must do when its switch goes on, beyond starting it.
+    ///
+    /// For the file manager that is taking the place of Explorer (`--integration-enable`:
+    /// folders, Win+E and This PC open in AuraExplorer). A switch that only opened a window
+    /// never replaced anything, which read as "the switch does nothing".
+    pub enable: &'static [&'static str],
+    /// What the program must do when its switch goes off — the undo of `enable`.
+    pub disable: &'static [&'static str],
 }
 
 /// The components, in the order the settings window lists them.
@@ -57,6 +65,8 @@ pub const COMPONENTS: &[Component] = &[
         takes_profile: true,
         restart_when_exits: true,
         settings: &[],
+        enable: &[],
+        disable: &[],
     },
     Component {
         id: "dock",
@@ -69,11 +79,13 @@ pub const COMPONENTS: &[Component] = &[
         restart_when_exits: true,
         // The panel's settings page: the same one its own «Настройки» button opens.
         settings: &["--settings"],
+        enable: &[],
+        disable: &[],
     },
     Component {
         id: "files",
         name: "Файловый менеджер",
-        hint: "Окно AuraExplorer — закрой его, и компонент останется выключенным",
+        hint: "AuraExplorer вместо проводника: папки, Win+E и «Этот компьютер» открываются в нём",
         exe: "AuraExplorer.exe",
         args: &[],
         on_by_default: false,
@@ -81,7 +93,12 @@ pub const COMPONENTS: &[Component] = &[
         // A window, not a background program: closing it must not bring it back. The service
         // turns its switch off instead, so the window says what is true.
         restart_when_exits: false,
+        // Своей страницы настроек по флагу у файлового менеджера пока нет: кнопка, которая
+        // открывает окно с путём «--settings», хуже отсутствующей кнопки.
         settings: &[],
+        // Включение — это ещё и заявка на роль проводника, а не только запуск окна.
+        enable: &["--integration-enable"],
+        disable: &["--uninstall-integration"],
     },
 ];
 

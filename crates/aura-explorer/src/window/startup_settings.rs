@@ -96,7 +96,7 @@ pub(crate) fn show(profile: &std::path::Path, owner: super::HWND, anchor: Option
             let state = if !preferences.enabled { aura_core::i18n::text("已关闭") } else if registered { aura_core::i18n::text("已注册") }
                 else if live && !matching_key { aura_core::i18n::text("后台正在应用快捷键") } else if live { aura_core::i18n::text("后台运行，快捷键未注册") } else { aura_core::i18n::text("后台未运行") };
             let detail = if live { saved["error"].as_str().unwrap_or("") } else { "" };
-            report(aura_core::tr_format!("全局搜索快捷键 {}：{}{}{}", preferences.hotkey, state, if detail.is_empty() { "" } else { "；" }, detail));
+            report(aura_core::tr_format!("全局搜索快捷键 {}：{}{}{}", preferences.hotkey, state, if detail.is_empty() { "" } else { "; " }, detail));
         }
         _ => {}
     }

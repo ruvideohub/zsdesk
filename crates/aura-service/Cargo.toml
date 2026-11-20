@@ -16,6 +16,10 @@ publish = false
 name = "auraservice"
 path = "src/main.rs"
 
+[build-dependencies]
+# Gives auraservice.exe its icon and version block (see build.rs).
+embed-resource = "3.0"
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

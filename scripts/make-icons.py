@@ -1,10 +1,19 @@
 #!/usr/bin/env python3
-"""Draw the panel (dock) icon and write `crates/aura-dock/resources/aura-dock.ico`.
+"""Draw the suite's icons and write them next to their crates.
+
+Writes `crates/aura-dock/resources/aura-dock.ico`,
+`crates/aura-arc/resources/aura-arc.ico` and
+`crates/aura-service/resources/auraservice.ico`.
 
 The file manager's own icon (`crates/aura-explorer/resources/aura.ico`) is a golden
 macOS-style folder; the panel's icon is the same gold, drawn as the panel itself —
 a rounded bar with three app tiles on it — so the two read as one product in Explorer
 and in the Start menu.
+
+The archiver is the same gold drawn as a box with a zipper down the middle, and the
+service is the same gold drawn as a gear: three programs, one family. `AuraArc.exe` and
+`auraservice.exe` had no icon at all before this — they showed up as blank generic
+programs in Explorer, in the Start menu and in the uninstall list.
 
 Every size is drawn from scratch at 4x and downsampled, which keeps the 16 px and
 20 px variants legible instead of mush. Run it from the repository root:
@@ -103,19 +112,113 @@ def draw_icon(units=BOX, scale=SUPERSAMPLE):
     return canvas
 
 
+def draw_arc_icon(units=BOX, scale=SUPERSAMPLE):
+    """The archiver: a gold box with a zipper, the same gold as the folder and the bar."""
+    size = units * scale
+    k = size / BOX
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+
+    box = (26 * k, 44 * k, 230 * k, 212 * k)
+    radius = 26 * k
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
+        (box[0], box[1] + 7 * k, box[2], box[3] + 9 * k), radius=radius, fill=SHADOW + (110,)
+    )
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(7 * k)))
+
+    body = gradient(size, GOLD_TOP, GOLD_BOTTOM).convert("RGBA")
+    body.putalpha(rounded_mask(size, box, radius))
+    canvas.alpha_composite(body)
+
+    # Lid line: a cream band across the top, so the box reads as a box at 16 px.
+    lid = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(lid).rounded_rectangle(
+        (box[0] + 9 * k, box[1] + 10 * k, box[2] - 9 * k, box[1] + 34 * k),
+        radius=10 * k, fill=TILE + (170,),
+    )
+    canvas.alpha_composite(Image.composite(lid, Image.new("RGBA", (size, size), (0, 0, 0, 0)), rounded_mask(size, box, radius)))
+
+    # Zipper: a cream strip with the teeth as darker notches, top to bottom.
+    zip_w = 26 * k
+    zip_x = (size - zip_w) / 2
+    strip = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(strip)
+    draw.rounded_rectangle((zip_x, box[1] + 20 * k, zip_x + zip_w, box[3] - 14 * k), radius=8 * k, fill=TILE + (255,))
+    tooth = 0
+    y = box[1] + 26 * k
+    while y + 8 * k < box[3] - 18 * k:
+        draw.rectangle((zip_x + 3 * k, y, zip_x + zip_w - 3 * k, y + 4 * k), fill=SHADOW + (200,))
+        tooth += 1
+        y += 12 * k
+    canvas.alpha_composite(Image.composite(strip, Image.new("RGBA", (size, size), (0, 0, 0, 0)), rounded_mask(size, box, radius)))
+
+    # Pull tab: a small cream handle sitting on the zipper.
+    handle = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(handle).rounded_rectangle(
+        (zip_x - 12 * k, box[1] + 30 * k, zip_x + zip_w + 12 * k, box[1] + 56 * k),
+        radius=12 * k, fill=TILE_EDGE + (255,),
+    )
+    canvas.alpha_composite(handle)
+    return canvas
+
+
+def draw_service_icon(units=BOX, scale=SUPERSAMPLE):
+    """The service: a gold gear. No text, no letters — it has to read at 16 px."""
+    import math
+
+    size = units * scale
+    k = size / BOX
+    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    centre = size / 2
+    outer = 106 * k
+    inner = 74 * k
+    teeth = 9
+    points = []
+    # Two vertices per tooth at equal angles: a clean cog, not a jagged star.
+    for step in range(teeth * 2):
+        radius = outer if step % 2 == 0 else inner
+        angle = math.radians(step * 180 / teeth - 90)
+        points.append((centre + radius * math.cos(angle), centre + radius * math.sin(angle)))
+
+    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(shadow).polygon([(x, y + 8 * k) for x, y in points], fill=SHADOW + (110,))
+    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(7 * k)))
+
+    body = gradient(size, GOLD_TOP, GOLD_BOTTOM).convert("RGBA")
+    mask = Image.new("L", (size, size), 0)
+    ImageDraw.Draw(mask).polygon(points, fill=255)
+    body.putalpha(mask)
+    canvas.alpha_composite(body)
+
+    # Hub: a cream ring in the middle, the hole the gear turns around.
+    hub = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(hub)
+    draw.ellipse((centre - 44 * k, centre - 44 * k, centre + 44 * k, centre + 44 * k), fill=TILE + (255,))
+    draw.ellipse((centre - 23 * k, centre - 23 * k, centre + 23 * k, centre + 23 * k), fill=(0, 0, 0, 0))
+    canvas.alpha_composite(hub)
+    return canvas
+
+
 def main():
+    write("crates/aura-dock/resources/aura-dock.ico", draw_icon)
+    write("crates/aura-arc/resources/aura-arc.ico", draw_arc_icon)
+    write("crates/aura-service/resources/auraservice.ico", draw_service_icon)
+
+
+def write(path, paint):
+    import os
     frames = {}
     for size in SIZES:
-        frames[size] = draw_icon(size, SUPERSAMPLE).resize(
-            (size, size), Image.LANCZOS
-        )
+        frames[size] = paint(size, SUPERSAMPLE).resize((size, size), Image.LANCZOS)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     largest = frames[256]
     largest.save(
-        "crates/aura-dock/resources/aura-dock.ico",
+        path,
         format="ICO",
         sizes=[(size, size) for size in SIZES],
         append_images=[frames[size] for size in SIZES if size != 256],
     )
+    print(f"{path}: {len(SIZES)} sizes")
     # A preview strip, handy when adjusting the drawing.
     strip = Image.new("RGBA", (256 + 64 + 48 + 32 + 16 + 40, 64), (0, 0, 0, 0))
     x = 0
@@ -123,7 +226,7 @@ def main():
         preview = frames[size]
         strip.alpha_composite(preview, (x, 0)) if size <= strip.height else None
         x += preview.width + 10
-    print("wrote crates/aura-dock/resources/aura-dock.ico")
+    strip.save(path.replace(".ico", "-preview.png"))
 
 
 if __name__ == "__main__":

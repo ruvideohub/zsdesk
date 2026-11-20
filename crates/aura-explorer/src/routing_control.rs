@@ -961,7 +961,7 @@ fn apply_settings(profile: &Path, mut settings: Settings) -> Result<String> {
                 }
             }
         }
-        ensure!(restore_errors.is_empty(), "{}", aura_core::tr_format!("启用失败：{error}；部分组件恢复需要处理：{}" , restore_errors.join("；"), error=error));
+        ensure!(restore_errors.is_empty(), "{}", aura_core::tr_format!("启用失败：{error}；部分组件恢复需要处理：{}" , restore_errors.join("; "), error=error));
         return Err(error);
     }
     let mut latest = load(profile)?;
