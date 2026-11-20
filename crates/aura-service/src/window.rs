@@ -14,14 +14,17 @@ use windows::core::{w, PCWSTR, Result};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, DeleteObject, HFONT, LOGFONTW};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::Controls::{BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_PUSHBUTTON};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+// The checkbox and button messages and styles live with the window messages, not with the
+// control module: `BM_GETCHECK`, `BM_SETCHECK`, `BS_AUTOCHECKBOX`, `BS_PUSHBUTTON`.
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, EnableWindow, GetClientRect, GetMessageW, GetWindowLongPtrW,
-    PostQuitMessage, RegisterClassW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage,
-    CREATESTRUCTW, GWLP_USERDATA, MSG, SW_SHOW, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFONT, WM_TIMER, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW, GetWindowLongPtrW, HMENU,
+    PostQuitMessage, RegisterClassW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
+    TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CREATESTRUCTW, GWLP_USERDATA, MSG, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOZORDER, SW_SHOW, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFONT, WM_TIMER, WNDCLASSW,
     WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_CLIPCHILDREN, WS_EX_APPWINDOW, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 
 use crate::launch::{self, Component, Settings};
 
@@ -120,7 +123,7 @@ fn create_control(parent: HWND, class: PCWSTR, text: &str, id: usize, style: WIN
             10,
             10,
             Some(parent),
-            Some(windows::Win32::Foundation::HMENU(id as *mut std::ffi::c_void)),
+            Some(HMENU(id as *mut std::ffi::c_void)),
             None,
             None,
         )
@@ -206,9 +209,7 @@ fn fit(hwnd: HWND) {
             0,
             (700.0 * scale) as i32,
             (client * scale) as i32 + (56.0 * scale) as i32,
-            windows::Win32::UI::WindowsAndMessaging::SWP_NOMOVE
-                | windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER
-                | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
 }
@@ -417,7 +418,7 @@ fn move_to(control: HWND, x: i32, y: i32, width: i32, height: i32) {
             y,
             width,
             height,
-            windows::Win32::UI::WindowsAndMessaging::SWP_NOZORDER | windows::Win32::UI::WindowsAndMessaging::SWP_NOACTIVATE,
+            SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
 }
@@ -503,7 +504,6 @@ fn tick(state: &mut State) {
 
 fn command(state: &mut State, id: usize, control: HWND) {
     if id == ID_LOGON {
-        // A checkbox toggles itself before telling us, so read the new state from the control.
         // A checkbox flips itself before telling us, so read the state it now has.
         let checked = (unsafe { SendMessageW(state.logon, BM_GETCHECK, None, None) }.0 & 0xFFFF) == 1;
         state.settings.autostart = checked;
@@ -580,14 +580,12 @@ fn command(state: &mut State, id: usize, control: HWND) {
     launch::log(&format!("settings: {} {}", component.exe, if was { "off" } else { "on" }));
     if was {
         let closed = launch::close(component.exe);
-        set_text(
-            state.notice,
-            if closed {
-                format!("{}: выключен и закрыт.", component.name)
-            } else {
-                format!("{}: выключен (закрывать было нечего).", component.name)
-            },
-        );
+        let line = if closed {
+            format!("{}: выключен и закрыт.", component.name)
+        } else {
+            format!("{}: выключен (закрывать было нечего).", component.name)
+        };
+        set_text(state.notice, &line);
     } else {
         // Nothing is watching yet: the switch would be a lie without the service.
         if !crate::supervise::active() {

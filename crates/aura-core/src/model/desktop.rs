@@ -115,6 +115,59 @@ pub struct Fence {
     #[serde(default)] pub group: u64,
     /// 组内当前显示的标签。
     #[serde(default)] pub tab_active: bool,
+    /// 格子标题栏下方的强调色条；`Neutral` 表示不画。
+    #[serde(default)] pub accent: FenceAccent,
+}
+
+/// A fence's accent colour: one stripe under its title, so a fence can be recognised at a
+/// glance among its neighbours without recolouring the whole panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FenceAccent {
+    #[default] Neutral,
+    Blue,
+    Green,
+    Amber,
+    Red,
+    Violet,
+}
+
+impl FenceAccent {
+    /// The colours offered by the menu, in menu order (the "no accent" entry is separate).
+    pub const ALL: [Self; 5] = [Self::Blue, Self::Green, Self::Amber, Self::Red, Self::Violet];
+    /// The stripe colour; `None` when the fence keeps the shared look.
+    pub fn rgb(self) -> Option<[u8; 3]> {
+        Some(match self {
+            Self::Neutral => return None,
+            Self::Blue => [0x3b, 0x82, 0xf6],
+            Self::Green => [0x22, 0xc5, 0x5e],
+            Self::Amber => [0xf5, 0x9e, 0x0b],
+            Self::Red => [0xef, 0x44, 0x44],
+            Self::Violet => [0xa8, 0x55, 0xf7],
+        })
+    }
+    /// The text catalogue key of the menu entry.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Neutral => "无",
+            Self::Blue => "蓝色",
+            Self::Green => "绿色",
+            Self::Amber => "琥珀色",
+            Self::Red => "红色",
+            Self::Violet => "紫色",
+        }
+    }
+    /// The menu id (`accent-blue`, …); `accent-none` for `Neutral`.
+    pub fn verb(self) -> &'static str {
+        match self {
+            Self::Neutral => "accent-none",
+            Self::Blue => "accent-blue",
+            Self::Green => "accent-green",
+            Self::Amber => "accent-amber",
+            Self::Red => "accent-red",
+            Self::Violet => "accent-violet",
+        }
+    }
 }
 
 impl Fence {
@@ -122,7 +175,7 @@ impl Fence {
         let sort = if source == FenceSource::Desktop { FenceSort::Manual } else { FenceSort::Name };
         Self { id, title: title.into(), source, placement, collapsed: false, locked: false, view: FenceView::Icons,
             icon_size: IconSize::Medium, sort, descending: false, members: Vec::new(), rule: None, catch_all: false, auto_released:false, browse: None,
-            group: 0, tab_active: false }
+            group: 0, tab_active: false, accent: FenceAccent::Neutral }
     }
     /// An inactive tab: its window stays hidden behind the group's active tab.
     pub fn is_hidden_tab(&self) -> bool { self.group != 0 && !self.tab_active }

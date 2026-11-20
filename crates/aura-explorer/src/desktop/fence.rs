@@ -452,6 +452,16 @@ impl FenceWin {
             cv.push_clip(title);
             cv.round(outer, radius, col(palette.title));
             cv.pop_clip();
+            // A fence's own accent: one stripe along the bottom of the title bar. It sits inside
+            // the title clip so a rounded corner cannot shear it, and it is the only per-fence
+            // colour — the rest of the panel keeps the shared theme.
+            if let Some([r, g, b]) = fence.accent.rgb() {
+                cv.push_clip(title);
+                let stripe = RectF::new(outer.x + sf(8.0), title.bottom() - sf(3.0),
+                    (outer.w - sf(16.0)).max(0.0), sf(3.0));
+                cv.round(stripe, sf(1.5), Color::rgba8(r, g, b, 255));
+                cv.pop_clip();
+            }
             let renaming_title = matches!(self.rename, Some((_, RenameTarget::Title)));
             if self.merge_hover.is_some() {
                 cv.push_clip(title);

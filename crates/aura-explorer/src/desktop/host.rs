@@ -19,7 +19,7 @@ use windows::{
     },
 };
 use aura_core::model::desktop::{auto_layout, categorize, distribute, sort_items, snap, drag_rect, Bounds, Category, DesktopConfig,
-    Edges as CoreEdges, Fence, FenceSort, FenceSource, FenceTheme, FenceView, IconSize, ItemInfo, Placement, MIN_FENCE_H, MIN_FENCE_W, TITLE_H};
+    Edges as CoreEdges, Fence, FenceAccent, FenceSort, FenceSource, FenceTheme, FenceView, IconSize, ItemInfo, Placement, MIN_FENCE_H, MIN_FENCE_W, TITLE_H};
 use aura_ui::{chrome::scale, menus::{entry, menu, submenu, MenuItemSpec, MenuSpec}, theme::{FencePalette, Mode}};
 use aura_windows::{desktop::{self, ShellEntry}, gfx::{Gfx, TextStyle}, shell::{icons::{IconLoader, IconRequest}, menu::HistoryAction, notify::ChangeNotify, pidl}};
 
@@ -551,6 +551,83 @@ impl DesktopHost {
         self.save_now();
         self.sync_windows();
         if let Some(mut guard) = self.guard.take() { let _ = guard.kill(); let _=guard.wait(); }
+    }
+
+    /// Make every fence on this fence's monitor the same size, so a wall of fences reads as one
+    /// grid instead of a heap of different boxes. Tab groups take their size from one window.
+    pub fn same_size(&mut self, id: u64) {
+        let Some(source) = self.config.fence(id) else { return };
+        let (monitor, width, height) = (source.placement.monitor.clone(), source.placement.width, source.placement.height);
+        let ids: Vec<u64> = self.config.fences.iter()
+            .filter(|fence| fence.placement.monitor == monitor && !fence.is_hidden_tab())
+            .map(|fence| fence.id).collect();
+        for fence in self.config.fences.iter_mut().filter(|fence| ids.contains(&fence.id)) {
+            fence.placement.width = width;
+            fence.placement.height = height;
+        }
+        for id in &ids { self.config.sync_group(*id); }
+        self.save_now();
+        self.place_all();
+    }
+
+    /// A copy of this fence beside it: same folder, view, sort and rule, its own id. A desktop
+    /// fence's items are not copied — two fences claiming one file would fight over it.
+    pub fn duplicate_fence(&mut self, id: u64) {
+        let Some(source) = self.config.fence(id).cloned() else { return };
+        let mut copy = source.clone();
+        copy.id = self.config.take_id();
+        copy.title = format!("{} — {}", source.title, aura_core::i18n::text("复制"));
+        copy.group = 0;
+        copy.tab_active = false;
+        copy.placement = Placement { x: source.placement.x + 24, y: source.placement.y + 24, ..source.placement.clone() };
+        if source.is_desktop() {
+            copy.members.clear();
+            copy.rule = None;
+            copy.catch_all = false;
+        }
+        self.config.fences.push(copy);
+        self.save_now();
+        self.sync_windows();
+        self.render_all();
+    }
+
+    /// Put every fence in a tidy grid on its own monitor: columns of equal width, one gap
+    /// apart, filled top to bottom, and a new column when the screen runs out. Sizes are kept —
+    /// only the positions change, so an arrangement the user likes is not silently resized.
+    pub fn arrange_fences(&mut self) {
+        if self.config.fences.is_empty() { return; }
+        const MARGIN: i32 = 16;
+        const GAP: i32 = 16;
+        let mut moves: Vec<(u64, i32, i32)> = Vec::new();
+        for screen in monitors() {
+            let ids: Vec<u64> = self.config.fences.iter()
+                .filter(|fence| !fence.is_hidden_tab() && !self.config.is_released(fence.id))
+                .filter(|fence| fence.placement.monitor == screen.name)
+                .map(|fence| fence.id).collect();
+            if ids.is_empty() { continue; }
+            let work_w = unscale(screen.work.right - screen.work.left, screen.dpi).max(320);
+            let work_h = unscale(screen.work.bottom - screen.work.top, screen.dpi).max(240);
+            let (mut x, mut y, mut column_w) = (MARGIN, MARGIN, 0);
+            for id in ids {
+                let Some(fence) = self.config.fence(id) else { continue };
+                let (w, h) = (fence.placement.width.max(MIN_FENCE_W), fence.placement.height.max(MIN_FENCE_H));
+                if y + h > work_h && y > MARGIN {
+                    x += column_w + GAP;
+                    column_w = 0;
+                    y = MARGIN;
+                }
+                if x + w > work_w && x > MARGIN { break; }
+                moves.push((id, x, y));
+                y += h + GAP;
+                column_w = column_w.max(w);
+            }
+        }
+        for (id, x, y) in moves {
+            if let Some(fence) = self.config.fence_mut(id) { fence.placement.x = x; fence.placement.y = y; }
+            self.config.sync_group(id);
+        }
+        self.save_now();
+        self.place_all();
     }
 
     pub fn new_desktop_fence(&mut self, at: Option<POINT>) {
@@ -2199,6 +2276,14 @@ impl DesktopHost {
             entry(aura_core::i18n::text("递减"), "sort-desc", fence.sort != FenceSort::Manual, fence.descending),
         ]);
         items.push(submenu(aura_core::i18n::text("排序方式"), sorts));
+        // Appearance: what can differ from fence to fence without a second theme.
+        let mut accents: Vec<MenuItemSpec> = vec![entry(aura_core::i18n::text("无"), FenceAccent::Neutral.verb(), true, fence.accent == FenceAccent::Neutral), MenuItemSpec::Separator];
+        accents.extend(FenceAccent::ALL.iter().map(|accent| {
+            entry(aura_core::i18n::text(accent.label()), accent.verb(), true, fence.accent == *accent)
+        }));
+        items.push(submenu(aura_core::i18n::text("外观"), accents));
+        items.push(entry(aura_core::i18n::text("相同大小"), "same-size", true, false));
+        items.push(entry(aura_core::i18n::text("复制格子"), "duplicate", true, false));
         if fence.is_desktop() {
             let mut rules: Vec<MenuItemSpec> = Category::ALL.iter().filter(|c| **c != Category::Others)
                 .map(|c| entry(c.title(), &format!("rule-{c:?}"), true, fence.rule == Some(*c))).collect();
@@ -2222,6 +2307,8 @@ impl DesktopHost {
     }
 
     fn global_items(&self, s: &aura_core::model::desktop::DesktopSettings) -> Vec<MenuItemSpec> {
+        let all_collapsed = !self.config.fences.is_empty()
+            && self.config.fences.iter().filter(|fence| !self.config.is_released(fence.id)).all(|fence| fence.collapsed);
         let transparency = |opacity: u8| {
             let label = if opacity >= 100 { aura_core::i18n::text("不透明").to_string() } else { aura_core::tr_format!("透明度 {}%", 100 - u32::from(opacity)) };
             entry(&label, &format!("opacity-{opacity}"), true, s.opacity == opacity)
@@ -2233,6 +2320,9 @@ impl DesktopHost {
             ]),
             entry(if s.organize { aura_core::i18n::text("重新整理桌面") } else { aura_core::i18n::text("一键整理桌面") }, "organize", true, false),
             entry(aura_core::i18n::text("还原系统桌面图标"), "restore", s.organize, false),
+            MenuItemSpec::Separator,
+            entry(aura_core::i18n::text("整理格子"), "arrange", !self.config.fences.is_empty(), false),
+            entry(if all_collapsed { aura_core::i18n::text("全部展开") } else { aura_core::i18n::text("全部折叠") }, "collapse-all", !self.config.fences.is_empty(), false),
             MenuItemSpec::Separator,
             entry(aura_core::i18n::text("锁定全部格子"), "lock-all", !self.config.fences.is_empty(), !self.config.fences.is_empty() && self.config.fences.iter().all(|f| f.locked)),
             entry(if s.hidden { aura_core::i18n::text("显示全部格子") } else { aura_core::i18n::text("隐藏全部格子") }, "toggle-hidden", true, false),
@@ -2336,6 +2426,21 @@ impl DesktopHost {
             "launch-settings" => crate::service_start::open_settings(),
             "open-aura" => self.open_explorer_args(&[]),
             "quit" => return After::Quit,
+            "same-size" => self.same_size(fid),
+            "duplicate" => self.duplicate_fence(fid),
+            "arrange" => self.arrange_fences(),
+            "collapse-all" => {
+                let all = self.config.fences.iter().filter(|f| !self.config.is_released(f.id)).all(|f| f.collapsed);
+                for fence in &mut self.config.fences { fence.collapsed = !all; }
+                self.save_now();
+                self.place_all();
+            }
+            id if id.starts_with("accent-") => {
+                let accent = FenceAccent::ALL.iter().copied().find(|a| a.verb() == id).unwrap_or(FenceAccent::Neutral);
+                if let Some(fence) = self.config.fence_mut(fid) { fence.accent = accent; }
+                self.schedule_save();
+                self.render(fid);
+            }
             id if id.starts_with("theme-") => {
                 self.config.settings.theme = match id { "theme-light" => FenceTheme::Light, "theme-system" => FenceTheme::System, _ => FenceTheme::Dark };
                 self.update_palette(); self.schedule_save(); self.render_all();
