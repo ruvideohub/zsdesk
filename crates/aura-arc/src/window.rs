@@ -6,11 +6,11 @@
 
 use std::path::{Path, PathBuf};
 
-use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{BOOL, COLORREF, HCURSOR, HINSTANCE, HMENU, HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::{w, BOOL, PCWSTR, PWSTR};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, GetStockObject, SetBkColor, SetTextColor,
-    DEFAULT_GUI_FONT, HBRUSH, HDC, HGDIOBJ, PAINTSTRUCT,
+    UpdateWindow, DEFAULT_GUI_FONT, HBRUSH, HDC, HGDIOBJ, PAINTSTRUCT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -22,7 +22,7 @@ use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDR
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
     GetWindowLongPtrW, LoadCursorW, MoveWindow, PostQuitMessage, RegisterClassExW, SendMessageW,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, UpdateWindow, CS_HREDRAW,
+    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, HCURSOR, HMENU, CS_HREDRAW,
     CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, IDC_ARROW, LBS_NOINTEGRALHEIGHT, MSG, SW_SHOW,
     WINDOW_EX_STYLE, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
     WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_CHILD, WS_EX_CLIENTEDGE, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
@@ -72,7 +72,7 @@ impl App {
     fn allow_actions(&self, enabled: bool) {
         for button in &self.buttons[1..] {
             let _ = unsafe {
-                windows::Win32::UI::WindowsAndMessaging::EnableWindow(*button, enabled)
+                windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow(*button, enabled)
             };
         }
     }
@@ -169,10 +169,8 @@ impl App {
         let dc = unsafe { BeginPaint(self.hwnd, &mut paint) };
         unsafe {
             let brush = CreateSolidBrush(COLORREF(self.background()));
-            if let Ok(brush) = brush {
-                windows::Win32::Graphics::Gdi::FillRect(dc, &paint.rcPaint, brush);
-                let _ = DeleteObject(brush.into());
-            }
+            windows::Win32::Graphics::Gdi::FillRect(dc, &paint.rcPaint, brush);
+            let _ = DeleteObject(brush.into());
             EndPaint(self.hwnd, &paint);
         }
     }
@@ -384,7 +382,8 @@ impl Parent {
                 Some(self.instance),
                 None,
             )
-        };
+        }
+        .unwrap_or(HWND(std::ptr::null_mut()));
         if !child.0.is_null() {
             // The stock font is what Windows itself uses for buttons and lists.
             unsafe { SendMessageW(child, 0x0030, Some(WPARAM(self.font.0 as usize)), Some(LPARAM(1))) };
@@ -507,8 +506,7 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             return 1;
         }
         let dark = dark_mode();
-        let brush = CreateSolidBrush(COLORREF(if dark { DARK_BACKGROUND } else { LIGHT_BACKGROUND }))
-            .unwrap_or(HBRUSH(std::ptr::null_mut()));
+        let brush = CreateSolidBrush(COLORREF(if dark { DARK_BACKGROUND } else { LIGHT_BACKGROUND }));
         let window = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("AuraArcWindow"),
@@ -522,7 +520,8 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             None,
             Some(instance),
             None,
-        );
+        )
+        .unwrap_or(HWND(std::ptr::null_mut()));
         if window.0.is_null() {
             return 1;
         }
@@ -547,7 +546,8 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             None,
             Some(instance),
             None,
-        );
+        )
+        .unwrap_or(HWND(std::ptr::null_mut()));
         let status = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             w!("STATIC"),
@@ -561,7 +561,8 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             None,
             Some(instance),
             None,
-        );
+        )
+        .unwrap_or(HWND(std::ptr::null_mut()));
         if !status.0.is_null() {
             SendMessageW(status, 0x0030, Some(WPARAM(font.0 as usize)), Some(LPARAM(1)));
         }
