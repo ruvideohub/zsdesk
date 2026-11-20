@@ -231,10 +231,13 @@ impl Bridge{
                     enabled=self::enabled(&profile);
                     refresh=Instant::now();
                     if !enabled{guard.take();shell=None;candidates.clear();write_status(&profile,false,forwarded,None,None);}
-                    else if guard.is_none(){
+                    else if guard.is_none()&&Instant::now()>=respawn_at{
                         match Connection::spawn().and_then(|connection|{connection.enable(true)?;Ok(connection)}){
-                            Ok(connection)=>{write_status(&profile,true,forwarded,None,Some(connection.pid()));guard=Some(connection);},
-                            Err(error)=>write_status(&profile,false,forwarded,Some(&format!("{error:#}")),None),
+                            Ok(connection)=>{write_status(&profile,true,forwarded,None,Some(connection.pid()));
+                                guard_started=Some(Instant::now());guard=Some(connection);},
+                            Err(error)=>{write_status(&profile,false,forwarded,Some(&format!("{error:#}")),None);
+                                respawn_at=Instant::now()+Duration::from_secs(30);
+                                crate::window::diagnostics::record("explorer-forwarding","guard-spawn-failed-backoff-30s",None);},
                         }
                     }
                 }
@@ -244,6 +247,14 @@ impl Bridge{
                 }
                 if enabled{
                     if guard.as_mut().is_some_and(Connection::exited){guard.take();shell=None;candidates.clear();
+                        let lived=guard_started.take().map_or(Duration::ZERO,|at|at.elapsed());
+                        quick_exits=if lived<Duration::from_secs(10){quick_exits.saturating_add(1)}else{1};
+                        if quick_exits>=2{
+                            // Two helpers died within ten seconds of starting: stop spawning them
+                            // in a loop. Each spawn is a system-wide "starting" cursor flash.
+                            respawn_at=Instant::now()+Duration::from_secs(60);
+                            crate::window::diagnostics::record("explorer-forwarding","guard-exit-loop-backoff-60s",None);
+                        }
                         write_status(&profile,false,forwarded,Some("窗口可见性守护已退出，系统窗口保持可见"),None);}
                     if let Some(guard)=&guard{
                         if heartbeat.elapsed()>=Duration::from_millis(250){let _=guard.heartbeat();heartbeat=Instant::now();}
