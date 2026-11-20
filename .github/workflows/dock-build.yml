@@ -81,7 +81,7 @@ jobs:
         run: |
           # Подпись меняет байты exe, поэтому manifest.json считается заново: иначе install.ps1
           # отверг бы собственный подписанный архив, а хеши в артефакте были бы неверными.
-          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist -NoZip
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         with:
@@ -109,12 +109,12 @@ jobs:
           name: aura-ui-setup
           path: aura/installer/*
           if-no-files-found: ignore
-      # The tests used to live in a second workflow (build.yml) that had to be started by
-      # hand. They run here instead, after the executables are uploaded and without
-      # blocking them: a red step says "the tests broke", the archive still exists.
-      - name: Tests (do not block the archive)
+      # The tests run after the archive is uploaded, so the archive exists either way — but a
+      # failing test must make the run red. It used to be `continue-on-error`, and a failing
+      # archiver test sat behind a green run for two releases: the packaged archive was
+      # corrupt, and nothing said so.
+      - name: Tests
         if: always()
-        continue-on-error: true
         working-directory: aura
         run: cargo test --locked --release --workspace --exclude aura-dock --exclude laminar-sys
       # A second edition of the explorer (no default features) has to keep compiling.

@@ -493,8 +493,15 @@ fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf
 }
 
 /// Copy the entries an archive already holds into the archive being written, byte for byte.
-/// Each local header is rewritten, though: a streaming program leaves «sizes come after the
-/// data» in it, and that flag with no descriptor behind it is what old unpackers trip over.
+///
+/// The local header is copied from the source too — its own name and its own extra field, which
+/// may differ from the ones in the directory — and only four things in it are patched: the flags
+/// (bit 3 «sizes come after the data» is cleared, because the sizes are written in the header
+/// here and no descriptor follows), and the checksum and the two sizes, which are taken from the
+/// directory. Everything after the header is copied as it lies: name, extra, then exactly
+/// `packed` bytes of data. Writing the header *and* the source name would append the name twice
+/// and shift every byte after it, which unpacks as a corrupt stream — that is what this function
+/// did before, and the test `a_second_run_adds_instead_of_replacing` is what caught it.
 fn copy_entries(out: &mut BufWriter<File>, source_path: &Path, old: &[Entry]) -> Result<Vec<Entry>> {
     let mut written = Vec::with_capacity(old.len());
     if old.is_empty() {
@@ -513,13 +520,20 @@ fn copy_entries(out: &mut BufWriter<File>, source_path: &Path, old: &[Entry]) ->
         let extra_length = u16(&head, 28) as usize;
         let mut moved = entry.clone();
         moved.offset = offset;
-        moved.flags &= !SIZES_AFTER;
-        write_local(out, &moved)?;
-        let mut skip = vec![0u8; name_length + extra_length];
-        source.read_exact(&mut skip)?;
-        out.write_all(&skip)?;
-        let mut data = (&mut source).take(entry.packed);
-        io::copy(&mut data, out)?;
+        // The directory is the authority on the checksum and the sizes; the name and the extra
+        // field stay the ones the source actually wrote in front of the data.
+        moved.flags = u16(&head, 6) & !SIZES_AFTER;
+        head[6..8].copy_from_slice(&moved.flags.to_le_bytes());
+        head[14..18].copy_from_slice(&(entry.crc as u32).to_le_bytes());
+        head[18..22].copy_from_slice(&(entry.packed as u32).to_le_bytes());
+        head[22..26].copy_from_slice(&(entry.size as u32).to_le_bytes());
+        out.write_all(&head)?;
+        // Name, extra and data — exactly as many bytes as the header just promised.
+        let mut rest = (&mut source).take((name_length + extra_length) as u64 + entry.packed);
+        let copied = io::copy(&mut rest, out)?;
+        if copied != (name_length + extra_length) as u64 + entry.packed {
+            return fail(format!("повреждён архив: запись «{}» обрывается", entry.name));
+        }
         written.push(moved);
     }
     Ok(written)
@@ -967,6 +981,13 @@ mod tests {
         let kept = listed.iter().find(|entry| entry.name == "первый.txt").unwrap();
         assert_eq!(kept.crc, before.crc);
         assert_eq!(kept.packed, before.packed);
+        // The copied entry has to be readable straight away, not only at the end: a local header
+        // that disagrees with the bytes behind it is exactly what unpacks as "corrupt deflate
+        // stream", and it is the mistake this test was written for.
+        let after_second = temp.0.join("после-второго");
+        extract(&archive, &after_second, |_, _| {}).unwrap();
+        assert_eq!(fs::read_to_string(after_second.join("первый.txt")).unwrap(), "раз".repeat(100));
+        assert_eq!(fs::read_to_string(after_second.join("второй.txt")).unwrap(), "два".repeat(100));
         // And adding the same file twice does not make the archive hold it twice.
         add(&archive, &[temp.0.join("первый.txt")], false, |_, _| {}).unwrap();
         assert_eq!(list(&archive).unwrap().len(), 2);
