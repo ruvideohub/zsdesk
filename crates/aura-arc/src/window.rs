@@ -171,7 +171,7 @@ impl App {
             let brush = CreateSolidBrush(COLORREF(self.background()));
             windows::Win32::Graphics::Gdi::FillRect(dc, &paint.rcPaint, brush);
             let _ = DeleteObject(brush.into());
-            EndPaint(self.hwnd, &paint);
+            let _ = EndPaint(self.hwnd, &paint);
         }
     }
 

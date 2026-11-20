@@ -621,7 +621,7 @@ fn command(state: &mut State, id: usize, control: HWND) {
         if launch::start_program(program, arguments) {
             set_text(
                 state.notice,
-                if wants_settings {
+                &if wants_settings {
                     format!("{}: открываю настройки.", program.name)
                 } else {
                     format!("{}: открываю.", program.name)
