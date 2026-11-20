@@ -226,6 +226,10 @@ impl Bridge{
             let mut shell:Option<IShellWindows>=None;let mut guard:Option<Connection>=None;
             let mut candidates=HashMap::<u64,Candidate>::new();let mut enabled=false;
             let mut refresh=Instant::now()-Duration::from_secs(3);let mut heartbeat=Instant::now();let mut forwarded=0u64;
+            // A helper that dies right after starting used to be spawned again on every two
+            // second tick, and each spawn flashes the system "starting" pointer next to the
+            // cursor. Back off instead of retrying forever.
+            let mut guard_started:Option<Instant>=None;let mut quick_exits=0u32;let mut respawn_at=Instant::now();
             while !signal.load(Ordering::Acquire){
                 if refresh.elapsed()>=Duration::from_secs(2){
                     enabled=self::enabled(&profile);
