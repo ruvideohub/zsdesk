@@ -160,10 +160,14 @@ impl WindowState {
             let r = rf(self.layout.tab_list);
             if self.session.ui.show_tab_count {
                 let count=self.session.tabs.len();let label=count.to_string();
-                let badge_w=self.sf((label.len()as f32*7.0+8.0).max(18.0)).min(r.w-self.sf(6.0));
+                let style=TextStyle::ui(self.sf(if label.chars().count()>4{9.0}else{11.0})).weight(600).align(Align::Center);
+                // Measured, not "seven DIPs per digit": the count sits in a box on the caption
+                // strip and a guessed width clips it as soon as the fonts or the scale change.
+                let measured=self.gfx.as_ref().map(|gfx|gfx.measure(&label,&style,200.0).0).unwrap_or(0.0);
+                let badge_w=measured.max(self.sf(18.0)).min(r.w-self.sf(6.0));
                 let badge = RectF::new(r.x+(r.w-badge_w)/2.0,r.y+(r.h-self.sf(18.0))/2.0,badge_w,self.sf(18.0));
                 cv.stroke_round(badge, self.sf(3.0), text, self.sf(1.2).max(1.0));
-                cv.text(&label, badge, &TextStyle::ui(self.sf(if label.len()>4{9.0}else{11.0})).weight(600).align(Align::Center), text);
+                cv.text(&label, badge, &style, text);
             } else { cv.glyph("\u{E70D}",r,self.sf(12.0),text); }
         }
         if !self.layout.app_menu.is_empty() {

@@ -15,6 +15,8 @@ pub const BOOKMARK_H: i32 = 32;
 pub const STATUS_H: i32 = 26;
 pub const SPLITTER_W: i32 = 5;
 pub const TAB_MAX_W: i32 = 232;
+/// Ceiling for a tab strip with three tabs or fewer, where nothing is squeezed.
+pub const TAB_GROW_W: i32 = 560;
 pub const TAB_MIN_W: i32 = 64;
 pub const MIN_TREE_W: i32 = 120;
 
@@ -343,7 +345,13 @@ impl ChromeLayout {
         let tabs_right = (utility_left - drag_space - button - s(4)).max(tabs_left);
         let available = tabs_right - tabs_left;
         let count = input.tab_count.max(1) as i32;
-        let natural = (available / count).clamp(s(TAB_MIN_W), s(TAB_MAX_W)).min(available);
+        // One to three tabs may grow past the usual 232-DIP ceiling: the cap cut long Russian
+        // titles ("Загрузки и документы") while most of the strip stood empty. The room of the
+        // "new tab" button is always kept free, and from four tabs on the fair share decides.
+        let share = (available / count).max(1);
+        let free = (available - button - s(4)).max(s(TAB_MIN_W));
+        let cap = if count <= 3 { s(TAB_GROW_W).min(free) } else { s(TAB_MAX_W) };
+        let natural = share.clamp(s(TAB_MIN_W).min(cap), cap).min(available);
         let visible = if available > 0 { ((available / natural.max(1)).max(1) as usize).min(input.tab_count.max(1)) } else { 0 };
         let first = first_visible(input.tab_count, input.active_tab, visible);
         let mut x = tabs_left;
@@ -838,6 +846,23 @@ mod tests {
             offscreen.retain_tab_viewport(&after, 100, 0);
             assert_eq!(offscreen.tabs[0].index, 0);
         }
+    }
+
+    #[test]
+    fn few_tabs_take_the_free_room_instead_of_the_232_dip_cap() {
+        // One tab grows, so a long Russian folder name is not cut for no reason.
+        let one = ChromeLayout::new(&input(1400, 1, 0, 96));
+        assert_eq!(one.tabs[0].rect.width, TAB_GROW_W, "a single tab grows to the new ceiling");
+        assert!(!one.new_tab.is_empty(), "the new-tab button keeps its room");
+        // Three tabs share it evenly and still exceed the old ceiling.
+        let three = ChromeLayout::new(&input(1400, 3, 0, 96));
+        assert_eq!(three.tabs.len(), 3);
+        let widths: Vec<i32> = three.tabs.iter().map(|t| t.rect.width).collect();
+        assert!(widths.iter().all(|w| *w > TAB_MAX_W), "{widths:?}");
+        assert!(widths.iter().all(|w| *w == widths[0]), "equal shares: {widths:?}");
+        // From four on the usual 232-DIP ceiling returns.
+        let many = ChromeLayout::new(&input(1400, 6, 0, 96));
+        assert!(many.tabs.iter().all(|t| t.rect.width <= scale(TAB_MAX_W, 96)));
     }
 
     #[test]
