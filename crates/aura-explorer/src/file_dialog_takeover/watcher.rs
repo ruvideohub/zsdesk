@@ -200,7 +200,10 @@ fn run()->Result<()>{
     WATCHER.with(|slot|*slot.borrow_mut()=Some(Watcher{parent:parent_pid,target,enabled:false,heartbeat:now(),serial:now().saturating_mul(65536),known:HashSet::new(),pending:HashMap::new(),entries:HashMap::new(),output}));
     COMMANDS.with(|slot|*slot.borrow_mut()=Some(commands));
     struct Recovery;impl Drop for Recovery{fn drop(&mut self){WATCHER.with(|slot|{if let Some(mut watcher)=slot.borrow_mut().take(){watcher.clear();}});}}let _recovery=Recovery;
-    let _early=crate::early_window_hook::Hook::install(w!("AuraExplorer.EarlyDialog.Guard"),Some(early_message),false)?;
+    let _early=match crate::early_window_hook::Hook::install(w!("AuraExplorer.EarlyDialog.Guard"),Some(early_message),false){
+        Ok(hook)=>Some(hook),
+        Err(error)=>{crate::window::diagnostics::record("dialog-guard",&format!("early-hook-missing-{error:#}"),None);None},
+    };
     struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in &self.0{unsafe{UnhookWinEvent(*hook);}}}}let mut hooks=Hooks(Vec::new());
     for kind in [EVENT_OBJECT_CREATE,EVENT_OBJECT_SHOW,EVENT_OBJECT_NAMECHANGE,EVENT_SYSTEM_FOREGROUND,EVENT_OBJECT_DESTROY]{let hook=unsafe{SetWinEventHook(kind,kind,None,Some(event),0,0,WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS)};ensure!(!hook.0.is_null(),"file dialog event hook unavailable");hooks.0.push(hook);}
     WATCHER.with(|slot|{if let Some(watcher)=slot.borrow_mut().as_mut(){watcher.control(Control::Enable(true));let _=watcher.output.try_send(Event::Ready);}});

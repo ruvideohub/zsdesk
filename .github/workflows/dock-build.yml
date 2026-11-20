@@ -54,6 +54,9 @@ jobs:
           Copy-Item -LiteralPath target/release/aura-explorer.exe -Destination dist/AuraExplorer.exe
           Copy-Item -LiteralPath target/release/aura-dock.exe -Destination dist/AuraDock.exe
           # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
+          # The window hook DLL is loaded by name from the executable folder; without it the
+          # Explorer takeover guard cannot start at all.
+          Copy-Item -Path target/release/AuraExplorerWindowHook-*.dll -Destination dist
           Copy-Item -LiteralPath packaging/windows/install.ps1 -Destination dist/install.ps1
           Copy-Item -LiteralPath packaging/windows/install.cmd -Destination dist/install.cmd
           Copy-Item -LiteralPath packaging/windows/install-readme.txt -Destination dist/install-readme.txt

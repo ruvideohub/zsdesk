@@ -158,6 +158,15 @@ foreach ($file in $needed) {
 # сильнее, чем на подпись.
 try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
 
+# Перехват окон проводника: DLL подгружается по имени из папки exe. Без неё перехват
+# работает в упрощённом режиме (окна не прячутся до показа), поэтому копируем рядом.
+foreach ($dll in Get-ChildItem -LiteralPath $Source -Filter 'AuraExplorerWindowHook-*.dll' -ErrorAction SilentlyContinue) {
+    if (-not $sameFolder) {
+        Copy-Item -LiteralPath $dll.FullName -Destination $Dir -Force
+    }
+    Write-Note ("{0} -> {1}" -f $dll.Name, $Dir)
+}
+
 # Visual C++ Runtime: AuraExplorer собран с динамическим CRT. Если рядом с exe лежат
 # библиотеки — копируем их; если нет и в системе их тоже нет, предупреждаем.
 $runtime = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')

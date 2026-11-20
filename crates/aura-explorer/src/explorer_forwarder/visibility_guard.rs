@@ -340,7 +340,12 @@ fn run_guard()->Result<()>{
     struct Hooks(Vec<HWINEVENTHOOK>);impl Drop for Hooks{fn drop(&mut self){for hook in self.0.drain(..){unsafe{UnhookWinEvent(hook);}}}}
     struct Recovery;impl Drop for Recovery{fn drop(&mut self){WATCHER.with(|slot|{if let Some(mut watcher)=slot.borrow_mut().take(){watcher.restore_all("guard-exit");}});}}
     let _recovery=Recovery;let mut hooks=Hooks(Vec::new());
-    let _early=crate::early_window_hook::Hook::install(windows::core::w!("AuraExplorer.EarlyExplorer.Guard"),Some(early_message),true)?;
+    // The show hook is an optimisation: without it the out-of-context events below still
+    // take Explorer windows over. A missing DLL used to kill the guard outright.
+    let _early=match crate::early_window_hook::Hook::install(windows::core::w!("AuraExplorer.EarlyExplorer.Guard"),Some(early_message),true){
+        Ok(hook)=>Some(hook),
+        Err(error)=>{crate::window::diagnostics::record("guard",&format!("early-hook-missing-{error:#}"),None);None},
+    };
     for event in [EVENT_SYSTEM_FOREGROUND,EVENT_OBJECT_SHOW,EVENT_OBJECT_DESTROY]{
         let hook=unsafe{SetWinEventHook(event,event,None,Some(event_hook),0,0,WINEVENT_OUTOFCONTEXT|WINEVENT_SKIPOWNPROCESS)};
         ensure!(!hook.0.is_null(),"Explorer event hook unavailable");hooks.0.push(hook);
