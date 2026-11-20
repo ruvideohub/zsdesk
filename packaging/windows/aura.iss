@@ -101,10 +101,18 @@ Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\AuraExplorer.exe"; AppUse
 #if (Int(HasDesktop) != 0) && (Edition != "desktop-box")
 Name: "{group}\{cm:Fences}"; Filename: "{app}\fences.exe"; Check: not WizardNoIcons
 #endif
+; One window for every start switch: the service's settings.
+Name: "{group}\{cm:LaunchSettings}"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Check: not WizardNoIcons
 
 [Registry]
-; Одна запись на всё: AuraExplorer сам поднимает панель (AuraDock.exe) и гасит её при выходе.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraExplorer"; ValueData: """{app}\AuraExplorer.exe"" --desktop --tray"; Flags: uninsdeletevalue; Tasks: autostart
+; Одна запись на всё, и писатель у неё один: служба запуска. Она поднимает панель, сетки и
+; виджеты по своим переключателям и не зависит от того, открыто ли окно файлового менеджера.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraExplorer"; ValueData: """{app}\auraservice.exe"" --run"; Flags: uninsdeletevalue; Tasks: autostart
+; Прежние записи отдельных компонентов снимаем: их работу делает служба.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraDock"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraExplorer.Desktop"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraExplorer.DesktopBox.Desktop"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraExplorer.Theme.Desktop"; Flags: deletevalue
 
 [Run]
 Filename: "{app}\AuraExplorer.exe"; Description: "{cm:LaunchProgram,AuraExplorer}"; Flags: nowait postinstall skipifsilent
@@ -114,6 +122,8 @@ chinesesimp.Fences=AuraExplorer 桌面格子
 english.Fences=AuraUI Desktop Fences
 chinesesimp.Autostart=随 Windows 启动（面板、桌面格子和时钟，托盘运行）
 english.Autostart=Start with Windows (panel, fences and clock in the tray)
+chinesesimp.LaunchSettings=启动与组件
+english.LaunchSettings=Launch and components
 chinesesimp.Options=安装选项
 english.Options=Installation options
 chinesesimp.HideOptions=收起安装选项

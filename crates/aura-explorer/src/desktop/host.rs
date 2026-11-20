@@ -156,20 +156,6 @@ fn history_shortcut(key: u16, control: bool, shift: bool, alt: bool) -> Option<H
     else { None }
 }
 
-pub(super) fn fence_startup_command(executable:&Path,config:&Path)->Option<String> {
-    let profile=config.parent()?;
-    if !executable.is_absolute() || !profile.is_absolute() {return None;}
-    // The fences have their own program since 0.3.19 (`fences.exe`, next to the file
-    // window). An installation made from an archive that predates it keeps pointing at the
-    // file window, which still hosts the desktop with `--desktop`.
-    let exe = match executable.parent().map(|dir| dir.join("fences.exe")).filter(|path| path.is_file()) {
-        Some(fences) => fences,
-        None => executable.to_path_buf(),
-    };
-    let quote=crate::quick_search::control::quote_argument;
-    Some(format!("{} --desktop --profile-dir {}",quote(&exe.to_string_lossy()),quote(&profile.to_string_lossy())))
-}
-
 fn pending_collection_allowed(config: &DesktopConfig, known: &HashSet<String>, key: &str) -> bool {
     !known.contains(key) && !config.is_released_key(key) && !config.fences.iter().any(|fence| fence.is_desktop()
         && fence.members.iter().any(|member| member.eq_ignore_ascii_case(key)))
@@ -2236,7 +2222,6 @@ impl DesktopHost {
     }
 
     fn global_items(&self, s: &aura_core::model::desktop::DesktopSettings) -> Vec<MenuItemSpec> {
-        let autostart=super::startup_enabled(&self.config_path).unwrap_or(false);
         let transparency = |opacity: u8| {
             let label = if opacity >= 100 { aura_core::i18n::text("不透明").to_string() } else { aura_core::tr_format!("透明度 {}%", 100 - u32::from(opacity)) };
             entry(&label, &format!("opacity-{opacity}"), true, s.opacity == opacity)
@@ -2268,9 +2253,8 @@ impl DesktopHost {
             entry(aura_core::i18n::text("文件夹格子内打开子文件夹"), "browse-inside", true, s.browse_inside),
             entry(aura_core::i18n::text("鼠标悬停展开折叠的格子"), "hover-expand", true, s.hover_expand),
             entry(aura_core::i18n::text("隐藏托盘图标"), "hide-tray", true, s.hide_tray),
-            // Only the fences: the file manager window has its own login switch
-            // in its settings menu, so the two can be chosen independently.
-            entry(aura_core::i18n::text("登录 Windows 时启动桌面格子"), "autostart", true, autostart),
+            // What starts at logon is decided in one place: the launch service's window.
+            entry(aura_core::i18n::text("启动与组件…"), "launch-settings", true, false),
             MenuItemSpec::Separator,
             entry(if crate::edition::DESKTOP_ONLY{aura_core::i18n::text("打开系统资源管理器")}else{aura_core::i18n::text("打开 AuraExplorer 文件管理器")}, "open-aura", true, false),
             entry(aura_core::i18n::text("退出桌面格子"), "quit", true, false),
@@ -2349,10 +2333,7 @@ impl DesktopHost {
                     return After::Notice(aura_core::i18n::text("托盘图标已隐藏。\n\n右键任意格子 → 桌面格子 可取消隐藏；也可在文件管理器 ≡ → 桌面格子 → 显示托盘图标。"));
                 }
             }
-            "autostart" => {
-                let current=match super::startup_enabled(&self.config_path){Ok(value)=>value,Err(error)=>{self.notify_error(&aura_core::tr_format!("无法读取登录启动：{error:#}", error=error));return After::Nothing;}};
-                if let Err(error)=super::set_startup_enabled(&self.config_path,!current){self.notify_error(&aura_core::tr_format!("登录启动未完成：{error:#}", error=error));}
-            }
+            "launch-settings" => crate::service_start::open_settings(),
             "open-aura" => self.open_explorer_args(&[]),
             "quit" => return After::Quit,
             id if id.starts_with("theme-") => {
@@ -2975,15 +2956,6 @@ mod shortcut_tests {
         let second=desktop_item_position(Bounds::new(24,24,96,104),800,600,&[first]).unwrap();
         assert_eq!((second.x,second.y),(first.x,first.y+104));
         assert!(desktop_item_position(origin,800,600,&[Bounds::new(0,0,800,600)]).is_none());
-    }
-    #[test]
-    fn fence_startup_command_binds_the_exact_profile() {
-        let exe=Path::new(r"C:\Apps\AuraExplorer Theme\AuraExplorer.exe");
-        let main=fence_startup_command(exe,Path::new(r"C:\Profiles\中文 Main\desktop-fences.json")).unwrap();
-        assert_eq!(main,r#""C:\Apps\AuraExplorer Theme\AuraExplorer.exe" --desktop --profile-dir "C:\Profiles\中文 Main""#);
-        let other=fence_startup_command(exe,Path::new(r"C:\Profiles\Other\desktop-fences.json")).unwrap();
-        assert!(!desktop::autostart_owned(&main,&other));
-        assert!(fence_startup_command(Path::new("AuraExplorer.exe"),Path::new("desktop-fences.json")).is_none());
     }
     #[test]
     fn fence_history_shortcuts_require_exact_modifiers() {

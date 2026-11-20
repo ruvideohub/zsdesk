@@ -1,0 +1,36 @@
+# auraservice — the launcher and its settings.
+#
+# One program, two jobs: it starts the AuraUI components at logon and keeps them alive
+# (`--run`), and it is the window where their launch settings are set. It is the only
+# writer of the logon entry, so four components never mean four separate autostarts.
+[package]
+name = "aura-service"
+version = "0.3.18"
+edition.workspace = true
+license.workspace = true
+rust-version = "0.3.18"
+description = "auraservice: launches and supervises the AuraUI components and keeps their launch settings"
+publish = false
+
+[[bin]]
+name = "auraservice"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[dependencies.windows]
+version = "0.62.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+]

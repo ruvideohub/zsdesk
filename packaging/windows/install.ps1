@@ -3,12 +3,13 @@
     Устанавливает AuraExplorer с панелью и включает автозапуск.
 
 .DESCRIPTION
-    Копирует AuraExplorer.exe и AuraDock.exe в папку пользователя, кладёт ярлыки в меню
-    «Пуск» и прописывает автозапуск при входе в Windows. Автозапуск запускает
-    `AuraExplorer.exe --desktop --tray`: сетки появляются сразу, окно файлового менеджера не
-    открывается, в трее стоит значок, а панель внизу и виджет часов поднимает сам
-    AuraExplorer — поэтому отдельная запись автозапуска панели не нужна и даже вредна:
-    вторая панель подралась бы за место на экране.
+    Копирует программы AuraUI в папку пользователя, кладёт ярлыки в меню «Пуск» и
+    прописывает автозапуск при входе в Windows. Каждый компонент (панель, сетки рабочего
+    стола, виджеты, файловый менеджер) — отдельная программа, и запускает их одна служба:
+    `auraservice.exe --run`. Автозапуск поэтому один — служба; что именно она поднимает,
+    решается в её окне «Запуск и компоненты» (`auraservice.exe --settings`), и там же
+    переключатели каждого компонента. Так у всех запусков один хозяин и нет двух панелей,
+    которые дрались бы за место на экране.
 
     Администратор не нужен: всё ставится в профиль пользователя (PrivilegesRequired)
     и в HKCU.
@@ -20,7 +21,8 @@
     Не прописывать автозапуск (и убрать прежний).
 
 .PARAMETER PanelOnly
-    Автозапуск только панели (AuraDock.exe), без сеток и файлового менеджера.
+    Оставлен для совместимости: раньше включал автозапуск только панели. Теперь набор
+    компонентов задаётся в окне службы, и скрипт просто пишет обычный автозапуск службы.
 
 .PARAMETER DesktopShortcut
     Положить ярлык ещё и на рабочий стол.
@@ -55,13 +57,16 @@ $RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $Programs   = [Environment]::GetFolderPath('Programs')
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
 $StartMenu  = if ($Programs) { Join-Path $Programs 'AuraExplorer.lnk' } else { $null }
-$ShellLink  = if ($Programs) { Join-Path $Programs 'AuraExplorer - сетки и панель.lnk' } else { $null }
+$ShellLink  = if ($Programs) { Join-Path $Programs 'AuraUI - запуск и компоненты.lnk' } else { $null }
+# Так ярлык назывался до службы; при обновлении его надо убрать, иначе их станет два.
+$OldShellLink = if ($Programs) { Join-Path $Programs 'AuraExplorer - сетки и панель.lnk' } else { $null }
 $Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'AuraExplorer.lnk' } else { $null }
 $Source    = $PSScriptRoot
 if (-not $Source) { $Source = (Get-Location).Path }
 if (-not $Dir) { throw 'Не задана папка установки и пуст %LOCALAPPDATA%: запусти с -Dir "C:\AuraExplorer".' }
 $Exe       = Join-Path $Dir 'AuraExplorer.exe'
 $Dock      = Join-Path $Dir 'AuraDock.exe'
+$Service   = Join-Path $Dir 'auraservice.exe'
 
 function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
 function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
@@ -78,7 +83,8 @@ function Stop-AuraExplorer {
             Start-Sleep -Milliseconds 250
         }
     }
-    Get-Process -Name 'AuraExplorer', 'aura-dock', 'fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
+    # Служба идёт первой: иначе она поднимет то, что мы только что закрыли.
+    Get-Process -Name 'auraservice', 'AuraExplorer', 'aura-dock', 'fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
 }
@@ -90,6 +96,24 @@ function Set-Autostart([string]$Name, [string]$Value) {
 function Remove-Autostart([string]$Name) {
     $existing = Get-ItemProperty -Path $RunKey -Name $Name -ErrorAction SilentlyContinue
     if ($existing) { Remove-ItemProperty -Path $RunKey -Name $Name -Force; Write-Note "автозапуск «$Name» выключен" }
+}
+
+# Прежние записи автозапуска компонентов: сетки (`AuraExplorer.exe --desktop --profile-dir …`
+# или `fences.exe --desktop …`) и панель (`AuraDock.exe`). Их работу теперь делает служба,
+# а оставленная запись подняла бы второй экземпляр — или вообще старую программу.
+function Remove-StaleAutostart {
+    $key = Get-Item -LiteralPath $RunKey -ErrorAction SilentlyContinue
+    if (-not $key) { return }
+    foreach ($name in @($key.GetValueNames())) {
+        if ($name -eq 'AuraExplorer') { continue }
+        $value = [string]$key.GetValue($name)
+        $ours = $value -match 'AuraExplorer(\.exe)?["\s]' -or $value -match 'fences\.exe' -or $value -match 'AuraDock\.exe'
+        if ($ours -and $value -match '--desktop') {
+            Remove-ItemProperty -Path $RunKey -Name $name -Force -ErrorAction SilentlyContinue
+            Write-Note "снята прежняя запись автозапуска «$name»"
+        }
+    }
+    Remove-Autostart 'AuraDock'
 }
 
 function Remove-Shortcut([string]$Path) {
@@ -123,6 +147,7 @@ if ($Remove) {
     Remove-Autostart 'AuraDock'
     Remove-Shortcut $StartMenu
     Remove-Shortcut $ShellLink
+    Remove-Shortcut $OldShellLink
     Remove-Shortcut $Desktop
     if (Test-Path -LiteralPath $Dir) {
         Remove-Item -LiteralPath $Dir -Recurse -Force
@@ -136,15 +161,16 @@ if ($Remove) {
 # ------------------------------------------------------------------ установка
 Write-Head 'Установка AuraExplorer'
 
+# auraservice.exe — служба запуска, без неё компоненты никто не поднимает.
 # fences.exe — хост сеток рабочего стола, widgets.exe — виджет рабочего стола (часы).
 # Оба необязательны: без них AuraExplorer сам поднимет сетки (`--desktop`), а панель —
 # часы во втором своём процессе, поэтому в списке обязательных их нет.
-$needed = @('AuraExplorer.exe', 'AuraDock.exe')
+$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'auraservice.exe')
 $components = @('fences.exe', 'widgets.exe')
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
-    Write-Host 'Положи install.ps1 в ту же папку, что AuraExplorer.exe и AuraDock.exe (как в архиве сборки).' -ForegroundColor Red
+    Write-Host 'Положи install.ps1 в ту же папку, что AuraExplorer.exe, AuraDock.exe и auraservice.exe (как в архиве сборки).' -ForegroundColor Red
     exit 1
 }
 
@@ -194,27 +220,24 @@ if ($env:SystemRoot) {
 
 # ------------------------------------------------------------------ автозапуск
 Write-Head 'Автозапуск'
+Remove-StaleAutostart
 if ($NoAutostart) {
     Remove-Autostart 'AuraExplorer'
-    Remove-Autostart 'AuraDock'
     Write-Note 'автозапуск не прописан'
-} elseif ($PanelOnly) {
-    Set-Autostart 'AuraDock' ('"{0}"' -f $Dock)
-    Remove-Autostart 'AuraExplorer'
-    Write-Ok "при входе в Windows запускается только панель: $Dock"
 } else {
-    Set-Autostart 'AuraExplorer' ('"{0}" --desktop --tray' -f $Exe)
-    Remove-Autostart 'AuraDock'
-    Write-Ok "при входе в Windows запускается $Exe --desktop --tray"
-    Write-Note 'это сетки, виджет часов и панель сразу; окно файлового менеджера не открывается'
+    if ($PanelOnly) { Write-Note 'ключ -PanelOnly больше не нужен: набор компонентов задаётся в окне службы' }
+    Set-Autostart 'AuraExplorer' ('"{0}" --run' -f $Service)
+    Write-Ok "при входе в Windows запускается служба: $Service --run"
+    Write-Note 'она поднимает панель, сетки и виджеты — по переключателям из окна «Запуск и компоненты»'
 }
 
 # ------------------------------------------------------------------ ярлыки
 Write-Head 'Ярлыки'
+Remove-Shortcut $OldShellLink
 if ($StartMenu -or $Desktop) {
     New-Shortcut $StartMenu $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
     if ($StartMenu) { Write-Note "меню «Пуск»: $StartMenu" }
-    New-Shortcut $ShellLink $Exe '--desktop --tray' 'AuraExplorer — сетки рабочего стола и панель, без окна'
+    New-Shortcut $ShellLink $Service '--settings' 'AuraUI — запуск и компоненты: что и когда запускать'
     if ($ShellLink) { Write-Note "меню «Пуск»: $ShellLink" }
     if ($DesktopShortcut) {
         New-Shortcut $Desktop $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
@@ -236,8 +259,13 @@ try {
 # ------------------------------------------------------------------ запуск
 if (-not $NoStart) {
     Stop-AuraExplorer
-    Start-Process -FilePath $Exe -ArgumentList '--desktop', '--tray' -WorkingDirectory $Dir
-    Write-Ok 'AuraExplorer запущен'
+    if (Test-Path -LiteralPath $Service) {
+        Start-Process -FilePath $Service -ArgumentList '--run' -WorkingDirectory $Dir
+        Write-Ok 'служба запущена: панель, сетки и виджеты поднимаются ею'
+    } else {
+        Start-Process -FilePath $Exe -ArgumentList '--desktop', '--tray' -WorkingDirectory $Dir
+        Write-Ok 'AuraExplorer запущен (служба не установлена)'
+    }
 }
 
 Write-Host ''
@@ -247,5 +275,6 @@ Write-Host '  Панель:     внизу экрана, первая иконк
 Write-Host '  Сетки:      на рабочем столе, появляются сразу'
 Write-Host '  Часы:       правый нижний угол, стеклянная карточка'
 Write-Host '  Значок:     в трее; выход — правый клик по нему'
+Write-Host '  Запуск:     «AuraUI — запуск и компоненты» в меню «Пуск» (auraservice.exe --settings)'
 Write-Host ''
 Write-Host 'Удалить: powershell -ExecutionPolicy Bypass -File install.ps1 -Remove'

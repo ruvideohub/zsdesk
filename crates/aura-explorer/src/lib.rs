@@ -18,7 +18,7 @@ mod storage;
 mod window;
 mod instance;
 mod reveal;
-mod shell_dock;
+mod service_start;
 mod shell_window_registry;
 mod context_preferences;
 mod flyout_menu;

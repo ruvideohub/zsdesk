@@ -11,7 +11,7 @@ const HOTKEYS: &[(&str, &str)] = &[
     ("search-hotkey-alt-f11", "Alt+F11"),
 ];
 
-fn settings_menu(preferences: &QuickSearchPreferences, main_startup: Option<bool>, desktop_startup: Option<Option<bool>>) -> MenuSpec {
+fn settings_menu(preferences: &QuickSearchPreferences, main_startup: Option<bool>) -> MenuSpec {
     let mut items = vec![
         menus::entry(aura_core::i18n::text("搜索与开机启动（当前配置）"), "startup-heading", false, false),
         menus::entry(aura_core::i18n::text("启用全局搜索快捷键（唤出主窗口）"), "search-hotkey-enabled", true, preferences.enabled),
@@ -23,10 +23,8 @@ fn settings_menu(preferences: &QuickSearchPreferences, main_startup: Option<bool
         menus::entry(if main_startup.is_some() { aura_core::i18n::text("登录 Windows 时打开文件管理主窗口") } else { aura_core::i18n::text("主窗口登录启动（无法读取状态）") },
             "main-window-login", main_startup.is_some(), main_startup.unwrap_or(false)),
     ];
-    if let Some(enabled) = desktop_startup {
-        items.push(menus::entry(if enabled.is_some() { aura_core::i18n::text("登录 Windows 时启动桌面格子") } else { aura_core::i18n::text("桌面格子登录启动（无法读取状态）") },
-            "desktop-login", enabled.is_some(), enabled.unwrap_or(false)));
-    }
+    // The panel, the fences and the widgets start from one place: the launch service's window.
+    items.push(menus::entry(aura_core::i18n::text("启动与组件…"), "launch-settings", true, false));
     items.extend([MenuItemSpec::Separator, menus::item(aura_core::i18n::text("查看全局快捷键运行状态"), "search-hotkey-status")]);
     menus::menu(items)
 }
@@ -60,12 +58,8 @@ pub(crate) fn show(profile: &std::path::Path, owner: super::HWND, anchor: Option
         Err(error) => { report(aura_core::tr_format!("无法读取搜索与启动设置：{error:#}", error=error)); return; }
     };
     let main_startup = control::main_window_startup::enabled(profile);
-    let desktop_config = profile.with_file_name("desktop-fences.json");
-    let desktop_startup = crate::edition::DESKTOP.then(|| crate::desktop::startup_enabled(&desktop_config));
-    let spec = settings_menu(&preferences, main_startup.as_ref().ok().copied(),
-        desktop_startup.as_ref().map(|result| result.as_ref().ok().copied()));
+    let spec = settings_menu(&preferences, main_startup.as_ref().ok().copied());
     if let Err(error) = &main_startup { report(aura_core::tr_format!("无法读取主窗口登录启动设置：{error:#}", error=error)); }
-    if let Some(Err(error)) = &desktop_startup { report(aura_core::tr_format!("无法读取桌面格子登录启动设置：{error:#}", error=error)); }
     let Some(choice) = super::input::popup(owner, &spec, anchor) else { return; };
 
     if preference_action(&mut preferences, &choice) {
@@ -80,7 +74,7 @@ pub(crate) fn show(profile: &std::path::Path, owner: super::HWND, anchor: Option
             .and_then(|_| quick_search::start_if_enabled(profile));
         match result {
             Ok(()) => report(if enabled { aura_core::i18n::text("设置已保存；后台正在应用全局快捷键，可在运行状态中检查是否注册成功。").into() }
-                else { aura_core::i18n::text("全局搜索快捷键及其后台登录启动已关闭。主窗口和桌面格子的登录启动分别设置。").into() }),
+                else { aura_core::i18n::text("全局搜索快捷键及其后台登录启动已关闭。主窗口的登录启动单独设置，面板、格子和组件的启动在「启动与组件」里。").into() }),
             Err(error) => report(aura_core::tr_format!("设置已保存，后台应用失败：{error:#}", error=error)),
         }
         return;
@@ -92,12 +86,7 @@ pub(crate) fn show(profile: &std::path::Path, owner: super::HWND, anchor: Option
                 Err(error) => report(aura_core::tr_format!("主窗口登录启动未更改：{error:#}", error=error)),
             }
         },
-        "desktop-login" => if let Some(Ok(current)) = desktop_startup {
-            match crate::desktop::set_startup_enabled(&desktop_config, !current) {
-                Ok(()) => report(if current { aura_core::i18n::text("桌面格子登录启动已关闭") } else { aura_core::i18n::text("下次登录 Windows 时将启动桌面格子") }.into()),
-                Err(error) => report(aura_core::tr_format!("桌面格子登录启动未更改：{error:#}", error=error)),
-            }
-        },
+        "launch-settings" => crate::service_start::open_settings(),
         "search-hotkey-status" => {
             let status = control::status(profile);
             let saved = &status["last_status"];
@@ -127,15 +116,18 @@ mod tests {
     }
 
     #[test]
-    fn login_switches_are_separate_and_desktop_is_edition_gated() {
+    fn login_switches_are_separate_and_the_rest_is_one_window() {
         let preferences = QuickSearchPreferences::default();
-        let standard = settings_menu(&preferences, Some(true), None);
+        let standard = settings_menu(&preferences, Some(true));
         assert_eq!(command(&standard, "main-window-login").map(|(_, enabled, checked)| (enabled, checked)), Some((true, true)));
         assert_eq!(command(&standard, "search-background-login").map(|(_, enabled, checked)| (enabled, checked)), Some((false, false)));
+        // Everything else that starts at logon is chosen in the launch window, and this menu
+        // only opens it — it never grows a second switch of its own.
+        assert_eq!(command(&standard, "launch-settings").map(|(_, enabled, checked)| (enabled, checked)), Some((true, false)));
         assert!(command(&standard, "desktop-login").is_none());
-        let desktop = settings_menu(&preferences, None, Some(Some(false)));
-        assert_eq!(command(&desktop, "main-window-login").map(|(_, enabled, _)| enabled), Some(false));
-        assert_eq!(command(&desktop, "desktop-login").map(|(_, enabled, checked)| (enabled, checked)), Some((true, false)));
+        let unreadable = settings_menu(&preferences, None);
+        assert_eq!(command(&unreadable, "main-window-login").map(|(_, enabled, _)| enabled), Some(false));
+        assert_eq!(command(&unreadable, "launch-settings").map(|(_, enabled, _)| enabled), Some(true));
     }
 
     #[test]

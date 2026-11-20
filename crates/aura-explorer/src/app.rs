@@ -290,7 +290,6 @@ pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
     }
     if opts.uninstall_integration {
         let exe = std::env::current_exe()?;
-        desktop::uninstall_owned_startup(&desktop_config, &exe)?;
         crate::quick_search::control::uninstall_owned(&config, &exe)?;
         crate::routing_control::uninstall_owned(&config, &exe)?;
         aura_windows::integration::restore_owned(&exe, &config.with_file_name("takeover-backup.json"))?;
