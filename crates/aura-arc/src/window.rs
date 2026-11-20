@@ -542,7 +542,8 @@ impl App {
             self.invalidate();
             return;
         }
-        self.start(Job::Copy { archive, destination: crate::beside(&archive), names });
+        let destination = crate::beside(&archive);
+        self.start(Job::Copy { archive, destination, names });
     }
 
     /// «Удалить»: the picked rows go, everything else is copied over untouched.
