@@ -1222,15 +1222,35 @@ mod policy_tests {
     }
     #[test]
     fn modern_policy_covers_visible_functions_and_keeps_extensions_independent() {
+        // Маска — внутренний фильтр: её читает только should_hide (и нативно лишь «ноль или
+        // нет»), поэтому важно не число само по себе, а то, что каждая функция получает свой
+        // бит, алиасы совпадают с каноническим именем, а сторонние расширения бита не занимают.
         let mut options = ContextMenuOptions::default();
         assert_eq!(modern_hidden_features(&options), 0);
-        options.hidden_verbs = ["cut", "copy", "paste", "pastelink", "copyaspath",
-            "rename", "delete", "properties", "windows.modernshare", "new", "custom-third-party"]
-            .map(str::to_string).to_vec();
-        assert_eq!(modern_hidden_features(&options), 0x0fff);
+        let verbs = ["cut", "copy", "paste", "pastelink", "copyaspath",
+            "rename", "delete", "properties", "windows.modernshare", "new"];
+        let mut seen = 0;
+        for (index, verb) in verbs.iter().enumerate() {
+            let bit = command_feature(verb);
+            assert_eq!(bit, 1 << index, "{verb}: функция должна занимать свой бит");
+            assert_eq!(bit & seen, 0, "{verb}: бит уже занят другой функцией");
+            seen |= bit;
+        }
+        assert_eq!(seen, 0x03ff, "десять скрываемых функций — десять бит");
+        for (alias, canonical) in [("windows.cut", "cut"), ("copypath", "copyaspath"),
+            ("newfolder", "new"), ("windows.newfolder", "new"),
+            ("windows.modernshareflyout", "windows.modernshare"), ("windows.pastelink", "pastelink")] {
+            assert_eq!(command_feature(alias), command_feature(canonical), "алиас {alias} должен совпадать с {canonical}");
+        }
+        assert_eq!(command_feature("custom-third-party"), 0, "сторонние расширения скрывает каталог, а не эта маска");
+        options.hidden_verbs = verbs.map(str::to_string).to_vec();
+        assert_eq!(modern_hidden_features(&options), 0x03ff);
+        options.hidden_verbs.push("custom-third-party".into());
+        assert_eq!(modern_hidden_features(&options), 0x03ff, "неизвестный ключ не должен менять маску");
         options.hidden_verbs.clear();
         assert_eq!(modern_hidden_features(&options), 0);
     }
+
     #[test]
     fn filters_canonical_commands_without_using_menu_positions() {
         let options = ContextMenuOptions { modern:false, hidden_verbs:vec!["rename".into(),"delete".into()], ..Default::default() };

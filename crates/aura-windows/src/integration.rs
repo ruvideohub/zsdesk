@@ -611,7 +611,8 @@ mod tests {
     #[test]
     fn uninstaller_only_recognizes_the_registered_executable_and_verb() {
         let exe = Path::new(r"C:\Apps\AuraExplorer\AuraExplorer.exe");
-        assert!(command_points_to(r#""c:\apps\aura\aura.exe" --shell-open "%V""#, exe));
+        // Тот же файл, но в другом регистре: регистрация обязана узнавать свою команду.
+        assert!(command_points_to(r#""c:\apps\auraexplorer\auraexplorer.exe" --shell-open "%V""#, exe));
         assert!(!command_points_to(r#""C:\Other\AuraExplorer.exe" --shell-open "%V""#, exe));
         assert!(!command_points_to(r#""C:\Apps\AuraExplorer\AuraExplorer.exe" --desktop"#, exe));
         assert!(!command_points_to(r#"cmd /c "C:\Apps\AuraExplorer\AuraExplorer.exe" --shell-open "%V""#, exe));

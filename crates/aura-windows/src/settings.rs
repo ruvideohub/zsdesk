@@ -179,7 +179,10 @@ pub fn button_rect(look: &Look, row: RectF, which: usize, count: usize) -> RectF
     let h = look.px(28.0);
     let gap = look.px(8.0);
     let right = row.right() - look.px(24.0);
-    let index = if count >= 2 { which.min(1) } else { 0 };
+    // `which` считается слева направо: последняя кнопка прижимается к правому краю, как в
+    // диалогах Windows, где главное действие стоит справа. Раньше индекс шёл в обратную
+    // сторону, и из двух кнопок к краю прижималась первая, а вторая висела в середине.
+    let index = if count >= 2 { (count - 1 - which).min(1) } else { 0 };
     let x = right - w - index as f32 * (w + gap);
     RectF::new(x, row.y + (row.h - h) / 2.0, w, h)
 }

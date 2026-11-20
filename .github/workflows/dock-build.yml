@@ -143,7 +143,32 @@ jobs:
             $dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($dumpbin) {
               Get-ChildItem target/release/deps/aura_explorer-*.exe -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {
-                & $dumpbin.FullName /nologo /imports $_.FullName | Select-String -Pattern '\.dll' | Select-Object -First 40
+                # STATUS_ENTRYPOINT_NOT_FOUND называет виновника только в диалоговом окне,
+                # которого в CI нет: сверяем импорты exe с экспортами системных DLL сами.
+                $text = & $dumpbin.FullName /nologo /imports $_.FullName | Out-String
+                $current = $null
+                $sets = @{}
+                foreach ($line in ($text -split "`r?`n")) {
+                  if ($line -match '^\s{4}(\S+\.dll)\s*$') {
+                    $current = $matches[1]
+                    if (-not $sets.ContainsKey($current)) { $sets[$current] = New-Object System.Collections.Generic.List[string] }
+                    continue
+                  }
+                  if ($current -and $line -match '^\s+[0-9A-Fa-f]+\s+([A-Za-z_][^\s]*)\s*$') { $sets[$current].Add($matches[1]) }
+                }
+                foreach ($dll in $sets.Keys) {
+                  # api-ms-win-* — не настоящие DLL, а схемы API set: их экспорты не перечислить.
+                  if ($dll -like 'api-ms-win-*') { continue }
+                  $system = Join-Path $env:SystemRoot ("System32\" + $dll)
+                  if (-not (Test-Path $system)) { Write-Host "нет $dll"; continue }
+                  $exports = @{}
+                  (& $dumpbin.FullName /nologo /exports $system) | ForEach-Object {
+                    if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $exports[$matches[1]] = 1 }
+                  }
+                  foreach ($name in $sets[$dll]) {
+                    if (-not $exports.ContainsKey($name)) { Write-Host "не найдено в ${dll}: $name" -ForegroundColor Yellow }
+                  }
+                }
               }
             } else {
               Write-Host 'dumpbin.exe не найден'
