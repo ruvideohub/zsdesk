@@ -45,9 +45,19 @@ struct Row {
     button: HWND,
 }
 
+/// A program the service opens for the user, with the way to its own settings beside it.
+struct ProgramRow {
+    index: usize,
+    name: HWND,
+    hint: HWND,
+    open: HWND,
+    settings: HWND,
+}
+
 struct State {
     settings: Settings,
     rows: Vec<Row>,
+    programs: Vec<ProgramRow>,
     /// "Запускать при входе в Windows".
     logon: HWND,
     /// The line about the service itself.
@@ -149,6 +159,7 @@ pub fn run() -> Result<()> {
         let state = Box::new(State {
             settings: launch::load(),
             rows: Vec::new(),
+            programs: Vec::new(),
             logon: HWND::default(),
             service: HWND::default(),
             service_button: HWND::default(),
@@ -200,7 +211,8 @@ pub fn run() -> Result<()> {
 fn fit(hwnd: HWND) {
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let rows = launch::COMPONENTS.len() as f32;
-    let client = 16.0 + 30.0 + 30.0 + rows * 68.0 + 6.0 + 34.0 + 40.0 + 20.0 + 24.0;
+    let programs = launch::PROGRAMS.len() as f32;
+    let client = 16.0 + 30.0 + 30.0 + rows * 68.0 + programs * 58.0 + 6.0 + 34.0 + 40.0 + 20.0 + 24.0;
     let _ = unsafe {
         SetWindowPos(
             hwnd,
@@ -286,6 +298,8 @@ const ID_LOGON: usize = 100;
 const ID_SERVICE: usize = 101;
 const ID_LOG: usize = 102;
 const ID_ROW: usize = 200;
+/// Programs the hub can open: two controls each — the program, and its settings.
+const ID_PROGRAM: usize = 400;
 
 /// Create the controls once, then let `layout` place them.
 fn build(hwnd: HWND, state: &mut State) {
@@ -299,7 +313,7 @@ fn build(hwnd: HWND, state: &mut State) {
     state.subtitle = create_control(
         hwnd,
         w!("STATIC"),
-        "Служба запуска держит включённые компоненты запущенными и поднимает их при входе в Windows.",
+        "Держит включённые компоненты запущенными и открывает настройки любого из них — каждый компонент настраивается сам.",
         2,
         WINDOW_STYLE::default(),
     );
@@ -315,6 +329,22 @@ fn build(hwnd: HWND, state: &mut State) {
                 w!("BUTTON"),
                 "Запустить",
                 id,
+                WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
+            ),
+        });
+    }
+    for (index, program) in launch::PROGRAMS.iter().enumerate() {
+        let id = ID_PROGRAM + index * 2;
+        state.programs.push(ProgramRow {
+            index,
+            name: create_control(hwnd, w!("STATIC"), program.name, id * 4, WINDOW_STYLE::default()),
+            hint: create_control(hwnd, w!("STATIC"), program.hint, id * 4 + 1, WINDOW_STYLE::default()),
+            open: create_control(hwnd, w!("BUTTON"), "Открыть", id, WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP),
+            settings: create_control(
+                hwnd,
+                w!("BUTTON"),
+                "Настройки…",
+                id + 1,
                 WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
             ),
         });
@@ -395,6 +425,15 @@ fn layout(hwnd: HWND, state: &mut State) {
         y += px(68.0);
     }
 
+    for program in &state.programs {
+        move_to(program.name, margin, y + px(4.0), text_width, px(20.0));
+        move_to(program.hint, margin, y + px(24.0), text_width, px(18.0));
+        let half = (button_width - px(8.0)) / 2;
+        move_to(program.open, width - margin - button_width, y + px(8.0), half, button_height);
+        move_to(program.settings, width - margin - half, y + px(8.0), half, button_height);
+        y += px(58.0);
+    }
+
     y += px(6.0);
     move_to(state.logon, margin, y, width - margin * 2, px(24.0));
     y += px(34.0);
@@ -442,6 +481,12 @@ fn refresh(state: &mut State) {
             "остановлен".to_string()
         };
         set_text(row.status, &status);
+    }
+    // A program that is not in the folder cannot be opened: say so by refusing the buttons.
+    for program in &state.programs {
+        let installed = launch::program_exe(&launch::PROGRAMS[program.index]).is_some();
+        enable(program.open, installed);
+        enable(program.settings, installed && !launch::PROGRAMS[program.index].settings.is_empty());
     }
     set_checked(state.logon, state.settings.autostart);
     let active = crate::supervise::active();
@@ -562,6 +607,33 @@ fn command(state: &mut State, id: usize, control: HWND) {
         if opened.0 as isize <= 32 {
             set_text(state.notice, &format!("Путь журнала: {}", launch::log_path().display()));
         }
+        return;
+    }
+    if id >= ID_PROGRAM {
+        let index = (id - ID_PROGRAM) / 2;
+        let wants_settings = (id - ID_PROGRAM) % 2 == 1;
+        let Some(program) = launch::PROGRAMS.get(index) else { return };
+        let arguments: &[&str] = if wants_settings { program.settings } else { &[] };
+        if arguments.is_empty() && wants_settings {
+            set_text(state.notice, &format!("{}: собственных настроек пока нет.", program.name));
+            return;
+        }
+        if launch::start_program(program, arguments) {
+            set_text(
+                state.notice,
+                if wants_settings {
+                    format!("{}: открываю настройки.", program.name)
+                } else {
+                    format!("{}: открываю.", program.name)
+                },
+            );
+        } else {
+            set_text(
+                state.notice,
+                &format!("{}: не найден рядом со службой — переустановите AuraUI.", program.name),
+            );
+        }
+        let _ = control;
         return;
     }
     if id < ID_ROW {

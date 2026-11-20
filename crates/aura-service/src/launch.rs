@@ -77,6 +77,31 @@ pub const COMPONENTS: &[Component] = &[
     },
 ];
 
+/// A program the service can open for the user, but never keeps running.
+///
+/// These are not background components: a person opens the archiver when they need it and
+/// closes it when they are done. The service only offers the way in — and, more importantly,
+/// the way to that program's own settings, which stay its own business.
+pub struct Program {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub hint: &'static str,
+    pub exe: &'static str,
+    /// Arguments that just open the program.
+    pub args: &'static [&'static str],
+    /// Arguments that open *its settings*. Empty when the program has none of its own yet.
+    pub settings: &'static [&'static str],
+}
+
+pub const PROGRAMS: &[Program] = &[Program {
+    id: "arc",
+    name: "Архиватор",
+    hint: "AuraArc: окно архиватора — .zip, дальше 7z и tar",
+    exe: "AuraArc.exe",
+    args: &[],
+    settings: &["--settings"],
+}];
+
 /// The settings file.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -142,6 +167,23 @@ pub fn install_dir() -> PathBuf {
 pub fn exe_of(component: &Component) -> Option<PathBuf> {
     let path = install_dir().join(component.exe);
     path.is_file().then_some(path)
+}
+
+pub fn program_exe(program: &Program) -> Option<PathBuf> {
+    let path = install_dir().join(program.exe);
+    path.is_file().then_some(path)
+}
+
+/// Starts a program with the given arguments; `false` means it could not be found or started.
+pub fn start_program(program: &Program, arguments: &[&str]) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let Some(exe) = program_exe(program) else { return false };
+    let mut command = std::process::Command::new(exe);
+    command.args(program.args).args(arguments);
+    // A window program started from here asks for a console of its own only if it wants one.
+    command.creation_flags(CREATE_NEW_CONSOLE);
+    command.spawn().is_ok()
 }
 
 pub fn load() -> Settings {

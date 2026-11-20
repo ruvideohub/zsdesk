@@ -33,6 +33,7 @@ AuraArc — архиватор AuraUI (.zip)
   --quiet    не перечислять файлы, только итог
   --         дальше — имена, даже если они начинаются с дефиса
   --version  версия
+  --settings окно архиватора (всё, что в нём настраивается)
   --help     эта подсказка
 
 Коды возврата: 0 — всё в порядке, 1 — не понял команду, 2 — что-то не получилось.";
@@ -86,6 +87,11 @@ fn parse(args: &[String]) -> (Options, Vec<String>, Option<i32>) {
 }
 
 fn run(args: &[String]) -> i32 {
+    // `--settings` is how another program (the service hub) asks for this program's own
+    // settings. For the archiver they are the window itself: it has nothing else to configure.
+    if args.iter().any(|argument| argument == "--settings") {
+        return window::run(None);
+    }
     let (options, words, early) = parse(args);
     if let Some(code) = early {
         return code;
