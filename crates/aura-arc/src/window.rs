@@ -33,11 +33,13 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::zip;
 
 /// Toolbar: what the window can do. The glyph is a Segoe MDL2 Assets code point.
-const TOOLS: [(&str, &str); 5] = [
+const TOOLS: [(&str, &str); 7] = [
     ("\u{e8b7}", "Открыть"),
     ("\u{e710}", "Добавить"),
     ("\u{e896}", "Извлечь"),
     ("\u{e73e}", "Тест"),
+    ("\u{e8c8}", "Копировать"),
+    ("\u{e74d}", "Удалить"),
     ("\u{e713}", "Настройки"),
 ];
 
@@ -187,7 +189,9 @@ struct Layout {
 fn layout(width: f32, height: f32) -> Layout {
     let margin = 16.0;
     let mut tools = Vec::new();
-    let tool_width = 92.0;
+    // The toolbar shares the width it has: seven tools at a fixed 92 px would overrun a narrow
+    // window and sit under the search field.
+    let tool_width = ((width - 2.0 * margin) / TOOLS.len() as f32).min(92.0);
     for index in 0..TOOLS.len() {
         tools.push(RectF::new(margin + index as f32 * tool_width, 10.0, tool_width - 8.0, TOOLBAR_HEIGHT - 22.0));
     }
@@ -337,11 +341,7 @@ impl App {
         self.reload();
         self.status = match summary {
             Ok(summary) => {
-                let mut text = format!(
-                    "Добавлено: {}, {}",
-                    crate::plural(summary.files, "файл", "файла", "файлов"),
-                    crate::size(summary.packed)
-                );
+                let mut text = format!("Добавлено: {}, {}", crate::items(summary), crate::size(summary.packed));
                 if summary.skipped > 0 {
                     text.push_str(&format!(
                         ", уже было: {}",
@@ -374,11 +374,7 @@ impl App {
                 if self.settings.open_after {
                     open_folder(&destination);
                 }
-                let mut text = format!(
-                    "Распаковано: {} в {}",
-                    crate::plural(summary.files, "файл", "файла", "файлов"),
-                    destination.display()
-                );
+                let mut text = format!("Распаковано: {} в {}", crate::items(summary), destination.display());
                 if summary.failed > 0 {
                     text.push_str(&format!(
                         ", с ошибками: {}",
@@ -400,9 +396,7 @@ impl App {
         let result = zip::test(&archive, |_, _| {});
         self.busy = false;
         self.status = match result {
-            Ok(summary) if summary.failed == 0 => {
-                format!("Всё цело: {}", crate::plural(summary.files, "файл", "файла", "файлов"))
-            }
+            Ok(summary) if summary.failed == 0 => format!("Всё цело: {}", crate::items(summary)),
             Ok(summary) => format!(
                 "Повреждено: {} из {}",
                 crate::plural(summary.failed, "файл", "файла", "файлов"),
@@ -419,11 +413,72 @@ impl App {
             1 => self.add_files(),
             2 => self.extract(),
             3 => self.test(),
+            4 => self.copy_selected(),
+            5 => self.delete_selected(),
             _ => {
                 self.settings_open = !self.settings_open;
                 self.invalidate();
             }
         }
+    }
+
+    /// A tool is usable when it has something to work on; the row tools also need a row.
+    fn enabled(&self, tool: usize) -> bool {
+        match tool {
+            0 | 6 => true,
+            4 | 5 => self.selected.is_some(),
+            _ => self.archive.is_some(),
+        }
+    }
+
+    fn selected_entry(&self) -> Option<&zip::Entry> {
+        let index = *self.visible.get(self.selected?)?;
+        self.entries.get(index)
+    }
+
+    /// «Копировать»: the picked row, unpacked beside the archive.
+    fn copy_selected(&mut self) {
+        let Some(archive) = self.archive.clone() else { return };
+        let Some(entry) = self.selected_entry().map(|entry| entry.name.clone()) else {
+            self.status = String::from("Сначала выберите запись в таблице.");
+            self.invalidate();
+            return;
+        };
+        let destination = crate::beside(&archive);
+        self.busy = true;
+        self.status = format!("Копирую «{entry}» в {}…", destination.display());
+        self.invalidate();
+        let result = zip::extract_only(&archive, &destination, std::slice::from_ref(&entry), |_, _| {});
+        self.busy = false;
+        self.status = match result {
+            Ok(summary) if summary.files + summary.folders > 0 => {
+                format!("Скопировано: {} в {}", crate::items(summary), destination.display())
+            }
+            Ok(_) => String::from("Копировать нечего: выбранная запись пуста."),
+            Err(error) => format!("{error}"),
+        };
+        self.invalidate();
+    }
+
+    /// «Удалить»: the picked row goes, everything else is copied over untouched.
+    fn delete_selected(&mut self) {
+        let Some(archive) = self.archive.clone() else { return };
+        let Some(entry) = self.selected_entry().map(|entry| entry.name.clone()) else {
+            self.status = String::from("Сначала выберите запись в таблице.");
+            self.invalidate();
+            return;
+        };
+        let name = self.name();
+        self.busy = true;
+        self.invalidate();
+        let result = zip::remove(&archive, std::slice::from_ref(&entry));
+        self.busy = false;
+        self.reload();
+        self.status = match result {
+            Ok(summary) => format!("Убрано из «{name}»: {}", crate::items(summary)),
+            Err(error) => format!("{error}"),
+        };
+        self.invalidate();
     }
 
     fn dropped(&mut self, drop: HDROP) {
@@ -471,7 +526,7 @@ impl App {
 
         // Toolbar.
         for (index, rect) in l.tools.iter().enumerate() {
-            let enabled = index == 0 || index == 4 || self.archive.is_some();
+            let enabled = self.enabled(index);
             let hovered = self.hover == Some(Hit::Tool(index));
             if hovered && enabled {
                 cv.round(*rect, 10.0, p.surface_hover);
@@ -735,6 +790,12 @@ impl App {
             0x4f if control => self.activate(0),
             0x45 if control => self.activate(2),
             0x74 => self.activate(3),
+            // Delete, with a row picked: the same thing the «Удалить» tool does.
+            0x2e => {
+                if self.selected.is_some() {
+                    self.delete_selected();
+                }
+            }
             _ => {}
         }
     }

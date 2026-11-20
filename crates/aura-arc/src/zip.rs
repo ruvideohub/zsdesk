@@ -47,6 +47,8 @@ fn fail<T>(message: impl Into<String>) -> Result<T> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Summary {
     pub files: usize,
+    /// Folders are counted apart from files: «12 файлов и 3 папки», not «15 файлов».
+    pub folders: usize,
     pub bytes: u64,
     pub packed: u64,
     pub failed: usize,
@@ -82,7 +84,21 @@ pub struct Entry {
     pub date: u16,
     /// The local header's extra field, kept as it is when an archive is rebuilt.
     pub extra: Vec<u8>,
+    /// Version and host that made the entry — kept, so a rewrite says the same thing.
+    pub made_by: u16,
+    /// Internal attributes (0 for a file, 1 for text).
+    pub internal: u16,
+    /// External attributes: on a FAT host the low byte is the DOS attribute set, which is how
+    /// other unpackers tell a folder from a file.
+    pub external: u32,
 }
+
+/// Version 2.0, by an MS-DOS/Windows host: the pairing every unpacker reads the same way.
+const MADE_BY: u16 = 20;
+/// DOS attribute: ordinary file.
+const ATTR_FILE: u32 = 0x20;
+/// DOS attribute: folder. Without it some tools unpack folders as empty files.
+const ATTR_FOLDER: u32 = 0x10;
 
 impl Entry {
     pub fn is_folder(&self) -> bool {
@@ -105,14 +121,12 @@ pub fn entries(archive: &Path) -> Result<Vec<Entry>> {
     let Some(at) = find_end(&tail) else {
         return fail(format!("{} не похож на архив .zip: нет оглавления", archive.display()));
     };
-    let base = length - window;
     let directory_size = u32(&tail, at + 12) as u64;
     let directory_offset = u32(&tail, at + 16) as u64;
     let count = u16(&tail, at + 10) as usize;
     if directory_offset == u32::MAX as u64 || directory_size == u32::MAX as u64 || count == u16::MAX as usize {
         return fail(format!("{} — архив ZIP64; такие пока не поддерживаются", archive.display()));
     }
-    let _ = base;
     // Defensive: a truncated or hand-edited file must not make us allocate wildly.
     if directory_size > length {
         return fail(format!("{} повреждён: оглавление больше самого файла", archive.display()));
@@ -120,10 +134,17 @@ pub fn entries(archive: &Path) -> Result<Vec<Entry>> {
     file.seek(SeekFrom::Start(directory_offset))?;
     let mut directory = vec![0u8; directory_size as usize];
     file.read_exact(&mut directory)?;
-    parse_directory(&directory).map(|entries| {
-        let _ = count;
-        entries
-    })
+    let entries = parse_directory(&directory)?;
+    // The end record says how many entries the directory holds. When the two disagree the file
+    // was cut short or patched by hand, and unpacking "as much as possible" would hide that.
+    if count != 0 && count != entries.len() {
+        return fail(format!(
+            "{} повреждён: в оглавлении записано {count}, а найдено {}",
+            archive.display(),
+            entries.len()
+        ));
+    }
+    Ok(entries)
 }
 
 /// Find the end-of-directory record, scanning backwards (its comment follows it).
@@ -170,7 +191,10 @@ fn parse_directory(directory: &[u8]) -> Result<Vec<Entry>> {
         if packed == u32::MAX as u64 || size == u32::MAX as u64 || offset == u32::MAX as u64 {
             return fail(format!("«{name}» в формате ZIP64; такие архивы пока не поддерживаются"));
         }
-        entries.push(Entry { name, method, flags, crc, size, packed, offset, time, date, extra });
+        let made_by = u16(directory, at + 4);
+        let internal = u16(directory, at + 36);
+        let external = u32(directory, at + 38);
+        entries.push(Entry { name, method, flags, crc, size, packed, offset, time, date, extra, made_by, internal, external });
         at = name_at + name_length + extra_length + comment_length;
     }
     Ok(entries)
@@ -196,12 +220,27 @@ pub fn list(archive: &Path) -> Result<Vec<Entry>> {
 /// Unpack everything into `dest`. A file that fails does not stop the rest: each is reported
 /// and counted, and the caller decides what exit code that deserves.
 pub fn extract(archive: &Path, dest: &Path, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Summary> {
+    unpack(archive, dest, None, &mut on_entry)
+}
+
+/// Unpack the named entries only — what «Копировать» does with a row of the table.
+pub fn extract_only(archive: &Path, dest: &Path, names: &[String], mut on_entry: impl FnMut(&Entry, bool)) -> Result<Summary> {
+    unpack(archive, dest, Some(names), &mut on_entry)
+}
+
+/// `wanted` is `None` for the whole archive, or the names picked in the table.
+fn unpack(archive: &Path, dest: &Path, wanted: Option<&[String]>, on_entry: &mut impl FnMut(&Entry, bool)) -> Result<Summary> {
     let entries = entries(archive)?;
     let mut file = BufReader::new(File::open(archive)?);
     let mut summary = Summary::default();
     // Nothing may be written outside `dest`, however the archive was made.
     let root = absolute(dest)?;
     for entry in entries {
+        if let Some(names) = wanted {
+            if !picked(&entry, names) {
+                continue;
+            }
+        }
         let Some(relative) = safe_relative(&entry.name) else {
             summary.failed += 1;
             on_entry(&entry, false);
@@ -215,8 +254,12 @@ pub fn extract(archive: &Path, dest: &Path, mut on_entry: impl FnMut(&Entry, boo
         };
         match result {
             Ok(()) => {
-                summary.files += 1;
-                summary.bytes += entry.size;
+                if entry.is_folder() {
+                    summary.folders += 1;
+                } else {
+                    summary.files += 1;
+                    summary.bytes += entry.size;
+                }
                 on_entry(&entry, true);
             }
             Err(error) => {
@@ -227,6 +270,13 @@ pub fn extract(archive: &Path, dest: &Path, mut on_entry: impl FnMut(&Entry, boo
         }
     }
     Ok(summary)
+}
+
+/// Is this entry one of the names picked in the table? Picking a folder picks what is inside.
+fn picked(entry: &Entry, names: &[String]) -> bool {
+    names.iter().any(|name| {
+        entry.name == *name || (name.ends_with('/') && entry.name.starts_with(name.as_str()))
+    })
 }
 
 fn extract_one(file: &mut BufReader<File>, entry: &Entry, target: &Path) -> Result<()> {
@@ -299,7 +349,7 @@ pub fn test(archive: &Path, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Su
     let mut summary = Summary::default();
     for entry in entries {
         if entry.is_folder() {
-            summary.files += 1;
+            summary.folders += 1;
             on_entry(&entry, true);
             continue;
         }
@@ -397,36 +447,9 @@ fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf
     let mut known: BTreeSet<String> = old.iter().map(|entry| entry.name.clone()).collect();
     let mut out = BufWriter::new(File::create(temporary)?);
     let mut summary = Summary::default();
-    let mut written_entries: Vec<Entry> = Vec::with_capacity(old.len() + collected.len());
 
     // 1. What was already inside, byte for byte — nothing is re-compressed.
-    if !old.is_empty() {
-        let mut source = BufReader::new(File::open(target)?);
-        for entry in &old {
-            let offset = out.stream_position()?;
-            let mut head = [0u8; 30];
-            source.seek(SeekFrom::Start(entry.offset))?;
-            source.read_exact(&mut head)?;
-            if u32(&head, 0) != LOCAL_HEADER {
-                return fail(format!("повреждён архив: запись «{}» не на месте", entry.name));
-            }
-            let name_length = u16(&head, 26) as usize;
-            let extra_length = u16(&head, 28) as usize;
-            let mut moved = entry.clone();
-            moved.offset = offset;
-            // The header is rewritten rather than copied: an archive written by a streaming
-            // program keeps «sizes come after the data» in its local header, and that flag with
-            // no descriptor behind it is what old unpackers trip over.
-            moved.flags &= !SIZES_AFTER;
-            write_local(&mut out, &moved)?;
-            let mut skip = vec![0u8; name_length + extra_length];
-            source.read_exact(&mut skip)?;
-            out.write_all(&skip)?;
-            let mut data = (&mut source).take(entry.packed);
-            io::copy(&mut data, &mut out)?;
-            written_entries.push(moved);
-        }
-    }
+    let mut written_entries = copy_entries(&mut out, target, &old)?;
 
     // 2. The new files, in the order they were named.
     for (root, path) in collected {
@@ -442,7 +465,7 @@ fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf
         let entry = match add_one(&mut out, path, &name, store) {
             Ok(entry) => entry,
             Err(error) => {
-                let broken = Entry { name: name.clone(), method: STORED, flags: 0, crc: 0, size: 0, packed: 0, offset: 0, time: 0, date: 0, extra: Vec::new() };
+                let broken = Entry { name: name.clone(), method: STORED, flags: 0, crc: 0, size: 0, packed: 0, offset: 0, time: 0, date: 0, extra: Vec::new(), made_by: MADE_BY, internal: 0, external: 0 };
                 eprintln!("! {name}: {error}");
                 summary.failed += 1;
                 on_entry(&broken, false);
@@ -450,35 +473,119 @@ fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf
             }
         };
         known.insert(name);
-        summary.files += 1;
-        summary.bytes += entry.size;
-        summary.packed += entry.packed;
+        if entry.is_folder() {
+            summary.folders += 1;
+        } else {
+            summary.files += 1;
+            summary.bytes += entry.size;
+            summary.packed += entry.packed;
+        }
         on_entry(&entry, true);
         written_entries.push(entry);
     }
 
     // 3. The directory, then the pointer to it.
+    finish(&mut out, &written_entries)?;
+    drop(out);
+    // Windows lets a rename replace the old archive, but not while another program holds it.
+    commit(temporary, target)
+}
+
+/// Copy the entries an archive already holds into the archive being written, byte for byte.
+/// Each local header is rewritten, though: a streaming program leaves «sizes come after the
+/// data» in it, and that flag with no descriptor behind it is what old unpackers trip over.
+fn copy_entries(out: &mut BufWriter<File>, source_path: &Path, old: &[Entry]) -> Result<Vec<Entry>> {
+    let mut written = Vec::with_capacity(old.len());
+    if old.is_empty() {
+        return Ok(written);
+    }
+    let mut source = BufReader::new(File::open(source_path)?);
+    for entry in old {
+        let offset = out.stream_position()?;
+        let mut head = [0u8; 30];
+        source.seek(SeekFrom::Start(entry.offset))?;
+        source.read_exact(&mut head)?;
+        if u32(&head, 0) != LOCAL_HEADER {
+            return fail(format!("повреждён архив: запись «{}» не на месте", entry.name));
+        }
+        let name_length = u16(&head, 26) as usize;
+        let extra_length = u16(&head, 28) as usize;
+        let mut moved = entry.clone();
+        moved.offset = offset;
+        moved.flags &= !SIZES_AFTER;
+        write_local(out, &moved)?;
+        let mut skip = vec![0u8; name_length + extra_length];
+        source.read_exact(&mut skip)?;
+        out.write_all(&skip)?;
+        let mut data = (&mut source).take(entry.packed);
+        io::copy(&mut data, out)?;
+        written.push(moved);
+    }
+    Ok(written)
+}
+
+/// The central directory, then the record that points at it.
+fn finish(out: &mut BufWriter<File>, written: &[Entry]) -> Result<()> {
     let directory_offset = out.stream_position()?;
-    for entry in &written_entries {
-        write_central(&mut out, entry)?;
+    for entry in written {
+        write_central(out, entry)?;
     }
     let directory_size = out.stream_position()? - directory_offset;
-    if written_entries.len() > u16::MAX as usize || directory_size > u32::MAX as u64 || directory_offset > u32::MAX as u64 {
+    if written.len() > u16::MAX as usize || directory_size > u32::MAX as u64 || directory_offset > u32::MAX as u64 {
         return fail("архив вышел больше 4 ГБ или длиннее 65 535 записей: ZIP64 пока не поддерживается");
     }
     out.write_all(&END_OF_DIRECTORY.to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?; // this disk
     out.write_all(&0u16.to_le_bytes())?; // where the directory starts
-    out.write_all(&(written_entries.len() as u16).to_le_bytes())?;
-    out.write_all(&(written_entries.len() as u16).to_le_bytes())?;
+    out.write_all(&(written.len() as u16).to_le_bytes())?;
+    out.write_all(&(written.len() as u16).to_le_bytes())?;
     out.write_all(&(directory_size as u32).to_le_bytes())?;
     out.write_all(&(directory_offset as u32).to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?; // no archive comment
     out.flush()?;
-    drop(out);
-    // Windows lets a rename replace the old archive, but not while another program holds it.
+    Ok(())
+}
+
+fn commit(temporary: &Path, target: &Path) -> Result<()> {
     fs::rename(temporary, target)
-        .map_err(|error| Error(format!("не удалось записать {}: {error}", target.display())))?;
+        .map_err(|error| Error(format!("не удалось записать {}: {error}", target.display())))
+}
+
+/// Take entries out of an archive: the rest is copied byte for byte, so nothing inside is
+/// re-compressed and every other entry keeps its stamp and attributes.
+pub fn remove(archive: &Path, names: &[String]) -> Result<Summary> {
+    let target = absolute(archive)?;
+    let old = entries(&target)?;
+    let mut kept = Vec::with_capacity(old.len());
+    let mut summary = Summary::default();
+    for entry in old {
+        if picked(&entry, names) {
+            if entry.is_folder() {
+                summary.folders += 1;
+            } else {
+                summary.files += 1;
+                summary.bytes += entry.size;
+                summary.packed += entry.packed;
+            }
+        } else {
+            kept.push(entry);
+        }
+    }
+    if summary.files + summary.folders == 0 {
+        return fail(format!("в «{}» нет записей с такими именами", target.display()));
+    }
+    let temporary = target.with_extension("auraarc-tmp");
+    let outcome = (|| -> Result<()> {
+        let mut out = BufWriter::new(File::create(&temporary)?);
+        let written = copy_entries(&mut out, &target, &kept)?;
+        finish(&mut out, &written)?;
+        drop(out);
+        commit(&temporary, &target)
+    })();
+    if outcome.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    outcome?;
     Ok(summary)
 }
 
@@ -559,6 +666,9 @@ fn add_one(out: &mut BufWriter<File>, path: &Path, name: &str, store: bool) -> R
             time,
             date,
             extra: Vec::new(),
+            made_by: MADE_BY,
+            internal: 0,
+            external: ATTR_FOLDER,
         };
         write_local(out, &entry)?;
         return Ok(entry);
@@ -582,6 +692,9 @@ fn add_one(out: &mut BufWriter<File>, path: &Path, name: &str, store: bool) -> R
         time,
         date,
         extra: Vec::new(),
+        made_by: MADE_BY,
+        internal: 0,
+        external: ATTR_FILE,
     };
     write_local(out, &placeholder)?;
 
@@ -651,7 +764,7 @@ fn write_local(out: &mut BufWriter<File>, entry: &Entry) -> Result<()> {
 fn write_central(out: &mut BufWriter<File>, entry: &Entry) -> Result<()> {
     let name = entry.name.as_bytes();
     out.write_all(&CENTRAL_HEADER.to_le_bytes())?;
-    out.write_all(&20u16.to_le_bytes())?; // made by
+    out.write_all(&entry.made_by.to_le_bytes())?; // made by
     out.write_all(&20u16.to_le_bytes())?; // needed to unpack
     out.write_all(&entry.flags.to_le_bytes())?;
     out.write_all(&entry.method.to_le_bytes())?;
@@ -664,8 +777,8 @@ fn write_central(out: &mut BufWriter<File>, entry: &Entry) -> Result<()> {
     out.write_all(&(entry.extra.len() as u16).to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?; // no comment
     out.write_all(&0u16.to_le_bytes())?; // first disk
-    out.write_all(&0u16.to_le_bytes())?; // internal attributes
-    out.write_all(&0u32.to_le_bytes())?; // external attributes
+    out.write_all(&entry.internal.to_le_bytes())?; // internal attributes
+    out.write_all(&entry.external.to_le_bytes())?; // external attributes
     out.write_all(&(entry.offset as u32).to_le_bytes())?;
     out.write_all(name)?;
     out.write_all(&entry.extra)?;
@@ -926,6 +1039,109 @@ mod tests {
         assert_eq!(1980 + (date >> 9), 1980);
         assert_eq!((date >> 5) & 0x0f, 1);
         assert_eq!(date & 0x1f, 1);
+    }
+
+    #[test]
+    fn folders_are_counted_apart_from_files() {
+        let temp = Temp::new("folders-counted");
+        let folder = temp.0.join("проект");
+        fs::create_dir_all(folder.join("исходники")).unwrap();
+        fs::write(folder.join("читай.txt"), "текст").unwrap();
+        fs::write(folder.join("исходники").join("код.rs"), "fn main() {}").unwrap();
+        let archive = temp.0.join("проект.zip");
+        let packed = add(&archive, &[folder], false, |_, _| {}).unwrap();
+        // Two folders (проект, исходники) and two files — never «4 файла».
+        assert_eq!(packed.folders, 2, "folders {}", packed.folders);
+        assert_eq!(packed.files, 2, "files {}", packed.files);
+
+        let out = temp.0.join("распаковано");
+        let unpacked = extract(&archive, &out, |_, _| {}).unwrap();
+        assert_eq!(unpacked.folders, 2);
+        assert_eq!(unpacked.files, 2);
+
+        let checked = test(&archive, |_, _| {}).unwrap();
+        assert_eq!(checked.folders, 2);
+        assert_eq!(checked.files, 2);
+        assert_eq!(checked.failed, 0);
+    }
+
+    #[test]
+    fn a_folder_entry_says_it_is_a_folder() {
+        let temp = Temp::new("folder-attributes");
+        let folder = temp.0.join("папка");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("файл.txt"), "x").unwrap();
+        let archive = temp.0.join("attrs.zip");
+        add(&archive, &[folder], false, |_, _| {}).unwrap();
+        let listed = list(&archive).unwrap();
+        let folder_entry = listed.iter().find(|entry| entry.is_folder()).unwrap();
+        let file_entry = listed.iter().find(|entry| !entry.is_folder()).unwrap();
+        // The DOS attribute byte is what other unpackers read to tell a folder from a file.
+        assert_eq!(folder_entry.external & 0xff, ATTR_FOLDER);
+        assert_eq!(file_entry.external & 0xff, ATTR_FILE);
+        assert_eq!(folder_entry.made_by, MADE_BY);
+    }
+
+    #[test]
+    fn removing_a_row_leaves_the_rest_whole() {
+        let temp = Temp::new("remove");
+        let first = temp.0.join("остаётся.txt");
+        let second = temp.0.join("уходит.txt");
+        fs::write(&first, "один".repeat(200)).unwrap();
+        fs::write(&second, "два".repeat(200)).unwrap();
+        let archive = temp.0.join("оба.zip");
+        add(&archive, &[first.clone(), second], false, |_, _| {}).unwrap();
+        let before = list(&archive).unwrap();
+        let leaving = before.iter().find(|entry| entry.name == "уходит.txt").unwrap().clone();
+
+        let summary = remove(&archive, &["уходит.txt".to_string()]).unwrap();
+        assert_eq!(summary.files, 1);
+        let after = list(&archive).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].name, "остаётся.txt");
+        // The entry that stayed came through byte for byte.
+        let stayed = before.iter().find(|entry| entry.name == "остаётся.txt").unwrap();
+        assert_eq!(after[0].crc, stayed.crc);
+        assert_eq!(after[0].packed, stayed.packed);
+        assert_ne!(after[0].offset, leaving.offset);
+        // And the archive still unpacks.
+        let out = temp.0.join("проверка");
+        extract(&archive, &out, |_, _| {}).unwrap();
+        assert!(out.join("остаётся.txt").exists());
+        assert!(!out.join("уходит.txt").exists());
+    }
+
+    #[test]
+    fn removing_a_folder_takes_what_is_inside_it() {
+        let temp = Temp::new("remove-folder");
+        let folder = temp.0.join("мусор");
+        fs::create_dir_all(folder.join("глубже")).unwrap();
+        fs::write(folder.join("глубже").join("файл.txt"), "x").unwrap();
+        let keeps = temp.0.join("нужно.txt");
+        fs::write(&keeps, "y").unwrap();
+        let archive = temp.0.join("всё.zip");
+        add(&archive, &[folder, keeps], false, |_, _| {}).unwrap();
+        let summary = remove(&archive, &["мусор/".to_string()]).unwrap();
+        assert_eq!(summary.folders, 2);
+        assert_eq!(summary.files, 1);
+        let names: Vec<String> = list(&archive).unwrap().into_iter().map(|entry| entry.name).collect();
+        assert_eq!(names, vec!["нужно.txt".to_string()]);
+    }
+
+    #[test]
+    fn copying_one_row_unpacks_only_that_row() {
+        let temp = Temp::new("extract-only");
+        let first = temp.0.join("первый.txt");
+        let second = temp.0.join("второй.txt");
+        fs::write(&first, "раз").unwrap();
+        fs::write(&second, "два").unwrap();
+        let archive = temp.0.join("два.zip");
+        add(&archive, &[first, second], false, |_, _| {}).unwrap();
+        let out = temp.0.join("копия");
+        let summary = extract_only(&archive, &out, &["второй.txt".to_string()], |_, _| {}).unwrap();
+        assert_eq!(summary.files, 1);
+        assert!(out.join("второй.txt").exists());
+        assert!(!out.join("первый.txt").exists());
     }
 
     #[test]

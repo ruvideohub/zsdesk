@@ -28,6 +28,7 @@ AuraArc — архиватор AuraUI (.zip)
   AuraArc x <архив.zip> [куда]             распаковать (по умолчанию — рядом с архивом)
   AuraArc l <архив.zip>                    показать содержимое
   AuraArc t <архив.zip>                    проверить архив, ничего не распаковывая
+  AuraArc d <архив.zip> <имя…>             убрать записи из архива (остальное не трогается)
 
   --store    добавить без сжатия (быстрее, но архив больше)
   --quiet    не перечислять файлы, только итог
@@ -115,6 +116,7 @@ fn run(args: &[String]) -> i32 {
         "x" | "extract" | "e" | "распаковать" => "x",
         "l" | "list" | "содержимое" => "l",
         "t" | "test" | "проверить" => "t",
+        "d" | "delete" | "удалить" => "d",
         other => {
             eprintln!("AuraArc: не знаю команду «{other}».");
             println!("{HELP}");
@@ -139,12 +141,13 @@ fn run(args: &[String]) -> i32 {
             }) {
                 Ok(summary) => {
                     println!(
-                        "Готово: {} в {} ({}{}{}).",
-                        files(summary),
+                        "Готово: {} в {} ({}{}{}{}).",
+                        items(summary),
                         archive.display(),
                         size(summary.packed),
                         if summary.bytes > summary.packed { format!(" из {}", size(summary.bytes)) } else { String::new() },
                         trouble(summary),
+                        kept(summary),
                     );
                     exit_code(summary)
                 }
@@ -160,7 +163,7 @@ fn run(args: &[String]) -> i32 {
                 Ok(summary) => {
                     println!(
                         "Готово: {} в {} ({}){}.",
-                        files(summary),
+                        items(summary),
                         dest.display(),
                         size(summary.bytes),
                         trouble(summary)
@@ -193,11 +196,28 @@ fn run(args: &[String]) -> i32 {
                 2
             }
         },
+        "d" => {
+            let names: Vec<String> = words[2..].to_vec();
+            if names.is_empty() {
+                eprintln!("AuraArc: укажите, что убрать из архива.");
+                return 1;
+            }
+            match zip::remove(&archive, &names) {
+                Ok(summary) => {
+                    println!("Убрано из {}: {}.", archive.display(), items(summary));
+                    exit_code(summary)
+                }
+                Err(error) => {
+                    eprintln!("AuraArc: {error}");
+                    2
+                }
+            }
+        }
         _ => match zip::test(&archive, |entry, ok| options.report(entry, ok, '✓')) {
             Ok(summary) => {
                 println!(
                     "Проверено: {}{}.",
-                    files(summary),
+                    items(summary),
                     trouble(summary)
                 );
                 exit_code(summary)
@@ -241,6 +261,23 @@ fn trouble(summary: Summary) -> String {
 
 fn files(summary: Summary) -> String {
     plural(summary.files, "файл", "файла", "файлов")
+}
+
+/// «3 файла и 2 папки»: a count that hides the folders reads as if they were files.
+pub(crate) fn items(summary: Summary) -> String {
+    if summary.folders == 0 {
+        return files(summary);
+    }
+    format!("{} и {}", files(summary), plural(summary.folders, "папка", "папки", "папок"))
+}
+
+/// What was already inside and was therefore left alone.
+fn kept(summary: Summary) -> String {
+    if summary.skipped == 0 {
+        String::new()
+    } else {
+        format!("; уже было: {}", plural(summary.skipped, "запись", "записи", "записей"))
+    }
 }
 
 fn entry_count(count: usize) -> String {
