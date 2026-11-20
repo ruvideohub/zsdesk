@@ -7,18 +7,17 @@
 //! right-click asks the panel for the card's menu, dragging moves it, and the panel — the one
 //! writer of the settings — saves the spot and restarts this process.
 //!
-//! The numbers come from the system, not from a service: `GetSystemTimes` for the processor
-//! (a delta between two samples, so the first reading is "no data" rather than a lie),
-//! `GlobalMemoryStatusEx` for memory and `GetDiskFreeSpaceExW` for the system drive.
+//! The numbers come from the system, not from a service — `laminar_sys::stats` already samples
+//! them for the panel's own monitor widget (processor deltas, memory, the system drive), so
+//! the card and the widget can never disagree about what the machine is doing. The first
+//! reading has no delta behind it, so it is drawn as «…» rather than as a made-up zero.
 
 use windows::core::{w, Interface, Result};
 use windows::UI::Composition::*;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
-use windows::Win32::Foundation::{FILETIME, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_EXCLUDED_FROM_PEEK, DWMWA_USE_HOSTBACKDROPBRUSH};
-use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::SystemInformation::{GetSystemTimes, GlobalMemoryStatusEx, MEMORYSTATUSEX};
 use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -72,7 +71,7 @@ impl Prefs {
 }
 
 /// One meter: what it is and how full it is, 0.0–1.0, and the number to print.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Meter {
     pub label: &'static str,
     /// 0.0–1.0; negative means "no reading yet" (the first second of the processor).
@@ -80,84 +79,14 @@ pub struct Meter {
     pub text: String,
 }
 
-/// The processor's busy share between two samples of its counters.
-#[derive(Clone, Copy, Debug, Default)]
-struct CpuSample {
-    idle: u64,
-    total: u64,
-}
-
-impl CpuSample {
-    fn take() -> Option<Self> {
-        let (mut idle, mut kernel, mut user) = (FILETIME::default(), FILETIME::default(), FILETIME::default());
-        unsafe { GetSystemTimes(Some(&mut idle), Some(&mut kernel), Some(&mut user)) }.ok()?;
-        // `kernel` includes idle time, and idle is counted twice without this correction.
-        let idle = filetime(idle);
-        let total = filetime(kernel) + filetime(user);
-        Some(Self { idle, total })
-    }
-
-    /// Busy share since the earlier sample, 0.0–1.0.
-    fn busy_since(&self, later: &Self) -> Option<f32> {
-        let total = later.total.checked_sub(self.total)?;
-        let idle = later.idle.checked_sub(self.idle)?;
-        if total == 0 {
-            return None;
-        }
-        Some(((total.saturating_sub(idle)) as f32 / total as f32).clamp(0.0, 1.0))
-    }
-}
-
-fn filetime(time: FILETIME) -> u64 {
-    (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
-}
-
-/// Memory in use, 0.0–1.0, and "7,8 из 15,9 ГБ".
-fn memory_meter() -> Meter {
-    let mut status = MEMORYSTATUSEX { dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32, ..Default::default() };
-    let loaded = unsafe { GlobalMemoryStatusEx(&mut status) }.is_ok() && status.ullTotalPhys > 0;
-    let fill = if loaded {
-        (status.ullTotalPhys - status.ullAvailPhys) as f32 / status.ullTotalPhys as f32
-    } else {
-        0.0
-    };
-    let text = if loaded {
-        format!(
-            "{} из {} ГБ",
-            gigabytes(status.ullTotalPhys - status.ullAvailPhys),
-            gigabytes(status.ullTotalPhys)
-        )
-    } else {
-        "нет данных".to_string()
-    };
-    Meter { label: "Память", fill: fill.clamp(0.0, 1.0), text }
-}
-
-/// The system drive, 0.0–1.0 used, and "128 из 476 ГБ".
-fn disk_meter() -> Meter {
-    let root: Vec<u16> = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".to_string())
-        .encode_utf16().chain(std::iter::once(b'\\' as u16)).chain(std::iter::once(0)).collect();
-    let (mut free, mut total) = (0u64, 0u64);
-    let drive = windows::core::PCWSTR(root.as_ptr());
-    let read = unsafe { GetDiskFreeSpaceExW(drive, None, Some(&mut total), Some(&mut free)) }.is_ok() && total > 0;
-    let fill = if read { (total - free) as f32 / total as f32 } else { 0.0 };
-    let text = if read {
-        format!("{} из {} ГБ", gigabytes(total - free), gigabytes(total))
-    } else {
-        "нет данных".to_string()
-    };
-    Meter { label: "Диск", fill: fill.clamp(0.0, 1.0), text }
-}
-
-/// Bytes as gigabytes with one decimal, the Russian way: «15,9».
-pub fn gigabytes(bytes: u64) -> String {
-    let value = bytes as f64 / 1_073_741_824.0;
-    format!("{value:.1}").replace('.', ",")
-}
-
-/// "23%" — the number on the right of a meter.
+/// "23%": a whole percent, the way a person reads a meter.
 fn percent(fill: f32) -> String {
     format!("{}%", (fill * 100.0).round() as i32)
+}
+
+/// One decimal, the Russian way: «7,8».
+fn decimal(value: f32) -> String {
+    format!("{value:.1}").replace('.', ",")
 }
 
 /// Everything the window procedure touches. Boxed, so the address in `GWLP_USERDATA`
@@ -173,8 +102,10 @@ struct SystemState {
     prefs: Prefs,
     /// The meters last drawn, so a tick that changes nothing costs nothing.
     drawn: Vec<Meter>,
-    /// The previous processor sample.
-    cpu: Option<CpuSample>,
+    /// The shared system sampler: the same numbers the panel's monitor widget shows.
+    sampler: laminar_sys::stats::Sampler,
+    /// The first reading has no delta behind it and is drawn as «…».
+    sampled: bool,
     /// Pointer offset inside the card while dragging.
     drag: Option<(i32, i32)>,
     /// The app window the card was last pushed under (0: none).
@@ -236,18 +167,20 @@ impl SystemState {
     /// Read the three numbers. The processor needs two samples, so the first tick draws it
     /// as «…» and the second one shows the truth.
     fn measure(&mut self) -> Vec<Meter> {
-        let now = CpuSample::take();
-        let busy = match (&self.cpu, &now) {
-            (Some(previous), Some(later)) => previous.busy_since(later),
-            _ => None,
+        let stats = self.sampler.sample();
+        let first = !self.sampled;
+        self.sampled = true;
+        let cpu_fill = (stats.cpu_percent / 100.0).clamp(0.0, 1.0);
+        let cpu = Meter { label: "ЦП", fill: cpu_fill, text: if first { "…".to_string() } else { percent(cpu_fill) } };
+        let memory = if stats.mem_total_gb > 0.0 {
+            let fill = (stats.mem_used_gb / stats.mem_total_gb).clamp(0.0, 1.0);
+            Meter { label: "Память", fill, text: format!("{} из {} ГБ", decimal(stats.mem_used_gb), decimal(stats.mem_total_gb)) }
+        } else {
+            Meter { label: "Память", fill: 0.0, text: "нет данных".to_string() }
         };
-        self.cpu = now.or(self.cpu);
-        let cpu = Meter {
-            label: "ЦП",
-            fill: busy.unwrap_or(0.0),
-            text: busy.map(percent).unwrap_or_else(|| "…".to_string()),
-        };
-        vec![cpu, memory_meter(), disk_meter()]
+        let disk_fill = (stats.disk_c_used_percent / 100.0).clamp(0.0, 1.0);
+        let disk = Meter { label: "Диск", fill: disk_fill, text: format!("занято {}", percent(disk_fill)) };
+        vec![cpu, memory, disk]
     }
 }
 
@@ -311,7 +244,8 @@ impl DesktopSystem {
                 dpi,
                 prefs,
                 drawn: Vec::new(),
-                cpu: None,
+                sampler: laminar_sys::stats::Sampler::new(),
+                sampled: false,
                 drag: None,
                 below: 0,
             });
@@ -522,12 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn gigabytes_read_the_russian_way() {
-        assert_eq!(gigabytes(16 * 1_073_741_824), "16,0");
-        assert_eq!(gigabytes(0), "0,0");
-    }
-
-    #[test]
     fn a_meter_prints_a_whole_percent() {
         assert_eq!(percent(0.0), "0%");
         assert_eq!(percent(0.234), "23%");
@@ -535,13 +463,9 @@ mod tests {
     }
 
     #[test]
-    fn the_first_processor_reading_is_no_reading() {
-        // Nothing to subtract from yet: the card shows «…» instead of making a number up.
-        let sample = CpuSample { idle: 100, total: 400 };
-        assert_eq!(sample.busy_since(&sample), None);
-        let later = CpuSample { idle: 150, total: 600 };
-        let busy = sample.busy_since(&later).expect("a delta exists");
-        assert!((busy - 0.75).abs() < 0.001, "300 of 200… busy = {busy}");
+    fn decimals_read_the_russian_way() {
+        assert_eq!(decimal(15.9375), "15,9");
+        assert_eq!(decimal(0.0), "0,0");
     }
 
     #[test]

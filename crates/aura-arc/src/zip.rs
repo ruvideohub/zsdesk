@@ -249,7 +249,7 @@ fn extract_one(file: &mut BufReader<File>, entry: &Entry, target: &Path) -> Resu
     let mut out = BufWriter::new(File::create(target)?);
     let mut crc = crc32fast::Hasher::new();
     let mut written = 0u64;
-    let mut copy = |chunk: &[u8], crc: &mut crc32fast::Hasher, out: &mut BufWriter<File>, written: &mut u64| -> Result<()> {
+    let copy = |chunk: &[u8], crc: &mut crc32fast::Hasher, out: &mut BufWriter<File>, written: &mut u64| -> Result<()> {
         crc.update(chunk);
         out.write_all(chunk)?;
         *written += chunk.len() as u64;
@@ -267,7 +267,7 @@ fn extract_one(file: &mut BufReader<File>, entry: &Entry, target: &Path) -> Resu
             }
         }
         DEFLATED => {
-            let mut decoder = DeflateDecoder::new(file.take(entry.packed));
+            let mut decoder = DeflateDecoder::new((&mut *file).take(entry.packed));
             let mut buffer = vec![0u8; 64 * 1024];
             loop {
                 let read = decoder.read(&mut buffer)?;
@@ -325,7 +325,7 @@ pub fn test(archive: &Path, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Su
                     }
                 }
                 DEFLATED => {
-                    let mut decoder = DeflateDecoder::new(file.take(entry.packed));
+                    let mut decoder = DeflateDecoder::new((&mut *file).take(entry.packed));
                     loop {
                         let read = decoder.read(&mut buffer)?;
                         if read == 0 {
