@@ -29,7 +29,9 @@ AuraArc — архиватор AuraUI (.zip)
   AuraArc t <архив.zip>                    проверить архив, ничего не распаковывая
 
   --store    добавить без сжатия (быстрее, но архив больше)
-  --quiet    ни строчки о каждом файле, только итог
+  --quiet    не перечислять файлы, только итог
+  --         дальше — имена, даже если они начинаются с дефиса
+  --version  версия
   --help     эта подсказка
 
 Коды возврата: 0 — всё в порядке, 1 — не понял команду, 2 — что-то не получилось.";
@@ -49,19 +51,38 @@ fn console_utf8() {
     }
 }
 
-fn run(args: &[String]) -> i32 {
+/// Options and words apart: `--` ends the options, so a file may be called `--store`.
+fn parse(args: &[String]) -> (Options, Vec<String>, Option<i32>) {
     let mut options = Options::default();
     let mut words: Vec<String> = Vec::new();
+    let mut literal = false;
     for arg in args {
+        if literal {
+            words.push(arg.clone());
+            continue;
+        }
         match arg.as_str() {
+            "--" => literal = true,
             "--store" | "-0" => options.store = true,
             "--quiet" | "-q" => options.quiet = true,
+            "--version" | "-V" => {
+                println!("AuraArc {}", env!("CARGO_PKG_VERSION"));
+                return (options, words, Some(0));
+            }
             "--help" | "-h" | "/?" | "help" => {
                 println!("{HELP}");
-                return 0;
+                return (options, words, Some(0));
             }
             other => words.push(other.to_string()),
         }
+    }
+    (options, words, None)
+}
+
+fn run(args: &[String]) -> i32 {
+    let (options, words, early) = parse(args);
+    if let Some(code) = early {
+        return code;
     }
     let Some(verb) = words.first().map(|word| word.to_ascii_lowercase()) else {
         println!("{HELP}");
@@ -278,5 +299,13 @@ mod tests {
         assert_eq!(run(&["--help".to_string()]), 0);
         assert_eq!(run(&["совсем-не-команда".to_string()]), 1);
         assert_eq!(run(&["a".to_string()]), 1);
+        assert_eq!(run(&["--version".to_string()]), 0);
+    }
+
+    #[test]
+    fn a_name_that_looks_like_a_flag_is_still_a_name() {
+        let words = parse(&["a".to_string(), "out.zip".to_string(), "--".to_string(), "--store".to_string()]).1;
+        assert_eq!(words, vec!["a", "out.zip", "--store"]);
+        assert_eq!(parse(&["a".to_string(), "out.zip".to_string(), "--store".to_string()]).1.len(), 2);
     }
 }

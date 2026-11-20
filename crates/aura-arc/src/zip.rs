@@ -57,7 +57,6 @@ pub struct Summary {
 const LOCAL_HEADER: u32 = 0x0403_4b50;
 const CENTRAL_HEADER: u32 = 0x0201_4b50;
 const END_OF_DIRECTORY: u32 = 0x0605_4b50;
-const DESCRIPTOR: u32 = 0x0807_4b50;
 /// Entry flag: the name is UTF-8.
 const UTF8_NAME: u16 = 1 << 11;
 /// Entry flag: sizes and the checksum follow the data (the writer did not know them up front).
@@ -280,14 +279,16 @@ fn extract_one(file: &mut BufReader<File>, entry: &Entry, target: &Path) -> Resu
         other => return fail(format!("неизвестный способ сжатия {other}")),
     }
     out.flush()?;
+    // The handle has to be closed before a damaged file can be deleted: Windows will not remove
+    // a file that is still open.
+    let file = out.into_inner().map_err(|error| Error(error.to_string()))?;
     if crc.finalize() != entry.crc {
+        drop(file);
         let _ = fs::remove_file(target);
         return fail("контрольная сумма не совпала — файл повреждён".to_string());
     }
-    // The directory's name may end a folder that the entry itself did not create.
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    stamp(&file, entry);
+    drop(file);
     Ok(())
 }
 
@@ -361,27 +362,46 @@ pub fn test(archive: &Path, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Su
 ///
 /// An existing archive is rebuilt entry by entry: the old entries are copied byte for byte, so
 /// appending a file never re-compresses the ones already inside.
-pub fn add(archive: &Path, inputs: &[PathBuf], store: bool, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Summary> {
-    let mut collected: Vec<PathBuf> = Vec::new();
+pub fn add(archive: &Path, inputs: &[PathBuf], store: bool, on_entry: impl FnMut(&Entry, bool)) -> Result<Summary> {
+    let target = absolute(archive)?;
+    // The half-written archive gets its own name, so a crash leaves the old archive whole.
+    let temporary = target.with_extension("auraarc-tmp");
+    let mut collected: Vec<(PathBuf, PathBuf)> = Vec::new();
     for input in inputs {
         if !input.exists() {
             return fail(format!("нет такого файла или папки: {}", input.display()));
         }
-        walk(input, &mut collected)?;
+        walk(input, input, &mut collected, 0)?;
     }
+    // An archive cannot hold itself, nor the copy of itself being written next to it.
+    collected.retain(|(_, path)| match absolute(path) {
+        Ok(path) => path.as_path() != target && path.as_path() != temporary,
+        Err(_) => true,
+    });
     if collected.is_empty() {
         return fail("нечего упаковывать: папки пусты");
     }
-    let temporary = archive.with_extension("auraarc-tmp");
-    let old = if archive.exists() { entries(archive)? } else { Vec::new() };
+    let outcome = write_archive(&target, &temporary, &collected, store, on_entry);
+    if outcome.is_err() {
+        // A failed run must not leave a broken half-archive lying about.
+        let _ = fs::remove_file(&temporary);
+    }
+    outcome
+}
+
+fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf)], store: bool, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Summary> {
+    let old = if target.exists() { entries(target)? } else { Vec::new() };
+    if old.len() + collected.len() > u16::MAX as usize {
+        return fail("в архиве было бы больше 65 535 записей: ZIP64 пока не поддерживается");
+    }
     let mut known: BTreeSet<String> = old.iter().map(|entry| entry.name.clone()).collect();
-    let mut out = BufWriter::new(File::create(&temporary)?);
+    let mut out = BufWriter::new(File::create(temporary)?);
     let mut summary = Summary::default();
     let mut written_entries: Vec<Entry> = Vec::with_capacity(old.len() + collected.len());
 
-    // 1. The entries already in the archive, copied as they are.
+    // 1. What was already inside, byte for byte — nothing is re-compressed.
     if !old.is_empty() {
-        let mut source = BufReader::new(File::open(archive)?);
+        let mut source = BufReader::new(File::open(target)?);
         for entry in &old {
             let offset = out.stream_position()?;
             let mut head = [0u8; 30];
@@ -392,25 +412,31 @@ pub fn add(archive: &Path, inputs: &[PathBuf], store: bool, mut on_entry: impl F
             }
             let name_length = u16(&head, 26) as usize;
             let extra_length = u16(&head, 28) as usize;
-            out.write_all(&head)?;
+            let mut moved = entry.clone();
+            moved.offset = offset;
+            // The header is rewritten rather than copied: an archive written by a streaming
+            // program keeps «sizes come after the data» in its local header, and that flag with
+            // no descriptor behind it is what old unpackers trip over.
+            moved.flags &= !SIZES_AFTER;
+            write_local(&mut out, &moved)?;
             let mut skip = vec![0u8; name_length + extra_length];
             source.read_exact(&mut skip)?;
             out.write_all(&skip)?;
             let mut data = (&mut source).take(entry.packed);
             io::copy(&mut data, &mut out)?;
-            let mut moved = entry.clone();
-            moved.offset = offset;
             written_entries.push(moved);
         }
     }
 
     // 2. The new files, in the order they were named.
-    for path in &collected {
-        let name = entry_name(path, inputs)?;
+    for (root, path) in collected {
+        let name = entry_name(root, path)?;
         if known.contains(&name) {
             // Already inside: an archive does not silently hold one file twice.
             summary.skipped += 1;
-            eprintln!("= {name}: уже в архиве, оставлен как есть");
+            if !name.is_empty() {
+                eprintln!("= {name}: уже в архиве, оставлен как есть");
+            }
             continue;
         }
         let entry = match add_one(&mut out, path, &name, store) {
@@ -430,74 +456,92 @@ pub fn add(archive: &Path, inputs: &[PathBuf], store: bool, mut on_entry: impl F
         on_entry(&entry, true);
         written_entries.push(entry);
     }
-    // 3. The directory, then the record that points at it.
+
+    // 3. The directory, then the pointer to it.
     let directory_offset = out.stream_position()?;
     for entry in &written_entries {
         write_central(&mut out, entry)?;
     }
     let directory_size = out.stream_position()? - directory_offset;
-    if written_entries.len() > u16::MAX as usize {
-        return fail("в архиве больше 65 535 файлов: ZIP64 пока не поддерживается");
+    if written_entries.len() > u16::MAX as usize || directory_size > u32::MAX as u64 || directory_offset > u32::MAX as u64 {
+        return fail("архив вышел больше 4 ГБ или длиннее 65 535 записей: ZIP64 пока не поддерживается");
     }
     out.write_all(&END_OF_DIRECTORY.to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?; // this disk
     out.write_all(&0u16.to_le_bytes())?; // where the directory starts
     out.write_all(&(written_entries.len() as u16).to_le_bytes())?;
     out.write_all(&(written_entries.len() as u16).to_le_bytes())?;
-    out.write_all(&(directory_size.min(u32::MAX as u64) as u32).to_le_bytes())?;
-    out.write_all(&(directory_offset.min(u32::MAX as u64) as u32).to_le_bytes())?;
+    out.write_all(&(directory_size as u32).to_le_bytes())?;
+    out.write_all(&(directory_offset as u32).to_le_bytes())?;
     out.write_all(&0u16.to_le_bytes())?; // no archive comment
     out.flush()?;
     drop(out);
-    fs::rename(&temporary, archive).map_err(|error| {
-        let _ = fs::remove_file(&temporary);
-        Error(format!("не удалось записать {}: {error}", archive.display()))
-    })?;
+    // Windows lets a rename replace the old archive, but not while another program holds it.
+    fs::rename(temporary, target)
+        .map_err(|error| Error(format!("не удалось записать {}: {error}", target.display())))?;
     Ok(summary)
 }
 
-/// Everything under `path`, folders included, in a stable order.
-fn walk(path: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
-    if path.is_dir() {
-        out.push(path.to_path_buf());
+/// How deep a folder tree is followed: a junction pointing back up would otherwise loop for
+/// ever, and no honest archive is nested this deep.
+const MAX_DEPTH: usize = 64;
+
+/// Everything under `path`, folders included, in a stable order, each file paired with the
+/// input it came from — the pair is what names it inside the archive, so two folders called
+/// `docs` at different depths cannot be confused with one another.
+fn walk(root: &Path, path: &Path, out: &mut Vec<(PathBuf, PathBuf)>, depth: usize) -> Result<()> {
+    if depth > MAX_DEPTH {
+        return fail(format!("слишком глубокая папка: {}", path.display()));
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    // A junction or a symbolic link is copied as the link target's contents only when it is an
+    // ordinary file; a linked *folder* is skipped, because following it can walk in circles.
+    if metadata.file_type().is_symlink() && path.is_dir() {
+        eprintln!("~ {}: ссылка на папку пропущена", path.display());
+        return Ok(());
+    }
+    if metadata.is_dir() {
+        out.push((root.to_path_buf(), path.to_path_buf()));
         let mut children: Vec<PathBuf> = fs::read_dir(path)?
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
             .collect();
         children.sort();
         for child in children {
-            walk(&child, out)?;
+            walk(root, &child, out, depth + 1)?;
         }
     } else {
-        out.push(path.to_path_buf());
+        out.push((root.to_path_buf(), path.to_path_buf()));
     }
     Ok(())
 }
 
 /// The name an input gets inside the archive: the file's own name, or a folder's whole tree
 /// starting at the folder itself — `Документы/вложено/б.txt`, never a path from the disk.
-fn entry_name(path: &Path, inputs: &[PathBuf]) -> Result<String> {
-    let parts: Vec<String> = path
-        .components()
-        .filter_map(|component| match component {
-            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    if parts.is_empty() {
-        return fail(format!("не удалось назвать {}", path.display()));
+///
+/// The name is taken from the input the file was actually walked from, so a folder called
+/// `docs` that contains another `docs` keeps its depth instead of collapsing onto the first
+/// match.
+fn entry_name(root: &Path, path: &Path) -> Result<String> {
+    let root = absolute(root)?;
+    let path = absolute(path)?;
+    let mut parts = vec![name_of(&root)?];
+    if let Ok(rest) = path.strip_prefix(&root) {
+        for component in rest.components() {
+            if let Component::Normal(part) = component {
+                parts.push(part.to_string_lossy().into_owned());
+            }
+        }
     }
-    // The input's own name marks where the archive's copy of the tree begins.
-    let starts: Vec<String> = inputs
-        .iter()
-        .filter_map(|input| input.file_name().map(|name| name.to_string_lossy().into_owned()))
+    Ok(parts.join("/"))
+}
+
+/// A single name, the last piece of a path.
+fn name_of(path: &Path) -> Result<String> {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty())
-        .collect();
-    let chosen = match parts.iter().rposition(|part| starts.iter().any(|start| start == part)) {
-        Some(at) => &parts[at..],
-        None => &parts[parts.len() - 1..],
-    };
-    Ok(chosen.join("/"))
+        .ok_or_else(|| Error(format!("не удалось назвать {}", path.display())))
 }
 
 fn add_one(out: &mut BufWriter<File>, path: &Path, name: &str, store: bool) -> Result<Entry> {
@@ -523,13 +567,14 @@ fn add_one(out: &mut BufWriter<File>, path: &Path, name: &str, store: bool) -> R
         return fail("файл больше 4 ГБ: ZIP64 пока не поддерживается");
     }
     let offset = out.stream_position()?;
-    let flags = UTF8_NAME | SIZES_AFTER;
     let method = if store { STORED } else { DEFLATED };
-    // The header goes out first with zeros: the checksum is only known after the data.
+    // The header goes out first with zeros — the checksum is only known after the data — and is
+    // patched in place afterwards. A real header beats a data descriptor: every unpacker, old
+    // and new, reads it without streaming tricks.
     let placeholder = Entry {
         name: name.to_string(),
         method,
-        flags,
+        flags: UTF8_NAME,
         crc: 0,
         size: 0,
         packed: 0,
@@ -568,18 +613,21 @@ fn add_one(out: &mut BufWriter<File>, path: &Path, name: &str, store: bool) -> R
         }
         encoder.finish()?;
     }
-    let packed = out.stream_position()? - start;
+    let end = out.stream_position()?;
+    let packed = end - start;
     // Over 4 GB of output is possible even from a small file of zeros; refuse rather than
     // write an archive that lies about its sizes.
     if packed > u32::MAX as u64 {
         return fail("сжатые данные больше 4 ГБ: ZIP64 пока не поддерживается");
     }
-    let crc = crc.finalize();
-    out.write_all(&DESCRIPTOR.to_le_bytes())?;
-    out.write_all(&crc.to_le_bytes())?;
-    out.write_all(&(packed as u32).to_le_bytes())?;
-    out.write_all(&(size as u32).to_le_bytes())?;
-    Ok(Entry { crc, size, packed, ..placeholder })
+    if size > u32::MAX as u64 {
+        return fail("файл больше 4 ГБ: ZIP64 пока не поддерживается");
+    }
+    let filled = Entry { crc: crc.finalize(), size, packed, ..placeholder };
+    out.seek(SeekFrom::Start(offset))?;
+    write_local(out, &filled)?;
+    out.seek(SeekFrom::Start(end))?;
+    Ok(filled)
 }
 
 fn write_local(out: &mut BufWriter<File>, entry: &Entry) -> Result<()> {
@@ -648,35 +696,74 @@ fn absolute(path: &Path) -> Result<PathBuf> {
     Ok(std::env::current_dir()?.join(path))
 }
 
-/// A time the format can hold: two-second steps, from 1980.
+/// A time the format can hold: two-second steps from 1980, in **local** time — the way Explorer,
+/// 7-Zip and every other zip tool write it. Stored as UTC, the same archive would show every
+/// file shifted by the time-zone offset on the other machine.
 fn dos_time(modified: Option<SystemTime>) -> (u16, u16) {
-    let seconds = modified
-        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-        .map(|since| since.as_secs())
-        .unwrap_or(0);
-    let (year, month, day, hour, minute, second) = civil(seconds);
+    let (year, month, day, hour, minute, second) =
+        modified.and_then(local_parts).unwrap_or((1980, 1, 1, 0, 0, 0));
     let year = year.clamp(1980, 2107) as u16;
     let date = ((year - 1980) << 9) | ((month as u16) << 5) | day as u16;
     let time = ((hour as u16) << 11) | ((minute as u16) << 5) | (second as u16 / 2);
     (time, date)
 }
 
-/// Seconds since the epoch as a calendar date and time, in UTC.
-fn civil(seconds: u64) -> (i64, u32, u32, u32, u32, u32) {
-    // Days from 1970-01-01, in the proleptic Gregorian calendar.
-    let days = (seconds / 86_400) as i64;
-    let rest = seconds % 86_400;
-    let (hour, minute, second) = ((rest / 3600) as u32, ((rest % 3600) / 60) as u32, (rest % 60) as u32);
-    let shifted = days + 719_468;
-    let era = shifted.div_euclid(146_097);
-    let day_of_era = shifted.rem_euclid(146_097);
-    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month + 2) / 5 + 1;
-    let month = month + if month < 10 { 3 } else { -9 };
-    let year = year_of_era + era * 400 + i64::from(month <= 2);
-    (year, month as u32, day as u32, hour, minute, second)
+/// A moment as the calendar here says it, daylight saving included.
+fn local_parts(time: SystemTime) -> Option<(u32, u32, u32, u32, u32, u32)> {
+    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    let since = time.duration_since(UNIX_EPOCH).ok()?;
+    // A FILETIME counts 100 ns steps from 1601-01-01; the Unix epoch is 11 644 473 600 s later.
+    let ticks = since.as_secs().checked_add(11_644_473_600)?.checked_mul(10_000_000)?
+        + u64::from(since.subsec_nanos() / 100);
+    let file = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    let mut utc = SYSTEMTIME::default();
+    unsafe { FileTimeToSystemTime(&file, &mut utc).ok()? };
+    let mut local = SYSTEMTIME::default();
+    unsafe { SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).ok()? };
+    Some((
+        local.wYear as u32,
+        local.wMonth as u32,
+        local.wDay as u32,
+        local.wHour as u32,
+        local.wMinute as u32,
+        local.wSecond as u32,
+    ))
+}
+
+/// Put the archived stamp back on the unpacked file: a restored folder should not look as if
+/// everything in it was created this very minute.
+fn stamp(file: &File, entry: &Entry) {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{FILETIME, HANDLE, SYSTEMTIME};
+    use windows::Win32::Storage::FileSystem::SetFileTime;
+    use windows::Win32::System::Time::{SystemTimeToFileTime, TzSpecificLocalTimeToSystemTime};
+    let year = 1980 + (entry.date >> 9) as u16;
+    let month = (entry.date >> 5) & 0x0f;
+    let day = entry.date & 0x1f;
+    if month == 0 || day == 0 {
+        return; // no time was stored with this entry
+    }
+    let local = SYSTEMTIME {
+        wYear: year,
+        wMonth: month,
+        wDay: day,
+        wHour: entry.time >> 11,
+        wMinute: (entry.time >> 5) & 0x3f,
+        wSecond: (entry.time & 0x1f) * 2,
+        ..Default::default()
+    };
+    let mut utc = SYSTEMTIME::default();
+    let mut written = FILETIME::default();
+    unsafe {
+        if TzSpecificLocalTimeToSystemTime(None, &local, &mut utc).is_err() {
+            return;
+        }
+        if SystemTimeToFileTime(&utc, &mut written).is_err() {
+            return;
+        }
+        let _ = SetFileTime(HANDLE(file.as_raw_handle() as _), None, None, Some(&written));
+    }
 }
 
 fn u16(buffer: &[u8], at: usize) -> u16 {
@@ -820,15 +907,32 @@ mod tests {
     }
 
     #[test]
-    fn a_calendar_date_comes_out_of_the_count() {
-        // 2026-11-19 14:03:04 UTC
-        let (year, month, day, hour, minute, second) = civil(1_795_096_984);
-        assert_eq!((year, month, day), (2026, 11, 19));
-        assert_eq!((hour, minute, second), (14, 3, 4));
-        let (time, date) = dos_time(Some(UNIX_EPOCH + std::time::Duration::from_secs(1_795_096_984)));
-        let year = 1980 + (date >> 9);
-        assert_eq!(year, 2026);
-        assert_eq!(date & 0x1F, 19);
-        assert_eq!(time >> 11, 14);
+    fn a_stamp_is_written_in_local_time() {
+        // 2026-11-19 14:03:04 UTC: whatever the time zone here, the archive must hold the
+        // calendar the person sitting at the machine would read, not the UTC one.
+        let moment = UNIX_EPOCH + std::time::Duration::from_secs(1_795_096_984);
+        let (year, month, day, hour, _, _) = local_parts(moment).unwrap();
+        let (time, date) = dos_time(Some(moment));
+        assert_eq!(1980 + (date >> 9), year as u16);
+        assert_eq!((date >> 5) & 0x0f, month as u16);
+        assert_eq!(date & 0x1f, day as u16);
+        assert_eq!(time >> 11, hour as u16);
+    }
+
+    #[test]
+    fn an_unknown_time_still_makes_a_valid_date() {
+        let (time, date) = dos_time(None);
+        assert_eq!(time, 0);
+        assert_eq!(1980 + (date >> 9), 1980);
+        assert_eq!((date >> 5) & 0x0f, 1);
+        assert_eq!(date & 0x1f, 1);
+    }
+
+    #[test]
+    fn a_folder_inside_a_folder_of_the_same_name_keeps_its_depth() {
+        let folder = Path::new(r"C:\работа\docs");
+        let nested = Path::new(r"C:\работа\docs\docs");
+        assert_eq!(entry_name(folder, folder).unwrap(), "docs");
+        assert_eq!(entry_name(folder, &nested.join("б.txt")).unwrap(), "docs/docs/б.txt");
     }
 }
