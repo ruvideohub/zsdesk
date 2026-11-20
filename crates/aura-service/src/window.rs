@@ -15,7 +15,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetMessageW, GetWindowLongPtrW, LoadCursorW,
-    PostQuitMessage, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage, UpdateWindow,
+    PostQuitMessage, RegisterClassW, SetTimer, SetWindowLongPtrW, SetWindowPos, ShowWindow, TranslateMessage,
     CREATESTRUCTW, GWLP_USERDATA, IDC_ARROW, MSG, SWP_NOMOVE, SWP_NOZORDER, SWP_NOACTIVATE, SW_SHOW, WM_CREATE, WM_DESTROY, WM_LBUTTONUP,
     WM_PAINT, WM_TIMER, WNDCLASSW, WS_EX_APPWINDOW, WS_OVERLAPPEDWINDOW,
 };
@@ -141,7 +141,6 @@ pub fn run() -> Result<()> {
             }
         };
         let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = UpdateWindow(hwnd);
         let _ = SetTimer(Some(hwnd), TIMER, 1000, None);
         let mut message = MSG::default();
         while GetMessageW(&mut message, None, 0, 0).0 > 0 {
@@ -309,15 +308,15 @@ fn paint_window(hwnd: HWND, dc: HDC, state: &mut State) {
     // The logon switch: one entry for the whole suite.
     let check_row = RECT { left: px(26.0), top: y + px(4.0), right: width - px(26.0), bottom: y + px(34.0) };
     state.hits.push((check_row, Action::Autostart));
-    let box = RECT { left: check_row.left, top: check_row.top + px(4.0), right: check_row.left + px(20.0), bottom: check_row.top + px(24.0) };
+    let checkbox = RECT { left: check_row.left, top: check_row.top + px(4.0), right: check_row.left + px(20.0), bottom: check_row.top + px(24.0) };
     let box_fill = unsafe { CreateSolidBrush(if state.settings.autostart { ACCENT } else { CARD_ON }) };
-    unsafe { FillRect(dc, &box, box_fill) };
+    unsafe { FillRect(dc, &checkbox, box_fill) };
     let _ = unsafe { DeleteObject(box_fill.into()) };
     if state.settings.autostart {
-        let mut tick = box;
+        let mut tick = checkbox;
         draw(dc, "✓", &mut tick, DT_CENTER | DT_SINGLELINE | DT_VCENTER, TEXT, state.font(2));
     }
-    let mut label = RECT { left: box.right + px(12.0), top: check_row.top + px(2.0), right: check_row.right, bottom: check_row.top + px(26.0) };
+    let mut label = RECT { left: checkbox.right + px(12.0), top: check_row.top + px(2.0), right: check_row.right, bottom: check_row.top + px(26.0) };
     draw(dc, "Запускать при входе в Windows", &mut label, DT_LEFT | DT_SINGLELINE | DT_VCENTER, TEXT, state.font(2));
     y += px(48.0);
 

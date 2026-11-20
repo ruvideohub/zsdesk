@@ -198,7 +198,7 @@ pub fn running(exe: &str) -> bool {
 /// Close a component the way the user would: a `WM_CLOSE` to each of its windows, and only if
 /// it has none (a background helper) an end of the process.
 pub fn close(exe: &str) -> bool {
-    use windows::Win32::Foundation::BOOL;
+    use windows::core::BOOL;
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
     use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE};
 
@@ -295,8 +295,12 @@ pub mod logon {
         let name = wide(VALUE);
         let mut bytes = 4096u32;
         let mut value = vec![0u16; bytes as usize / 2];
-        unsafe {
-            RegGetValueW(HKEY_CURRENT_USER, RUN, PCWSTR(name.as_ptr()), RRF_RT_REG_SZ, None, Some(value.as_mut_ptr().cast()), Some(&mut bytes)).ok()?;
+        // A missing value is not an error here: it means this installation is not in the logon list.
+        let status = unsafe {
+            RegGetValueW(HKEY_CURRENT_USER, RUN, PCWSTR(name.as_ptr()), RRF_RT_REG_SZ, None, Some(value.as_mut_ptr().cast()), Some(&mut bytes))
+        };
+        if !status.is_ok() {
+            return None;
         }
         let len = value.iter().position(|unit| *unit == 0).unwrap_or(value.len());
         Some(String::from_utf16_lossy(&value[..len]))
