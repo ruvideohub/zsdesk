@@ -325,17 +325,17 @@ cargo build --release --locked -p aura-explorer --no-default-features --features
 cargo build --release --locked -p aura-explorer --no-default-features --features themed
 cargo build --release --locked -p aura-explorer --no-default-features --features desktop-box
 
-# 转发组件与六个发行版本
-./native/routing/build.ps1 -OutputDir 'C:\Build\AuraExplorer-routing' -BuildDir 'C:\Build\AuraExplorer-routing-build'
-./scripts/package.ps1 -WorkDir 'C:\Build\AuraExplorer-package' -TargetDir $env:CARGO_TARGET_DIR `
-    -RoutingDir 'C:\Build\AuraExplorer-routing' -EverythingDir 'C:\Build\Everything-1.4.1.1032-x64' `
-    -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+# Набор AuraUI: сборка, manifest.json, проверка, zip (и установщик, если есть Inno Setup)
+pwsh -NoProfile -File scripts/package.ps1
+# только проверить готовую папку набора
+pwsh -NoProfile -File scripts/verify-bundle.ps1 -Dir releases/<версия>/AuraUI-<версия>-x64
 ```
 
-打包器验证程序版本与 feature 身份，生成文件哈希清单，移除本机编译路径信息；
-已有发行目录不会被静默覆盖。`-Editions full,desktop` 可选择部分版本，
-`-RuntimeDir` 可指定 Visual Studio Redist 下的 CRT 目录。
-打包器逐项校验 Everything 的官方文件哈希与资源版本，仅复制固定的四个分发文件。
+Что входит в набор, написано в `packaging/bundle.json` — одном файле на весь проект:
+упаковщик по нему раскладывает, проверка по нему сверяет, CI зовёт и то и другое.
+Упаковщик читает версию из `Cargo.toml`, пишет `manifest.json` с размером и sha256 каждого
+файла, падает, если набор разошёлся с описанием, и не перезаписывает готовый выпуск молча.
+Подробности — [packaging.md](packaging.md).
 
 项目代码使用 [MIT](../LICENSE)；ZSUI 使用 MPL-2.0，MinHook 使用 BSD-2-Clause。
 Everything 及其 PCRE 组件的版权和完整许可见

@@ -1,8 +1,11 @@
 name: Dock build
 
-# Produces the two executables of the dock edition: the file manager host and
-# the dock itself. The packaging script (`scripts/package.ps1`) still creates the
-# installers; this workflow only answers "did it build, and where are the exes".
+# Builds the AuraUI bundle and proves it is complete.
+#
+# The list of what ships lives in `packaging/bundle.json` — one description for the
+# workflow, the packer and the verifier. This workflow builds the packages and then
+# lets `scripts/package.ps1` lay the bundle out and check it against that description,
+# so CI cannot quietly ship a different set of files than a release does.
 
 on:
   workflow_dispatch:
@@ -10,9 +13,10 @@ on:
     branches: [main]
     paths:
       - 'crates/**'
-      - 'packaging/windows/install.*'
-      - 'packaging/windows/install-readme.txt'
-      - 'scripts/make-icons.py'
+      - 'packaging/**'
+      - 'scripts/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/dock-build.yml'
 
 permissions:
@@ -54,28 +58,14 @@ jobs:
           # The archiver: an exe of its own, so it ships in the bundle and alone.
           cargo build --locked --release -p aura-arc --bins
           exit $LASTEXITCODE
-      - name: Collect the executables
+      - name: Lay out the bundle and verify it
         working-directory: aura
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item -LiteralPath target/release/aura-explorer.exe -Destination dist/AuraExplorer.exe
-          Copy-Item -LiteralPath target/release/aura-dock.exe -Destination dist/AuraDock.exe
-          # The two components: the desktop fence host and the desktop-widget host.
-          Copy-Item -LiteralPath target/release/fences.exe -Destination dist/fences.exe
-          Copy-Item -LiteralPath target/release/widgets.exe -Destination dist/widgets.exe
-          # The service that starts and supervises the three of them.
-          Copy-Item -LiteralPath target/release/auraservice.exe -Destination dist/auraservice.exe
-          # The archiver: one console exe, no service and no settings behind it.
-          Copy-Item -LiteralPath target/release/AuraArc.exe -Destination dist/AuraArc.exe
-          # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
-          # The window hook DLL is loaded by name from the executable folder; without it the
-          # Explorer takeover guard cannot start at all.
-          Copy-Item -Path target/release/AuraExplorerWindowHook-*.dll -Destination dist
-          Copy-Item -LiteralPath packaging/windows/install.ps1 -Destination dist/install.ps1
-          Copy-Item -LiteralPath packaging/windows/install.cmd -Destination dist/install.cmd
-          Copy-Item -LiteralPath packaging/windows/install-readme.txt -Destination dist/install-readme.txt
-          Get-ChildItem -LiteralPath dist | Format-Table Name, Length
+          # Не список Copy-Item, а описание набора: раскладка, manifest.json с хешами и
+          # проверка scripts/verify-bundle.ps1 — та же, что у настоящего релиза.
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -SkipBuild -TargetDir target/release -StageDir dist -NoZip
+          exit $LASTEXITCODE
       - name: Sign the executables
         working-directory: aura
         shell: pwsh
@@ -85,11 +75,40 @@ jobs:
         env:
           AuraExplorer_SIGN_PFX_B64: ${{ secrets.AuraExplorer_SIGN_PFX_B64 }}
           AuraExplorer_SIGN_PFX_PASSWORD: ${{ secrets.AuraExplorer_SIGN_PFX_PASSWORD }}
+      - name: Refresh the manifest after signing
+        working-directory: aura
+        shell: pwsh
+        run: |
+          # Подпись меняет байты exe, поэтому manifest.json считается заново: иначе install.ps1
+          # отверг бы собственный подписанный архив, а хеши в артефакте были бы неверными.
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist
+          exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         with:
           name: aura-dock-windows-x64
           path: aura/dist/*
           if-no-files-found: error
+      # Установщик собирается, если на образе есть Inno Setup (на windows-latest он есть);
+      # без него набор всё равно годен: zip и install.ps1 — самостоятельные способы установки.
+      - name: Installer (Inno Setup)
+        working-directory: aura
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          # Тот же упаковщик: он сам передаёт ISCC путь к набору, выходную папку и версию.
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) {
+            Write-Host "Inno Setup не найден ($iscc): пропускаю установщик, набор и install.ps1 готовы."
+            exit 0
+          }
+          # -ManifestOnly: набор уже разложен и подписан, его нельзя перезаписывать неподписанным.
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist -OutputDir installer -NoZip -InnoCompiler $iscc
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aura-ui-setup
+          path: aura/installer/*
+          if-no-files-found: ignore
       # The tests used to live in a second workflow (build.yml) that had to be started by
       # hand. They run here instead, after the executables are uploaded and without
       # blocking them: a red step says "the tests broke", the archive still exists.

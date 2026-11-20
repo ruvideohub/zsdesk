@@ -1,255 +1,190 @@
-<#
+﻿<#
 .SYNOPSIS
-Builds verified Windows x64 editions, portable ZIPs, and optional installers.
+    Собирает набор AuraUI: папку с программами, manifest.json, zip, при желании — установщик.
+
+.DESCRIPTION
+    Что именно входит в набор, решает не этот скрипт, а packaging/bundle.json — одно описание
+    на весь проект. Скрипт только исполняет его:
+
+      1. собирает нужные пакеты (`cargo build --release --bins`), если не сказано -SkipBuild;
+      2. раскладывает файлы по папке набора и пишет manifest.json с версией и хешами;
+      3. зовёт scripts/verify-bundle.ps1 — и падает, если набор не сошёлся с описанием;
+      4. упаковывает папку в zip и печатает его размер и sha256;
+      5. если есть Inno Setup (или задан -InnoCompiler) — собирает установщик из
+         packaging/windows/aura.iss.
+
+    Никаких «изданий» здесь нет: в AuraUI один набор. Прежний скрипт собирал шесть изданий
+    файлового менеджера с функциями, которых в проекте уже нет, и молча выпускал неполный
+    архив — именно поэтому он переписан.
+
+.PARAMETER TargetDir
+    Где лежат собранные exe. По умолчанию target/release.
+
+.PARAMETER StageDir
+    Куда раскладывать набор. По умолчанию releases/<версия>/AuraUI-<версия>-x64.
+
+.PARAMETER OutputDir
+    Куда положить zip и установщик. По умолчанию releases/<версия>.
+
+.PARAMETER InnoCompiler
+    Путь к ISCC.exe. Без него установщик не собирается; zip и install.ps1 собираются всегда.
+
+.PARAMETER SkipBuild
+    Не собирать cargo: взять то, что уже лежит в -TargetDir (так делает CI, который собрал
+    пакеты отдельным шагом).
+
+.PARAMETER NoZip
+    Не упаковывать в zip (нужно CI: он загружает папку как артефакт).
+
+.PARAMETER KeepStage
+    Не удалять прежнюю папку набора, а обновлять её.
+
+.PARAMETER ManifestOnly
+    Ничего не собирать и не раскладывать: пересчитать manifest.json в готовой папке и
+    проверить её. Нужно после подписи — она меняет байты exe, и прежние хеши перестают
+    сходиться (иначе install.ps1 отверг бы собственный подписанный архив).
+
 .EXAMPLE
-./scripts/package.ps1 -WorkDir C:\Build\AuraExplorer -TargetDir C:\Build\AuraExplorer-target -InnoCompiler 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+    pwsh -NoProfile -File scripts/package.ps1
+
+.EXAMPLE
+    pwsh -NoProfile -File scripts/package.ps1 -SkipBuild -TargetDir target/release -StageDir dist -NoZip
 #>
 param(
-    [ValidateSet('standard','network','desktop','full','themed','desktop-box')][string[]]$Editions = @('standard','network','desktop','full','themed','desktop-box'),
-    [string]$WorkDir = (Join-Path ([IO.Path]::GetTempPath()) 'AuraExplorer-build'),
-    [string]$TargetDir = $env:CARGO_TARGET_DIR,
+    [string]$TargetDir,
+    [string]$StageDir,
     [string]$OutputDir,
-    [string]$RoutingDir,
-    [string]$RuntimeDir,
     [string]$InnoCompiler,
-    [string]$ListaryBuildRoot,
     [switch]$SkipBuild,
-    [string]$BinaryPath
+    [switch]$NoZip,
+    [switch]$KeepStage,
+    [switch]$ManifestOnly
 )
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$WorkDir = [IO.Path]::GetFullPath($WorkDir)
-if (-not $TargetDir) { $TargetDir = Join-Path $WorkDir 'target' }
+if (-not $TargetDir) { $TargetDir = Join-Path $root 'target\release' }
 $TargetDir = [IO.Path]::GetFullPath($TargetDir)
+
+# Версия и описание набора — единственные источники правды.
 $version = [regex]::Match((Get-Content -LiteralPath (Join-Path $root 'Cargo.toml') -Raw), '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
-if ($version -notmatch '^\d+\.\d+\.\d+([+-][A-Za-z0-9.-]+)?$') { throw 'Workspace version is invalid' }
+if ($version -notmatch '^\d+\.\d+\.\d+([+-][A-Za-z0-9.-]+)?$') { throw 'Версия воркспейса не читается' }
+$bundlePath = Join-Path $root 'packaging/bundle.json'
+if (-not (Test-Path -LiteralPath $bundlePath -PathType Leaf)) { throw "Нет описания набора: $bundlePath" }
+$description = Get-Content -LiteralPath $bundlePath -Raw -Encoding utf8 | ConvertFrom-Json
+$entries = @($description.entries)
+if (-not $StageDir) { $StageDir = Join-Path $root "releases\$version\AuraUI-$version-x64" }
 if (-not $OutputDir) { $OutputDir = Join-Path $root "releases\$version" }
+$StageDir = [IO.Path]::GetFullPath($StageDir)
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
-if ($SkipBuild -and ($Editions.Count -ne 1 -or -not $BinaryPath)) { throw '-SkipBuild requires one edition and an explicit -BinaryPath' }
-if ((New-Object IO.DriveInfo ([IO.Path]::GetPathRoot($TargetDir))).AvailableFreeSpace -lt 10GB) { throw 'Less than 10 GiB available on the build volume' }
-$definitions = @{
-    standard = @{ Name='标准版'; Features=@(); Network=$false; Desktop=$false; Themed=$false }
-    network = @{ Name='网络版'; Features=@('network'); Network=$true; Desktop=$false; Themed=$false }
-    desktop = @{ Name='桌面版'; Features=@('desktop'); Network=$false; Desktop=$true; Themed=$false }
-    full = @{ Name='全量版'; Features=@('network','desktop'); Network=$true; Desktop=$true; Themed=$false }
-    themed = @{ Name='主题版'; Features=@('network','desktop','themed'); Network=$true; Desktop=$true; Themed=$true }
-    'desktop-box' = @{ Name='桌面盒子独立版'; Features=@('desktop-box'); Network=$false; Desktop=$true; Themed=$false; DesktopOnly=$true }
-}
-if (-not $RuntimeDir) {
-    $candidates=@()
-    if ($env:VCToolsRedistDir) { $candidates+=Join-Path $env:VCToolsRedistDir 'x64' }
-    $vswhere=Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (Test-Path -LiteralPath $vswhere) {
-        $installation=& $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-        if ($installation) {
-            $redistRoot=Join-Path $installation 'VC\Redist\MSVC'
-            if (Test-Path -LiteralPath $redistRoot) {
-                $candidates+=@(Get-ChildItem -LiteralPath $redistRoot -Directory | Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | Sort-Object { [version]$_.Name } -Descending | ForEach-Object { Join-Path $_.FullName 'x64' })
-            }
-        }
-    }
-    foreach ($candidate in $candidates) {
-        if (-not (Test-Path -LiteralPath $candidate)) { continue }
-        $directory=Get-ChildItem -LiteralPath $candidate -Directory -Filter 'Microsoft.VC*.CRT' | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'msvcp140.dll') } | Select-Object -First 1
-        if ($directory) { $RuntimeDir=$directory.FullName; break }
-    }
-}
-if (-not $RuntimeDir) { throw 'Visual C++ x64 Redistributable files are required; supply -RuntimeDir from the Visual Studio Redist directory' }
-$RuntimeDir=[IO.Path]::GetFullPath($RuntimeDir)
-$runtimeFiles=@('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')
-foreach ($name in $runtimeFiles) { if (-not (Test-Path -LiteralPath (Join-Path $RuntimeDir $name) -PathType Leaf)) { throw "Redistributable file missing: $name" } }
-foreach ($path in @($WorkDir,$TargetDir,$OutputDir)) { [IO.Directory]::CreateDirectory($path) | Out-Null }
-$lock = [IO.File]::Open((Join-Path $TargetDir 'aura-package.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
-$env:CARGO_TARGET_DIR=$TargetDir
-$env:CARGO_INCREMENTAL='0'
-$env:CARGO_PROFILE_DEV_DEBUG='0'
-$env:CARGO_PROFILE_TEST_DEBUG='0'
-$env:CARGO_PROFILE_RELEASE_DEBUG='0'
-$zsui=Join-Path (Split-Path -Parent $root) 'zsui'
-$env:CARGO_ENCODED_RUSTFLAGS=@("--remap-path-prefix=$root=/src/aura","--remap-path-prefix=$zsui=/src/zsui","--remap-path-prefix=$env:USERPROFILE=/user","--remap-path-prefix=$TargetDir=/target",'-C','link-arg=/PDBALTPATH:aura.pdb') -join [char]31
-$env:TEMP=Join-Path $WorkDir 'temp'
-$env:TMP=$env:TEMP
-[IO.Directory]::CreateDirectory($env:TEMP) | Out-Null
 
-function Get-BuildInfo([string]$Path) {
-    if ((Get-Item -LiteralPath $Path).VersionInfo.ProductVersion -ne $version) { throw 'The executable resource version differs from the workspace version' }
-    $resource=(Get-Item -LiteralPath $Path).VersionInfo
-    $numeric=[version](($version -split '[-+]')[0])
-    if($resource.FileMajorPart -ne $numeric.Major -or $resource.FileMinorPart -ne $numeric.Minor -or $resource.FileBuildPart -ne $numeric.Build -or $resource.FilePrivatePart -ne 0 -or
-       $resource.ProductMajorPart -ne $numeric.Major -or $resource.ProductMinorPart -ne $numeric.Minor -or $resource.ProductBuildPart -ne $numeric.Build -or $resource.ProductPrivatePart -ne 0){
-        throw 'The executable numeric resource version differs from the workspace version'
-    }
-    $start = New-Object Diagnostics.ProcessStartInfo
-    $start.FileName=$Path; $start.Arguments='--build-info'; $start.UseShellExecute=$false
-    $start.CreateNoWindow=$true; $start.WindowStyle=[Diagnostics.ProcessWindowStyle]::Hidden
-    $start.RedirectStandardOutput=$true; $start.RedirectStandardError=$true
-    $process = [Diagnostics.Process]::Start($start)
-    try {
-        $output=$process.StandardOutput.ReadToEndAsync(); $errorOutput=$process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit(10000)) { $process.Kill(); $process.WaitForExit(); throw 'The owned build identity query timed out' }
-        if ($process.ExitCode -ne 0) { throw "Build identity query failed: $($errorOutput.GetAwaiter().GetResult())" }
-        return ($output.GetAwaiter().GetResult() | ConvertFrom-Json)
-    } finally { $process.Dispose() }
-}
+Write-Host "Набор $($description.product) $version ($($description.platform))"
 
-function Write-Json([string]$Path,$Value) {
-    $Value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $Path -Encoding utf8
-}
-
-function Assert-ChildPath([string]$Path,[string]$Parent) {
-    $absolute=[IO.Path]::GetFullPath($Path)
-    $boundary=[IO.Path]::GetFullPath($Parent).TrimEnd('\')+'\'
-    if (-not $absolute.StartsWith($boundary,[StringComparison]::OrdinalIgnoreCase)) { throw "Path is outside its declared root: $absolute" }
-    if (Test-Path -LiteralPath $absolute) {
-        if ((Get-Item -LiteralPath $absolute).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Reparse points are not package targets: $absolute" }
+# ------------------------------------------------------------------ сборка
+if (-not $SkipBuild -and -not $ManifestOnly) {
+    $buildFlags = @('build', '--locked', '--release', '--bins', '--manifest-path', (Join-Path $root 'Cargo.toml'))
+    $packages = @($entries | Where-Object { $_.source.kind -eq 'cargo' } | ForEach-Object { $_.source.package } | Sort-Object -Unique)
+    foreach ($package in $packages) {
+        Write-Host "  cargo build -p $package"
+        & cargo @buildFlags -p $package
+        if ($LASTEXITCODE -ne 0) { throw "cargo build не собрал $package" }
     }
 }
 
-function Assert-Payload([string]$Directory,$Manifest) {
-    $actual = @(Get-ChildItem -LiteralPath $Directory -Recurse -File)
-    if ($actual.Count -ne $Manifest.files.Count+1) { throw 'Unexpected files in package payload' }
-    foreach ($entry in $Manifest.files.GetEnumerator()) {
-        $file=Join-Path $Directory $entry.Key
-        if ((Get-Item -LiteralPath $file).Length -ne $entry.Value.bytes -or (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value.sha256) { throw "Payload hash mismatch: $($entry.Key)" }
+# ------------------------------------------------------------------ раскладка
+if ((Test-Path -LiteralPath $StageDir) -and -not $KeepStage -and -not $ManifestOnly) {
+    Remove-Item -LiteralPath $StageDir -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $StageDir | Out-Null
+
+$layout = if ($ManifestOnly) { @() } else { $entries }
+foreach ($entry in $layout) {
+    $kind = $entry.source.kind
+    switch ($kind) {
+        'cargo' {
+            $bin = $entry.source.bin
+            $from = Join-Path $TargetDir ($bin + '.exe')
+            if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { throw "Сборка не дала $bin.exe (искал в $TargetDir)" }
+            Copy-Item -LiteralPath $from -Destination (Join-Path $StageDir $entry.name) -Force
+        }
+        'cargo-glob' {
+            $pattern = $entry.source.pattern
+            $found = @(Get-ChildItem -LiteralPath $TargetDir -Filter $pattern -File)
+            if ($found.Count -ne 1) { throw "Ожидался ровно один $pattern в $TargetDir, найдено $($found.Count)" }
+            Copy-Item -LiteralPath $found[0].FullName -Destination $StageDir -Force
+        }
+        'file' {
+            $from = Join-Path $root $entry.source.path
+            if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { throw "Нет файла $($entry.source.path)" }
+            Copy-Item -LiteralPath $from -Destination (Join-Path $StageDir $entry.name) -Force
+        }
+        'dir' {
+            $from = Join-Path $root $entry.source.path
+            if (-not (Test-Path -LiteralPath $from -PathType Container)) { throw "Нет папки $($entry.source.path)" }
+            $folder = $entry.name -replace '/\*$', ''
+            Copy-Item -LiteralPath $from -Destination (Join-Path $StageDir $folder) -Recurse -Force
+        }
+        'generated' { }
+        default { throw "Неизвестный вид источника: $kind" }
     }
 }
 
-try {
-    if (@($Editions | Where-Object { $_ -ne 'desktop-box' }).Count) {
-        if (-not $ListaryBuildRoot) { $ListaryBuildRoot=Join-Path $WorkDir 'listary-build' }
-        $ListaryBuildRoot=[IO.Path]::GetFullPath($ListaryBuildRoot)
-        $project=Join-Path $root 'native\listary\Listary.FileAppPlugin.AuraExplorer.csproj'
-        & dotnet build $project --configuration Release "-p:AuraExplorerBuildRoot=$ListaryBuildRoot" '-p:RestoreLockedMode=true' '-p:DebugType=None'
-        if ($LASTEXITCODE) { throw 'Listary folder provider build failed' }
-        $pluginOutput=Join-Path $ListaryBuildRoot 'Listary.FileAppPlugin.AuraExplorer\bin\Release\net48'
+# ------------------------------------------------------------------ манифест
+# Последним: он считает хеши всех остальных файлов, включая те, что кладёт установщик.
+$files = [ordered]@{}
+foreach ($file in (Get-ChildItem -LiteralPath $StageDir -Recurse -File | Sort-Object FullName)) {
+    if ($file.LastWriteTimeUtc.Year -lt 1980) { $file.LastWriteTimeUtc = [datetime]'1980-01-01T00:00:00Z' }
+    $relative = $file.FullName.Substring($StageDir.Length + 1).Replace('\', '/')
+    $files[$relative] = [ordered]@{
+        bytes  = $file.Length
+        sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    foreach ($edition in $Editions) {
-        $definition=$definitions[$edition]
-        $name="AuraExplorer-$version-$edition-x64"
-        $stage=Join-Path $WorkDir $name
-        $destination=Join-Path $OutputDir $name
-        Assert-ChildPath $stage $WorkDir
-        Assert-ChildPath $destination $OutputDir
-        if ((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $destination) -or (Test-Path -LiteralPath "$destination.zip")) { throw "Existing package retained; inspect it before retrying: $name" }
-        $flags=@('build','--release','--locked','-p','aura-explorer','--manifest-path',(Join-Path $root 'Cargo.toml'))
-        if ($edition -ne 'full') {
-            $flags += '--no-default-features'
-            if ($definition.Features.Count) { $flags += @('--features',($definition.Features -join ',')) }
-        }
-        $state=[ordered]@{project='AuraExplorer';version=$version;edition=$edition;source=$root;target=$TargetDir;profile='release';features=$definition.Features;runtime_source=$RuntimeDir;pid=$PID;state='running';started=[DateTimeOffset]::Now.ToString('o')}
-        Write-Json (Join-Path $WorkDir 'package-state.current.json') $state
-        if (-not $SkipBuild) {
-            & cargo @flags --message-format=json-render-diagnostics 1>(Join-Path $WorkDir "cargo.$edition.current.jsonl")
-            if ($LASTEXITCODE -ne 0) { throw "Cargo failed for $edition" }
-            # The dock is a separate process without edition features; it ships with every package.
-            $dockFlags=@('build','--release','--locked','-p','aura-dock','--manifest-path',(Join-Path $root 'Cargo.toml'))
-            & cargo @dockFlags --message-format=json-render-diagnostics 1>(Join-Path $WorkDir "cargo.dock.$edition.current.jsonl")
-            if ($LASTEXITCODE -ne 0) { throw "Cargo failed for the dock ($edition)" }
-            $exe=Join-Path $TargetDir 'release\aura-explorer.exe'
-        } else { $exe=[IO.Path]::GetFullPath($BinaryPath) }
-        $identity=Get-BuildInfo $exe
-        if ($identity.product -ne 'AuraExplorer' -or $identity.version -ne $version -or $identity.edition -ne $edition -or $identity.network -ne $definition.Network -or $identity.desktop -ne $definition.Desktop -or $identity.themed -ne $definition.Themed -or [bool]$identity.desktop_only -ne [bool]$definition.DesktopOnly) { throw "Executable edition/version mismatch: $edition" }
-        [IO.Directory]::CreateDirectory($stage) | Out-Null
-        Copy-Item -LiteralPath $exe -Destination (Join-Path $stage 'AuraExplorer.exe')
-        $dockExe=if ($SkipBuild) { Join-Path (Split-Path -Parent $exe) 'AuraDock.exe' } else { Join-Path $TargetDir 'release\aura-dock.exe' }
-        if (Test-Path -LiteralPath $dockExe) { Copy-Item -LiteralPath $dockExe -Destination (Join-Path $stage 'AuraDock.exe') }
-        elseif ($SkipBuild) { Write-Warning 'AuraDock.exe is missing next to -BinaryPath; the package ships without the dock' }
-        else { throw 'The dock executable was not produced' }
-        $windowHook=(Get-Content -LiteralPath (Join-Path $TargetDir 'release\AuraExplorerWindowHook.name') -Raw).Trim()
-        if($windowHook -notmatch '^AuraExplorerWindowHook-[0-9a-f]{16}\.dll$'){throw 'Invalid window hook identity'}
-        Copy-Item -LiteralPath (Join-Path $TargetDir "release\$windowHook") -Destination (Join-Path $stage $windowHook)
-        foreach ($runtime in $runtimeFiles) {
-            Copy-Item -LiteralPath (Join-Path $RuntimeDir $runtime) -Destination (Join-Path $stage $runtime)
-        }
-        Copy-Item -LiteralPath (Join-Path $root 'packaging\licenses') -Destination (Join-Path $stage 'licenses') -Recurse
-        Copy-Item -LiteralPath (Join-Path $root 'LICENSE') -Destination (Join-Path $stage 'LICENSE.txt')
-        Copy-Item -LiteralPath (Join-Path $root 'THIRD-PARTY-NOTICES.txt') -Destination (Join-Path $stage 'THIRD-PARTY-NOTICES.txt')
-        if (-not $definition.DesktopOnly) {
-            $listaryStage=Join-Path $stage 'integrations\listary'
-            [IO.Directory]::CreateDirectory($listaryStage) | Out-Null
-            $provider=Join-Path $listaryStage 'FileAppPlugins\AuraExplorer'
-            [IO.Directory]::CreateDirectory($provider) | Out-Null
-            # The file manager host supplies the FileAppPlugin contract.
-            foreach ($file in @('Listary.FileAppPlugin.AuraExplorer.dll','ListaryPluginManifest.json','Icon.png')) {
-                Copy-Item -LiteralPath (Join-Path $pluginOutput $file) -Destination $provider
-            }
-            Copy-Item -LiteralPath (Join-Path $root 'native\listary\Prepare-Listary7.ps1') -Destination (Join-Path $listaryStage 'Prepare-Listary7.ps1')
-            Copy-Item -LiteralPath (Join-Path $root 'native\listary\README.md') -Destination (Join-Path $listaryStage 'README.md')
-        }
-        if ($RoutingDir -and -not $definition.DesktopOnly) {
-            $routingFiles=@('ShellRoutingControl.exe','AuraExplorerRevealRouter.dll','manifest.json','MinHook-LICENSE.txt')
-            [IO.Directory]::CreateDirectory((Join-Path $stage 'routing')) | Out-Null
-            foreach ($file in $routingFiles) { Copy-Item -LiteralPath (Join-Path $RoutingDir $file) -Destination (Join-Path $stage "routing\$file") }
-        }
-        $readme=@("AuraExplorer $version $($definition.Name) — Windows x64",'',
-            '运行 AuraExplorer.exe 打开文件管理器；--classic-menu 使用原版菜单。',
-            '码头：AuraExplorer.exe 启动时自动带起 AuraDock.exe（面板与 Launchpad），退出时一并结束；右键菜单可退出面板。',
-            'Ctrl+F 在主窗口搜索文件；Alt+P 切换预览窗格；空格打开快速预览。',
-            'Ctrl+Shift+A 反向选择；地址栏支持 pwsh、powershell、nu 和 nushell。',
-            '≡ → 系统集成 → 开机启动与全局快捷键：设置登录常驻及唤起主窗口搜索的全局快捷键。',
-            '≡ → 布局、标签页、预览与操作、搜索：界面与搜索选项。',
-            '≡ → 右键菜单：选择菜单样式和显示的命令。',
-            '≡ → 系统集成：文件夹默认打开方式。')
-        if ($definition.DesktopOnly) {$readme=@("AuraExplorer $version 桌面盒子独立版 — Windows x64",'','运行 AuraExplorer.exe 启动桌面格子。','支持文件夹映射、格子标签页、拖放整理、预览、主题与独立登录启动。','配置目录：%APPDATA%\AuraExplorer-DesktopBox；与文件管理版和主题版分别保存。','外部文件夹使用系统资源管理器打开。','此版本不包含文件管理主窗口、全盘搜索和文件夹接管。')}
-        if ($RoutingDir -and -not $definition.DesktopOnly) { $readme += '≡ → 系统集成 → 文件位置转发：选择应用并接入文件定位。' }
-        if ($definition.Desktop -and -not $definition.DesktopOnly) { $readme += @('','桌面格子：AuraExplorer.exe --desktop，或从主菜单启动。','支持文件夹映射、腾讯布局导入、悬停展开、分组和屏幕布局。') }
-        if ($definition.Network) { $readme += @('','支持 SMB/UNC、系统 FTP；SFTP/SSH 地址需要 SSHFS-Win/WinFsp。') }
-        if($definition.Themed){$readme+=@('','主题版支持亚克力、Mica 和纯色深浅主题；配置独立存放在 AppData\Roaming\AuraExplorer-Theme。')}
-        elseif(-not $definition.DesktopOnly){$readme+=@('','配置默认保存在用户 AppData\Roaming\AuraExplorer。')}
-        if(-not $definition.DesktopOnly){
-        $readme += @('','≡ → 搜索：自带搜索，没有别的引擎可选。',
-            '自带搜索使用共享的内存索引和本地快照；普通权限下遍历目录，管理员权限下使用只读 MFT 枚举。',
-            '可用的 USN 日志用于增量更新；默认空闲 5 分钟保存快照并释放内存，再次搜索时恢复并补齐变更。',
-            '开发和缓存目录内容默认不收录，可在搜索设置中开启；文件大小、修改时间索引和拼音首字母匹配默认关闭。')
-        }
-        $readme+=@('配置目录菜单可为下次普通启动指定位置，空目录从初始设置开始。','portable.flag 使用程序旁 data 目录；--profile-dir 指定独立配置。','安装包与便携包不包含用户路径、桌面布局、搜索索引或系统接管记录。','源码与许可证：https://github.com/qiu7824/aura')
-        $readme -join "`r`n" | Set-Content -LiteralPath (Join-Path $stage '说明.txt') -Encoding utf8BOM
-        $english=@("AuraExplorer $version ($edition) — Windows x64",'',
-            'Language: non-Chinese Windows systems use English by default.',
-            'File manager: menu → Language. Application text switches immediately.',
-            'File names and Windows Shell labels retain their original language.',
-            'Run AuraExplorer.exe. Ctrl+F searches files; Alt+P toggles the preview pane; Space opens quick preview.',
-            'Dock: AuraExplorer.exe starts AuraDock.exe with it (panel and Launchpad) and stops it on exit; its menu can quit the panel.',
-            'Network share searches stay within the selected UNC folder or existing mapped network folder.',
-            'Settings are preserved during updates. Exit AuraExplorer before replacing portable files.',
-            'Use portable.flag for a data folder beside the program, or --profile-dir for a separate configuration.',
-            'Source and licenses: https://github.com/qiu7824/aura')
-        if($definition.DesktopOnly){$english=@("AuraExplorer $version Desktop Box — Windows x64",'',
-            'Run AuraExplorer.exe to start desktop fences. This edition does not include the file manager or search.',
-            'The interface follows the Windows display language, using English on non-Chinese systems.',
-            'Settings: %APPDATA%\AuraExplorer-DesktopBox. Files and folders remain in their original locations.',
-            'Source and licenses: https://github.com/qiu7824/aura')}
-        $english -join "`r`n" | Set-Content -LiteralPath (Join-Path $stage 'README.en.txt') -Encoding utf8BOM
-        $files=[ordered]@{}
-        foreach ($file in (Get-ChildItem -LiteralPath $stage -File -Recurse | Sort-Object FullName)) {
-            if ($file.LastWriteTimeUtc.Year -lt 1980) { $file.LastWriteTimeUtc=[datetime]'1980-01-01T00:00:00Z' }
-            $relative=$file.FullName.Substring($stage.Length+1).Replace('\','/')
-            $files[$relative]=[ordered]@{bytes=$file.Length;sha256=(Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
-        }
-        $defaultSearchBackend=if($definition.DesktopOnly){$null}else{'native_ntfs'}
-        $searchBackends=@();if(-not $definition.DesktopOnly){$searchBackends=@('native_ntfs')}
-        $manifest=[ordered]@{product='AuraExplorer';version=$version;edition=$edition;edition_name=$definition.Name;platform='windows-x64';features=$definition.Features;desktop_only=[bool]$definition.DesktopOnly;
-            search_default_backend=$defaultSearchBackend;search_backends=@($searchBackends);files=$files}
-        Write-Json (Join-Path $stage 'manifest.json') $manifest
-        Assert-Payload $stage $manifest
-        $zip=Join-Path $WorkDir "$name.zip"
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        [IO.Compression.ZipFile]::CreateFromDirectory($stage,$zip,[IO.Compression.CompressionLevel]::Optimal,$false)
-        $archive=[IO.Compression.ZipFile]::OpenRead($zip)
-        try { if ($archive.Entries.Count -ne $files.Count+1) { throw 'ZIP file count mismatch' } } finally { $archive.Dispose() }
-        if ($InnoCompiler) {
-            $arguments=@('/Qp',"/DSourceDir=$stage","/DOutputDir=$WorkDir","/DMyAppVersion=$version","/DEdition=$edition","/DEditionName=$($definition.Name)","/DHasDesktop=$([int]$definition.Desktop)",(Join-Path $root 'packaging\windows\aura.iss'))
-            & $InnoCompiler @arguments 1>(Join-Path $WorkDir "installer.$edition.current.log")
-            if ($LASTEXITCODE -ne 0) { throw "Installer compiler failed for $edition" }
-        }
-        # The completed payload moves only after its identity and every file hash pass.
-        Assert-ChildPath $stage $WorkDir
-        Assert-ChildPath $destination $OutputDir
-        Move-Item -LiteralPath $stage -Destination $destination
-        Move-Item -LiteralPath $zip -Destination "$destination.zip"
-        if ($InnoCompiler) { Move-Item -LiteralPath (Join-Path $WorkDir "$name-setup.exe") -Destination (Join-Path $OutputDir "$name-setup.exe") }
-        $state.state='verified';$state['ended']=[DateTimeOffset]::Now.ToString('o');$state['output']=$destination;$state['exe_sha256']=$files['AuraExplorer.exe'].sha256
-        Write-Json (Join-Path $WorkDir 'package-state.current.json') $state
-        Write-Output "$name verified"
+}
+$manifest = [ordered]@{
+    product  = $description.product
+    version  = $version
+    platform = $description.platform
+    built    = [DateTimeOffset]::Now.ToString('o')
+    files    = $files
+}
+# Без BOM: manifest.json читают и PowerShell, и другие инструменты — обычный UTF-8.
+$json = $manifest | ConvertTo-Json -Depth 10
+[IO.File]::WriteAllText((Join-Path $StageDir 'manifest.json'), $json, (New-Object System.Text.UTF8Encoding($false)))
+
+# ------------------------------------------------------------------ проверка
+Write-Host '  проверяю набор'
+& (Join-Path $PSScriptRoot 'verify-bundle.ps1') -Dir $StageDir -Bundle $bundlePath
+if ($LASTEXITCODE -ne 0) { throw 'Набор не прошёл проверку — смотри сообщения выше' }
+
+# ------------------------------------------------------------------ zip
+if (-not $NoZip) {
+    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+    $zip = Join-Path $OutputDir ("AuraUI-$version-x64.zip")
+    if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+    Compress-Archive -Path (Join-Path $StageDir '*') -DestinationPath $zip -CompressionLevel Optimal
+    $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    Write-Host "  zip: $zip"
+    Write-Host "  размер: $((Get-Item -LiteralPath $zip).Length) байт, sha256 $hash"
+}
+
+# ------------------------------------------------------------------ установщик
+if (-not $InnoCompiler) {
+    foreach ($candidate in @((Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'), (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'))) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) { $InnoCompiler = $candidate; break }
     }
-} finally { $lock.Dispose() }
+}
+if ($InnoCompiler) {
+    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+    $iss = Join-Path $root 'packaging/windows/aura.iss'
+    Write-Host "  установщик: $InnoCompiler"
+    & $InnoCompiler "/DSourceDir=$StageDir" "/DOutputDir=$OutputDir" "/DMyAppVersion=$version" $iss
+    if ($LASTEXITCODE -ne 0) { throw 'Inno Setup не собрал установщик' }
+    $setup = Join-Path $OutputDir ("AuraUI-$version-x64-setup.exe")
+    if (Test-Path -LiteralPath $setup) {
+        Write-Host "  установщик: $setup ($((Get-Item -LiteralPath $setup).Length) байт)"
+    }
+} else {
+    Write-Host '  Inno Setup не найден: установщик не собран (zip и install.ps1 готовы).'
+}
+
+Write-Host "Готово: $StageDir" -ForegroundColor Green

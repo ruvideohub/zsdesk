@@ -8,19 +8,20 @@
 |---|---|
 | Панель, трей, стеки, превью, поиск, Launchpad | `crates/aura-dock` |
 | Системные сервисы панели | `crates/laminar-sys` |
-| Запуск панели вместе с AuraExplorer | `crates/aura-explorer/src/shell_dock.rs` |
-| Настройки панели | `%APPDATA%\AuraExplorer\Dock\config.json` |
-| Установщик | `packaging/windows/aura.iss` (кладутся оба exe) |
+| Запуск панели | служба `auraservice.exe` — единственный владелец запуска |
+| Настройки панели | `%APPDATA%\AuraExplorer\Dock\config.json`; страница — `AuraDock.exe --settings` |
+| Установщик | `packaging/windows/aura.iss` + `packaging/bundle.json` (набор целиком) |
 | Лицензия апстрима | `packaging/licenses/Laminar-MIT.txt` |
 
 ## Один установщик, один запуск
 
-1. Установщик AuraExplorer кладёт рядом `AuraExplorer.exe` и `AuraDock.exe`.
+1. Установщик AuraUI (или `install.ps1`) кладёт рядом все программы набора, включая `AuraDock.exe`.
 2. При старте `AuraExplorer.exe` поднимает панель: `AuraDock.exe --parent <pid AuraExplorer>`.
 3. Дочерний процесс сам следит за родителем: как только `AuraExplorer.exe` завершился (в том числе
    аварийно), панель закрывается и возвращает на место панель задач Windows.
 4. Панель не запускается в служебных режимах: `--quick-search`, `--quick-search-settings`,
-   `--background`, `--desktop --quit`, а также при явном `--no-dock`.
+   `--background`, `--desktop --quit`. Отдельного `--no-dock` больше нет: панель запускает
+   служба, и её выключают переключателем в окне «AuraUI — настройки и запуск».
 
 Отдельного ярлыка и отдельного «второго приложения» больше нет: пользователь ставит одно,
 нажимает одно и получает рабочий стол (fences) и панель одновременно.
@@ -88,20 +89,19 @@
 `packaging/windows/install.ps1` (и `install.cmd` для двойного щелчка) ставит AuraExplorer в профиль
 пользователя — администратор не нужен:
 
-1. копирует `AuraExplorer.exe` и `AuraDock.exe` в `%LOCALAPPDATA%\Programs\AuraExplorer`,
-   снимает метку «из интернета» (`Unblock-File`), подхватывает рядом лежащие DLL
-   Visual C++ Runtime;
-2. прописывает автозапуск в `HKCU\…\CurrentVersion\Run`:
-   `"…\AuraExplorer.exe" --desktop --tray` — сетки, виджет часов и панель поднимаются при входе
-   в Windows, окно файлового менеджера не открывается, значок стоит в трее;
-3. делает ярлыки в меню «Пуск»: «AuraExplorer» (обычный запуск) и «AuraExplorer - сетки и панель»
-   (`--desktop --tray`);
-4. запускает AuraExplorer и печатает состояние подписи.
+1. сверяет файлы с `manifest.json` (версия и sha256 каждого) — подменённый или недокачанный
+   архив не установится молча;
+2. копирует весь набор в `%LOCALAPPDATA%\Programs\AuraExplorer`, снимает метку «из интернета»
+   (`Unblock-File`), подхватывает рядом лежащие DLL Visual C++ Runtime;
+3. прописывает автозапуск в `HKCU\…\CurrentVersion\Run`: `"…\auraservice.exe" --run` — одна
+   запись на всё; что именно поднимает служба, решают её переключатели;
+4. делает ярлыки в меню «Пуск»: «AuraExplorer» (обычный запуск) и «AuraUI — запуск и
+   компоненты» (`auraservice.exe --settings`);
+5. запускает службу и печатает состояние подписи.
 
-Отдельной записи автозапуска для панели нет намеренно: панель — дочерний процесс `AuraExplorer.exe`
-и живёт ровно столько же, сколько он. Вторая запись дала бы вторую панель (её оттолкнул бы
-мьютекс `Local\AuraExplorer.Dock`, но панель осталась бы без родителя и не вернула бы панель задач
-при выходе). Если панель всё же нужна без сеток: `install.cmd -PanelOnly`.
+Отдельной записи автозапуска для панели нет намеренно: владелец запуска один — служба. Вторая
+запись дала бы вторую панель, которая дерется за место на экране с первой. Панель, сетки и
+виджеты включаются и выключаются переключателями в окне «AuraUI — настройки и запуск».
 
 Прочее: `-NoAutostart` — не прописывать автозапуск, `-DesktopShortcut` — ярлык на рабочем
 столе, `-NoStart` — не запускать после установки, `-Remove` — удалить всё (процессы,
@@ -345,10 +345,11 @@ cargo build -p aura-dock --release        # панель
 cargo build -p aura-explorer  --release        # файловый менеджер и fences
 ```
 
-`scripts/package.ps1` собирает оба бинарника для каждой редакции и кладёт `AuraDock.exe`
-в стейдж; `aura.iss` забирает оттуда всё содержимое. GitHub Actions: `Dock build`
-(`.github/workflows/dock-build.yml`) срабатывает на изменения `crates/aura-dock/**` и
-`crates/laminar-sys/**` и отдаёт артефакт `aura-dock-windows-x64`.
+Набор собирает `scripts/package.ps1` по описанию `packaging/bundle.json` (раскладка,
+`manifest.json`, проверка, zip); `aura.iss` собирает из этой же папки установщик.
+GitHub Actions `Dock build` (`.github/workflows/dock-build.yml`) собирает пакеты, зовёт тот же
+упаковщик, подписывает файлы и отдаёт артефакт `aura-dock-windows-x64` (и установщик отдельно).
+Подробности — [packaging.md](packaging.md).
 
 ## Тесты
 

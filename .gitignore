@@ -19,3 +19,7 @@
 /releases/**/*.dll
 /releases/**/*.zip
 /releases/**/*.lnk
+
+# Packaging output: created by scripts/package.ps1 and CI, never source.
+/dist/
+/installer/

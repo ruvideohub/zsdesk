@@ -161,11 +161,10 @@ if ($Remove) {
 # ------------------------------------------------------------------ установка
 Write-Head 'Установка AuraExplorer'
 
-# auraservice.exe — служба запуска, без неё компоненты никто не поднимает.
-# fences.exe — хост сеток рабочего стола, widgets.exe — виджеты рабочего стола,
-# AuraArc.exe — архиватор (работает и сам по себе, без остальных файлов).
-# Оба необязательны: без них AuraExplorer сам поднимет сетки (`--desktop`), а панель —
-# часы во втором своём процессе, поэтому в списке обязательных их нет.
+# auraservice.exe — служба запуска: единственный владелец автозапуска и всех компонентов.
+# fences.exe — сетки рабочего стола, widgets.exe — виджеты, AuraArc.exe — архиватор
+# (работает и сам по себе). Весь набор описан в packaging/bundle.json, и если файла рядом
+# нет, архив неполный: скажем об этом прямо, но установку из-за этого не рвём.
 $needed = @('AuraExplorer.exe', 'AuraDock.exe', 'auraservice.exe')
 $components = @('fences.exe', 'widgets.exe', 'AuraArc.exe')
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
@@ -173,6 +172,31 @@ if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
     Write-Host 'Положи install.ps1 в ту же папку, что AuraExplorer.exe, AuraDock.exe и auraservice.exe (как в архиве сборки).' -ForegroundColor Red
     exit 1
+}
+
+# Опечатка сборки: manifest.json с версией и хешами всех файлов. Если он лежит рядом,
+# файлы сверяются до копирования: подменённый или недокачанный архив не установится молча,
+# а скажет, какой именно файл не тот.
+$manifestPath = Join-Path $Source 'manifest.json'
+if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
+    Write-Head 'Проверка набора'
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
+    $bad = @()
+    foreach ($entry in $manifest.files.PSObject.Properties) {
+        $file = Join-Path $Source ($entry.Name.Replace('/', '\'))
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { $bad += "$($entry.Name): файла нет"; continue }
+        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne ([string]$entry.Value.sha256)) { $bad += "$($entry.Name): файл изменён" }
+    }
+    if ($bad.Count -gt 0) {
+        Write-Host 'Набор не сходится с manifest.json:' -ForegroundColor Red
+        foreach ($line in $bad) { Write-Host "  $line" -ForegroundColor Red }
+        Write-Host 'Скачай архив заново: файлы подменены или распакованы частично.' -ForegroundColor Red
+        exit 1
+    }
+    Write-Ok ("версия {0}: сверены {1} файлов" -f $manifest.version, @($manifest.files.PSObject.Properties).Count)
+} else {
+    Write-Note 'manifest.json рядом нет — сверку файлов пропускаю (архив собран вручную)'
 }
 
 $sameFolder = ($Source.TrimEnd('\') -eq $Dir.TrimEnd('\'))
@@ -183,7 +207,7 @@ foreach ($file in $needed + $components) {
     $from = Join-Path $Source $file
     if (-not (Test-Path -LiteralPath $from -PathType Leaf)) {
         if ($needed -contains $file) { continue }
-        Write-Note "$file нет в архиве — компонент останется внутри основных программ"
+        Write-Note "$file нет в архиве — архив неполный: этот компонент не установится"
         continue
     }
     if (-not $sameFolder) {
