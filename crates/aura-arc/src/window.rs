@@ -1158,7 +1158,8 @@ fn pick_new_archive(owner: HWND) -> Option<PathBuf> {
     let end = buffer.iter().position(|unit| *unit == 0).unwrap_or(0);
     let mut path = PathBuf::from(String::from_utf16_lossy(&buffer[..end]));
     // Клавиатурный ввод без расширения — обычное дело; архиватор без `.zip` не откроет.
-    if !path.to_ascii_lowercase().to_string_lossy().ends_with(".zip") {
+    let lower = path.to_string_lossy().to_ascii_lowercase();
+    if !lower.ends_with(".zip") {
         path.set_extension("zip");
     }
     Some(path)
