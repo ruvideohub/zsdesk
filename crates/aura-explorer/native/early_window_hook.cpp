@@ -2,26 +2,35 @@
 #include <windows.h>
 
 // No Shell, COM, allocations or background threads run in the caller. The
-// recovery process owns every visibility change and acknowledges it before
-// this synchronous show/activation notification returns.
+// recovery process owns every visibility change.
+// Nothing here may block the process it is injected into. This used to send the
+// notification with SendMessageTimeoutW and wait up to 80 ms for the guard to
+// acknowledge; every window show and every dialog activation in every process
+// then waited on us, which is exactly what makes Windows flip the pointer into
+// the "working in background" cursor. The guard hides the window from its own
+// thread a millisecond later, so the notification is posted, not sent.
+static HWND receiver_for(bool explorer) {
+    // FindWindowW enumerates every top-level window; cache it per process
+    // instead of searching again on every single window show.
+    static HWND cached_explorer = nullptr;
+    static HWND cached_dialog = nullptr;
+    HWND* slot = explorer ? &cached_explorer : &cached_dialog;
+    if (*slot && IsWindow(*slot)) return *slot;
+    *slot = FindWindowW(explorer ? L"AuraExplorer.EarlyExplorer.Guard" : L"AuraExplorer.EarlyDialog.Guard", nullptr);
+    return *slot;
+}
 static void signal(HWND window, bool explorer, UINT event) {
     if (!window || GetAncestor(window, GA_ROOT) != window) return;
     wchar_t name[64];
     if (!GetClassNameW(window, name, 64)) return;
     if (explorer ? (lstrcmpW(name, L"CabinetWClass") && lstrcmpW(name, L"ExploreWClass"))
                  : lstrcmpW(name, L"#32770")) return;
-    HWND receiver = FindWindowW(explorer ? L"AuraExplorer.EarlyExplorer.Guard" : L"AuraExplorer.EarlyDialog.Guard", nullptr);
+    HWND receiver = receiver_for(explorer);
     if (!receiver) return;
     DWORD receiver_pid = 0;
     GetWindowThreadProcessId(receiver, &receiver_pid);
     if (receiver_pid == GetCurrentProcessId()) return;
-    constexpr auto marker = L"AuraExplorer.EarlyHook.InProgress";
-    if (GetPropW(window, marker) || !SetPropW(window, marker, reinterpret_cast<HANDLE>(1))) return;
-    DWORD_PTR result = 0;
-    // Allow the source thread to service the guard's bounded WM_GETTEXT reads.
-    SendMessageTimeoutW(receiver, WM_APP + 119, reinterpret_cast<WPARAM>(window), event,
-                        SMTO_ABORTIFHUNG, 80, &result);
-    RemovePropW(window, marker);
+    PostMessageW(receiver, WM_APP + 119, reinterpret_cast<WPARAM>(window), event);
 }
 extern "C" __declspec(dllexport) void CALLBACK AuraExplorerDialogEvent(HWINEVENTHOOK, DWORD event, HWND window, LONG object, LONG child, DWORD, DWORD) {
     if (object == OBJID_WINDOW && child == 0) {

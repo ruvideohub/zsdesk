@@ -107,7 +107,9 @@ unsafe extern "system" fn early_message(window:HWND,message:u32,wp:WPARAM,lp:LPA
     let accepted=WATCHER.with(|slot|{let Ok(mut slot)=slot.try_borrow_mut()else{return false;};
         if let Some(watcher)=slot.as_mut(){watcher.observe(source);watcher.tick();true}else{false}});
     if !accepted{return windows::Win32::Foundation::LRESULT(0);}
-    let until=Instant::now()+Duration::from_millis(50);
+    // The show notification is posted, not sent, so no other thread is waiting for this
+    // loop any more: it only buys the window a shorter gap before we hide it.
+    let until=Instant::now()+Duration::from_millis(20);
     loop{
         if !process_commands(){break;}
         let state=WATCHER.with(|slot|slot.borrow().as_ref().and_then(|watcher|watcher.entries.values().find(|entry|entry.lease.source.window==source.0 as isize).map(|entry|entry.hidden)));
