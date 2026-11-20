@@ -488,7 +488,8 @@ fn write_archive(target: &Path, temporary: &Path, collected: &[(PathBuf, PathBuf
     finish(&mut out, &written_entries)?;
     drop(out);
     // Windows lets a rename replace the old archive, but not while another program holds it.
-    commit(temporary, target)
+    commit(temporary, target)?;
+    Ok(summary)
 }
 
 /// Copy the entries an archive already holds into the archive being written, byte for byte.
