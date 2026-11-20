@@ -325,7 +325,7 @@ pub fn test(archive: &Path, mut on_entry: impl FnMut(&Entry, bool)) -> Result<Su
                     }
                 }
                 DEFLATED => {
-                    let mut decoder = DeflateDecoder::new((&mut *file).take(entry.packed));
+                    let mut decoder = DeflateDecoder::new((&mut file).take(entry.packed));
                     loop {
                         let read = decoder.read(&mut buffer)?;
                         if read == 0 {
