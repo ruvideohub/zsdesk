@@ -320,6 +320,7 @@ pub fn run(profile:PathBuf,args:Vec<OsString>)->Result<()>{
         // accounting may end this host, including after COM pumps a quit.
         if received==0{continue;}
         if received<0{last_error=Some(format!("应用消息循环失败：{}",windows::core::Error::from_thread()));continue;}
+        let _iteration=crate::window::diagnostics::IterationTimer::new(&message);
         unsafe{let _=TranslateMessage(&message);DispatchMessageW(&message);}
     }
     drop(folder_dde);

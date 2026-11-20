@@ -220,6 +220,65 @@ pub(super) fn note_queue_latency(message:&MSG) {
     record("ui",&format!("queue-latency-{waited}ms"),Some(message.message as i32));
 }
 
+/// Marks one iteration of a window thread's message loop and books what it cost.
+/// A drop guard, so every `continue` in those loops is measured too. The point is the
+/// "working in background" pointer: Windows shows it while the window under the pointer
+/// keeps missing its message queue, so what we need is the cost of the handlers, not a guess.
+pub(crate) struct IterationTimer(Instant);
+impl IterationTimer {
+    pub(crate) fn new(message:&MSG)->Self {
+        CURRENT_MESSAGE.with(|cell|cell.set((message.message,message.wParam.0)));
+        Self(Instant::now())
+    }
+}
+impl Drop for IterationTimer { fn drop(&mut self) { note_iteration(self.0.elapsed().as_millis().min(60_000) as u32); } }
+
+/// One handler slower than this is worth a line of its own: a single 60 ms gap is what
+/// turns the arrow into the spinner mid-gesture.
+const SLOW_HANDLER_MS:u32=60;
+/// A second in which the thread burned this much is worth a line as well.
+const BUSY_SECOND_MS:u32=300;
+thread_local!{static CURRENT_MESSAGE:std::cell::Cell<(u32,usize)>=const{std::cell::Cell::new((0,0))};}
+/// Per-second accumulator. Holds at most six distinct slow labels per second, so a session
+/// that is busy all the time still leaves a readable log instead of rotating itself away.
+#[derive(Clone,Copy)]struct LoopSecond{bucket:u64,busy:u32,count:u32,worst:u32,worst_message:(u32,usize),
+    logged:[(u32,usize);6],logged_len:usize}
+const EMPTY_SECOND:LoopSecond=LoopSecond{bucket:0,busy:0,count:0,worst:0,worst_message:(0,0),logged:[(0,0);6],logged_len:0};
+thread_local!{static LOOP_SECOND:std::cell::Cell<LoopSecond>=const{std::cell::Cell::new(EMPTY_SECOND)};}
+fn handler_label(message:u32,wparam:usize)->String {
+    if message==WM_TIMER { format!("timer-{wparam}") } else { format!("msg-{message:04X}") }
+}
+fn note_iteration(elapsed:u32) {
+    let (message,wparam)=CURRENT_MESSAGE.with(std::cell::Cell::get);
+    let bucket=unsafe{windows::Win32::System::SystemInformation::GetTickCount64()}/1000;
+    let (log_handler,log_second)=LOOP_SECOND.with(|cell|{
+        let mut second=cell.get();
+        if second.bucket!=bucket {
+            let busy=if second.busy>=BUSY_SECOND_MS {
+                Some((second.busy,second.count,second.worst,second.worst_message))
+            } else { None };
+            second=LoopSecond{bucket,..EMPTY_SECOND};
+            cell.set(second);
+            (false,busy)
+        } else {
+            let known=second.logged[..second.logged_len].contains(&(message,wparam));
+            let mut log_handler=false;
+            if elapsed>=SLOW_HANDLER_MS&&!known&&second.logged_len<second.logged.len() {
+                second.logged[second.logged_len]=(message,wparam);second.logged_len+=1;log_handler=true;
+            }
+            cell.set(second);
+            (log_handler,None)
+        }
+    });
+    if log_handler {
+        record("ui",&format!("handler-{elapsed}ms-{}",handler_label(message,wparam)),Some(message as i32));
+    }
+    if let Some((busy,count,worst,label))=log_second {
+        record("ui",&format!("busy-second-{busy}-ms-of-{count}-messages-worst-{worst}-ms-{}",
+            handler_label(label.0,label.1)),None);
+    }
+}
+
 pub(super) fn dispatch(message:&MSG)->bool {
     let root=unsafe{GetAncestor(message.hwnd,GA_ROOT)};
     let owns=WINDOWS.with(|windows|windows.borrow().values().any(|window|*window==root));

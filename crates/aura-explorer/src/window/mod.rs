@@ -231,6 +231,9 @@ unsafe fn run_window(session: ExplorerSession, config_path: PathBuf, selection: 
         let result = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
         if result <= 0 { break; }
         diagnostics::note_queue_latency(&msg);
+        // Times everything this iteration runs, including native menus that block inside a
+        // window procedure. Slow handlers and busy seconds land in the diagnostics log.
+        let _iteration=diagnostics::IterationTimer::new(&msg);
         if crate::utility_panel::dispatch_if_owned(&msg){continue;}
         if matches!(msg.message,WM_KEYDOWN|WM_SYSKEYDOWN|WM_LBUTTONDOWN|WM_LBUTTONDBLCLK|WM_RBUTTONDOWN|WM_MBUTTONDOWN|WM_XBUTTONDOWN|WM_MOUSEWHEEL|WM_MOUSEHWHEEL|WM_POINTERDOWN){
             aura_windows::shell::file_transfer::note_user_input(msg.hwnd);

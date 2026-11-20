@@ -331,6 +331,9 @@ fn run_host(config_path: PathBuf, explorer_config: PathBuf, command: DesktopComm
     execute(command);
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.0 > 0 {
+        // Busy seconds and slow handlers of the desktop host land in the same log: the
+        // spinner shows over the desktop too, and this thread owns the fences.
+        let _iteration=crate::window::diagnostics::IterationTimer::new(&msg);
         note_selection_input(msg.hwnd,msg.message);
         unsafe { let _ = TranslateMessage(&msg); DispatchMessageW(&msg); }
     }
