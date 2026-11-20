@@ -33,6 +33,10 @@ pub struct Component {
     /// Should the service start it again after it exits? True for the background components
     /// (they are supposed to stay up), false for a window the user may close on purpose.
     pub restart_when_exits: bool,
+    /// Arguments that open *its own settings*. Empty when the component has no settings page
+    /// of its own — the window then draws no button, because a button that does nothing is
+    /// worse than no button.
+    pub settings: &'static [&'static str],
 }
 
 /// The components, in the order the settings window lists them.
@@ -52,6 +56,7 @@ pub const COMPONENTS: &[Component] = &[
         on_by_default: true,
         takes_profile: true,
         restart_when_exits: true,
+        settings: &[],
     },
     Component {
         id: "dock",
@@ -62,6 +67,8 @@ pub const COMPONENTS: &[Component] = &[
         on_by_default: true,
         takes_profile: false,
         restart_when_exits: true,
+        // The panel's settings page: the same one its own «Настройки» button opens.
+        settings: &["--settings"],
     },
     Component {
         id: "files",
@@ -74,6 +81,7 @@ pub const COMPONENTS: &[Component] = &[
         // A window, not a background program: closing it must not bring it back. The service
         // turns its switch off instead, so the window says what is true.
         restart_when_exits: false,
+        settings: &[],
     },
 ];
 
@@ -182,6 +190,20 @@ pub fn start_program(program: &Program, arguments: &[&str]) -> bool {
     let mut command = std::process::Command::new(exe);
     command.args(program.args).args(arguments);
     // A window program started from here asks for a console of its own only if it wants one.
+    command.creation_flags(CREATE_NEW_CONSOLE);
+    command.spawn().is_ok()
+}
+
+/// Start a component by hand with extra arguments — «Настройки…» on its row.
+///
+/// A component that is already running is asked, not duplicated: `--settings` is understood by
+/// the program itself, and a second copy of a single-instance program would only exit.
+pub fn start_component_with(component: &Component, arguments: &[&str]) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    let Some(exe) = exe_of(component) else { return false };
+    let mut command = std::process::Command::new(exe);
+    command.args(component.args).args(arguments);
     command.creation_flags(CREATE_NEW_CONSOLE);
     command.spawn().is_ok()
 }

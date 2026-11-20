@@ -49,6 +49,8 @@ const WM_MOUSELEAVE: u32 = 0x02A3;
 pub const WM_APP_RESCAN: u32 = WM_APP + 1;
 pub const WM_APP_APPBAR: u32 = WM_APP + 2;
 const WM_APP_CONFIG: u32 = WM_APP + 3;
+/// Another process asked for the settings page (`AuraDock.exe --settings`).
+const WM_APP_SETTINGS: u32 = WM_APP + 5;
 
 const T_SHRINK: usize = 1;
 const T_MEASURE: usize = 2;
@@ -801,6 +803,27 @@ struct WView {
 
 thread_local! {
     static DOCK: RefCell<Option<Dock>> = const { RefCell::new(None) };
+}
+
+/// Open the panel's settings page. One action behind three ways in: the «Настройки» button,
+/// `AuraDock.exe --settings` at startup, and the message a second `AuraDock.exe --settings`
+/// posts to the panel that is already running.
+fn dock_show_settings() {
+    with_dock(|d| {
+        d.open_launchpad();
+        d.lp_act(Act::OpenSettings);
+    });
+}
+
+/// `AuraDock.exe --settings` while a panel is already running: the second copy cannot live
+/// (one panel per display), so it hands the request to the first.
+pub(crate) fn show_settings_of_running_panel() {
+    unsafe {
+        let Ok(window) = FindWindowW(w!("AuraExplorerDock"), windows::core::PCWSTR::null()) else {
+            return;
+        };
+        let _ = PostMessageW(Some(window), WM_APP_SETTINGS, WPARAM(0), LPARAM(0));
+    }
 }
 
 fn with_dock(f: impl FnOnce(&mut Dock)) {
@@ -5117,6 +5140,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             unsafe { SetTimer(Some(hwnd), T_CONFIG, 150, None) }; // editors often write twice
             return LRESULT(0);
         }
+        WM_APP_SETTINGS => {
+            dock_show_settings();
+            return LRESULT(0);
+        }
         WM_TIMER => {
             let id = wp.0;
             with_dock(|d| match id {
@@ -6021,6 +6048,13 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         }
         if let Some(name) = dock.opts.demo.clone() {
             dock.run_demo(&name);
+        }
+        // `AuraDock.exe --settings`: the panel opens on its own settings, like the «Настройки»
+        // button does — the same page, the same code, only the way in differs. This runs before
+        // the dock is published to `DOCK`, so it goes through `dock` itself.
+        if dock.opts.settings {
+            dock.open_launchpad();
+            dock.lp_act(Act::OpenSettings);
         }
         if let Some(secs) = dock.opts.exit_after {
             SetTimer(Some(hwnd), T_EXIT, secs * 1000, None);

@@ -1,675 +1,728 @@
-//! The launch settings window.
+//! The settings panel of AuraUI — the one window that says what runs and where the rest is set.
 //!
-//! One row per component: what it is, whether it runs right now, and the one switch that says
-//! "keep it running". Plus the logon switch and the state of the service that does the work.
+//! It is drawn, not built out of controls: the same Direct2D canvas and the same numbers as the
+//! dock's own settings (`aura_windows::settings`), so the suite has one look. The panel itself
+//! knows only what the launcher knows — which components exist, whether they are running, and
+//! which program answers `--settings`; every component's own settings are its own business and
+//! open as its own window.
 //!
-//! The controls are real Windows controls (`BUTTON`, `STATIC`), not shapes painted by hand:
-//! a click is reported by the system as `WM_COMMAND`, so it cannot be lost to a hit-test, and
-//! the button itself shows that it was pressed. Every action reports its outcome in the status
-//! line at the bottom and in `auraservice.log`, so "nothing happens" always has a reason.
+//! Three sections, the way the dock's settings are built: «Компоненты» (a switch each),
+//! «Программы» (open, and the way to the program's settings), «Запуск» (logon, the service, the
+//! log). Every action reports what happened in the line at the bottom and in `auraservice.log`.
 
 use std::time::{Duration, Instant};
 
-use windows::core::{w, PCWSTR, Result};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateFontIndirectW, DeleteObject, HFONT, LOGFONTW};
+use aura_windows::gfx::{Align, Gfx, RectF, Surface, TextStyle};
+use aura_windows::settings::{self as page, Look, Side};
+use windows::core::{w, PCWSTR};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{BeginPaint, BitBlt, EndPaint, InvalidateRect, PAINTSTRUCT, SRCCOPY};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::HiDpi::{GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-// The checkbox and button messages and styles live with the window messages, not with the
-// control module: `BM_GETCHECK`, `BM_SETCHECK`, `BS_AUTOCHECKBOX`, `BS_PUSHBUTTON`.
+use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW, GetWindowLongPtrW, HMENU,
-    PostQuitMessage, RegisterClassW, SendMessageW, SetTimer, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow,
-    TranslateMessage, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CREATESTRUCTW, GWLP_USERDATA, MSG, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOZORDER, SW_SHOW, WM_CLOSE, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SIZE, WM_SETFONT, WM_TIMER, WNDCLASSW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_CLIPCHILDREN, WS_EX_APPWINDOW, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
+    GetWindowLongPtrW, KillTimer, LoadCursorW, PostQuitMessage, RegisterClassW, SetTimer,
+    SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, TranslateMessage, CS_DBLCLKS,
+    CS_HREDRAW, CS_VREDRAW, SWP_NOACTIVATE, SWP_NOZORDER,
+    CW_USEDEFAULT, GWLP_USERDATA, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE, WM_CLOSE,
+    WM_DESTROY, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER,
+    WNDCLASSW, WS_OVERLAPPEDWINDOW,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
 
-use crate::launch::{self, Component, Settings};
+use crate::launch::{self, Settings};
 
-const CLASS: PCWSTR = w!("AuraServiceSettings");
-const TITLE: &str = "AuraUI — запуск и компоненты";
-const TIMER: usize = 1;
-/// How long a component may take to appear before the window says it did not.
-const SPAWN_WAIT: Duration = Duration::from_secs(8);
-
-const FACE: &str = "Segoe UI";
-
-/// One component's row of controls.
-struct Row {
-    index: usize,
-    name: HWND,
-    hint: HWND,
-    status: HWND,
-    button: HWND,
-}
-
-/// A program the service opens for the user, with the way to its own settings beside it.
-struct ProgramRow {
-    index: usize,
-    name: HWND,
-    hint: HWND,
-    open: HWND,
-    settings: HWND,
-}
-
-struct State {
-    settings: Settings,
-    rows: Vec<Row>,
-    programs: Vec<ProgramRow>,
-    /// "Запускать при входе в Windows".
-    logon: HWND,
-    /// The line about the service itself.
-    service: HWND,
-    /// "Включить службу" / "Остановить службу".
-    service_button: HWND,
-    /// The result of the last action, and why it failed when it did.
-    notice: HWND,
-    /// "Открыть журнал".
-    log_button: HWND,
-    footer: HWND,
-    title: HWND,
-    subtitle: HWND,
-    fonts: [HFONT; 2],
-    /// A component that was just switched on, and the moment the window stops waiting for it.
-    waiting: Vec<(&'static str, Instant)>,
-    /// A service start that was requested and has not been seen yet.
-    service_wait: Option<Instant>,
-    scale: f32,
-}
-
-impl State {
-    fn font(&self, index: usize) -> HFONT {
-        self.fonts[index]
-    }
-}
-
-fn make_font(scale: f32, size: f32, weight: i32) -> HFONT {
-    let mut log = LOGFONTW { lfHeight: -(size * scale).round() as i32, lfWeight: weight, ..Default::default() };
-    let family: Vec<u16> = FACE.encode_utf16().collect();
-    let length = family.len().min(log.lfFaceName.len());
-    log.lfFaceName[..length].copy_from_slice(&family[..length]);
-    unsafe { CreateFontIndirectW(&log) }
-}
-
+/// Text as the wide strings Windows takes, ending in a zero.
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
-fn set_text(control: HWND, text: &str) {
-    if control.0.is_null() {
-        return;
-    }
-    unsafe {
-        let _ = SetWindowTextW(control, PCWSTR(wide(text).as_ptr()));
+const CLASS: PCWSTR = w!("AuraServiceSettings");
+const TITLE: &str = "AuraUI — настройки и запуск";
+const FACE: &str = "Segoe UI";
+/// The clock that keeps the picture true: a component may be started or closed by anyone.
+const TIMER: usize = 1;
+/// How long a component may take to appear before the window says it did not.
+const SPAWN_WAIT: Duration = Duration::from_secs(8);
+/// The page is opened at this size, in logical pixels, and grows with the display's scale.
+const PAGE: (f32, f32) = (720.0, 520.0);
+/// `WM_DPICHANGED`: the window moved to a display with another scale.
+const WM_DPICHANGED: u32 = 0x02E0;
+
+/// The three sections, in the order the dock's settings put theirs.
+const TABS: [&str; 3] = ["Компоненты", "Программы", "Запуск"];
+const TAB_COMPONENTS: usize = 0;
+const TAB_PROGRAMS: usize = 1;
+const TAB_START: usize = 2;
+
+/// What the pointer is over, and therefore what a click does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Act {
+    Tab(usize),
+    Done,
+    Toggle(usize),
+    ComponentSettings(usize),
+    OpenProgram(usize),
+    ProgramSettings(usize),
+    Logon,
+    Service,
+    Log,
+}
+
+/// The colour of a sentence at the bottom.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Info,
+    Ok,
+    Bad,
+}
+
+struct App {
+    hwnd: HWND,
+    /// Whether the system is in its dark theme — the palette follows it, and a DPI change
+    /// rebuilds the palette, so it is remembered rather than asked for again.
+    dark: bool,
+    gfx: Option<Gfx>,
+    surface: Option<Surface>,
+    look: Look,
+    settings: Settings,
+    tab: usize,
+    hover: Option<Act>,
+    /// The last thing that happened, and how it went.
+    notice: String,
+    tone: Tone,
+    /// Components just switched on, and when the window stops waiting for them.
+    waiting: Vec<(&'static str, Instant)>,
+    service_wait: Option<Instant>,
+    width: f32,
+    height: f32,
+}
+
+/// Where everything is this frame, and what each control does. One pure function, used by the
+/// painter and by the mouse — a control drawn at a place is exactly the control clicked at it.
+struct Layout {
+    done: RectF,
+    tray: RectF,
+    tabs: Vec<RectF>,
+    card: RectF,
+    rows: Vec<RowLayout>,
+    footer: RectF,
+}
+
+struct RowLayout {
+    rect: RectF,
+    /// The text column, already narrowed by whatever stands on the right.
+    text: RectF,
+    /// A switch at the right edge.
+    toggle: Option<(RectF, Act)>,
+    /// Buttons at the right edge, each with what it does.
+    buttons: Vec<(RectF, Act)>,
+}
+
+/// Does this component have a settings page it can open itself?
+fn has_settings(index: usize) -> bool {
+    launch::COMPONENTS.get(index).map(|component| !component.settings.is_empty()).unwrap_or(false)
+}
+
+fn row_count(tab: usize) -> usize {
+    match tab {
+        TAB_COMPONENTS => launch::COMPONENTS.len(),
+        TAB_PROGRAMS => launch::PROGRAMS.len(),
+        _ => 3,
     }
 }
 
-fn enable(control: HWND, on: bool) {
-    if !control.0.is_null() {
-        let _ = unsafe { EnableWindow(control, on) };
+fn layout(look: &Look, width: f32, height: f32, tab: usize) -> Layout {
+    let page = RectF::new(0.0, 0.0, width, height);
+    let done = page::done_rect(look, page, "Готово");
+    let tray = page::tray_rect(look, look.px(page::PAD), look.px(70.0), TABS.len());
+    let tabs = page::tab_rects(look, look.px(page::PAD), look.px(70.0), TABS.len());
+    let top = tray.bottom() + look.px(22.0);
+    let count = row_count(tab);
+    let card = look.section_card(page, top, count);
+    let mut rows = Vec::with_capacity(count);
+    for index in 0..count {
+        let rect = page::row_rect(look, card, index);
+        // «Запуск» mixes a switch (logon) with buttons (service, log): each row says its own.
+        let (toggle, buttons, side) = match (tab, index) {
+            // A component with a settings page of its own gets the way to it beside its switch;
+            // one without gets nothing, rather than a button that opens nothing.
+            (TAB_COMPONENTS, _) if has_settings(index) => (
+                Some((page::toggle_rect(look, rect), Act::Toggle(index))),
+                vec![(page::toggle_side_button(look, rect), Act::ComponentSettings(index))],
+                Side::ToggleAndButton,
+            ),
+            (TAB_COMPONENTS, _) => (
+                Some((page::toggle_rect(look, rect), Act::Toggle(index))),
+                Vec::new(),
+                Side::Toggle,
+            ),
+            (TAB_PROGRAMS, _) => (
+                None,
+                vec![
+                    (page::button_rect(look, rect, 1, 2), Act::OpenProgram(index)),
+                    (page::button_rect(look, rect, 0, 2), Act::ProgramSettings(index)),
+                ],
+                Side::TwoButtons,
+            ),
+            (TAB_START, 0) => (Some((page::toggle_rect(look, rect), Act::Logon)), Vec::new(), Side::Toggle),
+            (TAB_START, 1) => (None, vec![(page::button_rect(look, rect, 0, 1), Act::Service)], Side::Button),
+            _ => (None, vec![(page::button_rect(look, rect, 0, 1), Act::Log)], Side::Button),
+        };
+        rows.push(RowLayout { rect, text: page::row_text(look, rect, side), toggle, buttons });
     }
+    let footer = RectF::new(
+        look.px(page::PAD),
+        height - look.px(34.0),
+        (width - look.px(page::PAD) * 2.0).max(10.0),
+        look.px(20.0),
+    );
+    Layout { done, tray, tabs, card, rows, footer }
 }
 
-fn set_checked(control: HWND, checked: bool) {
-    if !control.0.is_null() {
+impl App {
+    fn invalidate(&self) {
         unsafe {
-            SendMessageW(control, BM_SETCHECK, Some(WPARAM(usize::from(checked))), None);
+            let _ = InvalidateRect(Some(self.hwnd), None, false);
         }
     }
-}
 
-fn create_control(parent: HWND, class: PCWSTR, text: &str, id: usize, style: WINDOW_STYLE) -> HWND {
-    let text = wide(text);
-    unsafe {
-        CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            class,
-            PCWSTR(text.as_ptr()),
-            WS_CHILD | WS_VISIBLE | style,
-            0,
-            0,
-            10,
-            10,
-            Some(parent),
-            Some(HMENU(id as *mut std::ffi::c_void)),
-            None,
-            None,
-        )
-        .unwrap_or_default()
-    }
-}
-
-/// Open the settings window; returns when it is closed.
-pub fn run() -> Result<()> {
-    unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        let module = GetModuleHandleW(None)?;
-        let background = windows::Win32::Graphics::Gdi::HBRUSH((windows::Win32::Graphics::Gdi::COLOR_BTNFACE.0 + 1) as usize as *mut _);
-        let class = WNDCLASSW {
-            lpfnWndProc: Some(procedure),
-            hInstance: HINSTANCE(module.0),
-            lpszClassName: CLASS,
-            hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, windows::Win32::UI::WindowsAndMessaging::IDC_ARROW)?,
-            hbrBackground: background,
-            ..Default::default()
-        };
-        RegisterClassW(&class);
-        let state = Box::new(State {
-            settings: launch::load(),
-            rows: Vec::new(),
-            programs: Vec::new(),
-            logon: HWND::default(),
-            service: HWND::default(),
-            service_button: HWND::default(),
-            notice: HWND::default(),
-            log_button: HWND::default(),
-            footer: HWND::default(),
-            title: HWND::default(),
-            subtitle: HWND::default(),
-            fonts: [HFONT::default(); 2],
-            waiting: Vec::new(),
-            service_wait: None,
-            scale: 1.0,
-        });
-        let pointer = Box::into_raw(state);
-        let caption = wide(TITLE);
-        let hwnd = match CreateWindowExW(
-            WS_EX_APPWINDOW,
-            CLASS,
-            PCWSTR(caption.as_ptr()),
-            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            160,
-            140,
-            700,
-            620,
-            None,
-            None,
-            Some(HINSTANCE(module.0)),
-            Some(pointer.cast()),
-        ) {
-            Ok(hwnd) => hwnd,
-            Err(error) => {
-                drop(Box::from_raw(pointer));
-                return Err(error);
+    /// Which action a point belongs to.
+    fn hit(&self, x: f32, y: f32) -> Option<Act> {
+        let l = layout(&self.look, self.width, self.height, self.tab);
+        for (index, rect) in l.tabs.iter().enumerate() {
+            if rect.contains(x, y) {
+                return Some(Act::Tab(index));
             }
-        };
-        fit(hwnd);
-        let _ = ShowWindow(hwnd, SW_SHOW);
-        let _ = SetTimer(Some(hwnd), TIMER, 1000, None);
-        let mut message = MSG::default();
-        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
         }
-        Ok(())
-    }
-}
-
-/// Size the window to its content once, so no row is cut off and no empty space is left.
-fn fit(hwnd: HWND) {
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let rows = launch::COMPONENTS.len() as f32;
-    let programs = launch::PROGRAMS.len() as f32;
-    let client = 16.0 + 30.0 + 30.0 + rows * 68.0 + programs * 58.0 + 6.0 + 34.0 + 40.0 + 20.0 + 24.0;
-    let _ = unsafe {
-        SetWindowPos(
-            hwnd,
-            None,
-            0,
-            0,
-            (700.0 * scale) as i32,
-            (client * scale) as i32 + (56.0 * scale) as i32,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
-        )
-    };
-}
-
-unsafe extern "system" fn procedure(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    let state = || unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State };
-    match msg {
-        WM_CREATE => {
-            let create = lp.0 as *const CREATESTRUCTW;
-            if !create.is_null() {
-                unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, (*create).lpCreateParams as isize) };
-                let state = unsafe { &mut *((*create).lpCreateParams as *mut State) };
-                build(hwnd, state);
-            }
-            LRESULT(0)
+        if l.done.contains(x, y) {
+            return Some(Act::Done);
         }
-        WM_SIZE => {
-            let pointer = state();
-            if !pointer.is_null() {
-                layout(hwnd, unsafe { &mut *pointer });
-            }
-            LRESULT(0)
-        }
-        WM_TIMER => {
-            let pointer = state();
-            if !pointer.is_null() {
-                let state = unsafe { &mut *pointer };
-                tick(state);
-            }
-            LRESULT(0)
-        }
-        WM_COMMAND => {
-            let pointer = state();
-            if pointer.is_null() {
-                return unsafe { DefWindowProcW(hwnd, msg, wp, lp) };
-            }
-            let state = unsafe { &mut *pointer };
-            let control = HWND(lp.0 as *mut std::ffi::c_void);
-            // The switch is identified by the number the control was created with.
-            let id = (wp.0 & 0xFFFF) as usize;
-            let event = (wp.0 >> 16) as u32;
-            // BN_CLICKED is 0; a checkbox also reports BN_CLICKED when toggled by the user.
-            if event == 0 {
-                command(state, id, control);
-            }
-            LRESULT(0)
-        }
-        WM_CLOSE => {
-            let _ = unsafe { DestroyWindow(hwnd) };
-            LRESULT(0)
-        }
-        WM_DESTROY => {
-            let pointer = state();
-            if !pointer.is_null() {
-                unsafe {
-                    SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-                    let state = Box::from_raw(pointer);
-                    for font in state.fonts {
-                        if !font.0.is_null() {
-                            let _ = DeleteObject(font.into());
-                        }
-                    }
+        for row in &l.rows {
+            if let Some((field, act)) = row.toggle {
+                // A switch is small: give it a comfortable margin to be clicked in.
+                if field.inset(-self.look.px(8.0), -self.look.px(8.0)).contains(x, y) {
+                    return Some(act);
                 }
             }
-            unsafe { PostQuitMessage(0) };
-            LRESULT(0)
+            for (field, act) in &row.buttons {
+                if field.contains(x, y) {
+                    return Some(*act);
+                }
+            }
         }
-        _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
-    }
-}
-
-/// Control ids: 100 is the logon switch, 101 the service button, 200+ the component rows.
-const ID_LOGON: usize = 100;
-const ID_SERVICE: usize = 101;
-const ID_LOG: usize = 102;
-const ID_ROW: usize = 200;
-/// Programs the hub can open: two controls each — the program, and its settings.
-const ID_PROGRAM: usize = 400;
-
-/// Create the controls once, then let `layout` place them.
-fn build(hwnd: HWND, state: &mut State) {
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    state.scale = scale;
-    state.fonts = [make_font(scale, 16.5, 600), make_font(scale, 9.0, 400)];
-    let body = state.font(1);
-    let title = state.font(0);
-
-    state.title = create_control(hwnd, w!("STATIC"), TITLE, 1, WINDOW_STYLE::default());
-    state.subtitle = create_control(
-        hwnd,
-        w!("STATIC"),
-        "Держит включённые компоненты запущенными и открывает настройки любого из них — каждый компонент настраивается сам.",
-        2,
-        WINDOW_STYLE::default(),
-    );
-    for (index, component) in launch::COMPONENTS.iter().enumerate() {
-        let id = ID_ROW + index;
-        state.rows.push(Row {
-            index,
-            name: create_control(hwnd, w!("STATIC"), component.name, id * 4, WINDOW_STYLE::default()),
-            hint: create_control(hwnd, w!("STATIC"), component.hint, id * 4 + 1, WINDOW_STYLE::default()),
-            status: create_control(hwnd, w!("STATIC"), "", id * 4 + 2, WINDOW_STYLE::default()),
-            button: create_control(
-                hwnd,
-                w!("BUTTON"),
-                "Запустить",
-                id,
-                WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
-            ),
-        });
-    }
-    for (index, program) in launch::PROGRAMS.iter().enumerate() {
-        let id = ID_PROGRAM + index * 2;
-        state.programs.push(ProgramRow {
-            index,
-            name: create_control(hwnd, w!("STATIC"), program.name, id * 4, WINDOW_STYLE::default()),
-            hint: create_control(hwnd, w!("STATIC"), program.hint, id * 4 + 1, WINDOW_STYLE::default()),
-            open: create_control(hwnd, w!("BUTTON"), "Открыть", id, WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP),
-            settings: create_control(
-                hwnd,
-                w!("BUTTON"),
-                "Настройки…",
-                id + 1,
-                WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
-            ),
-        });
-    }
-    state.logon = create_control(
-        hwnd,
-        w!("BUTTON"),
-        "Запускать при входе в Windows",
-        ID_LOGON,
-        WINDOW_STYLE(BS_AUTOCHECKBOX as u32) | WS_TABSTOP,
-    );
-    state.service = create_control(hwnd, w!("STATIC"), "", 3, WINDOW_STYLE::default());
-    state.service_button = create_control(
-        hwnd,
-        w!("BUTTON"),
-        "Включить службу",
-        ID_SERVICE,
-        WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
-    );
-    state.notice = create_control(hwnd, w!("STATIC"), "Готово.", 4, WINDOW_STYLE::default());
-    state.log_button = create_control(
-        hwnd,
-        w!("BUTTON"),
-        "Открыть журнал",
-        ID_LOG,
-        WINDOW_STYLE(BS_PUSHBUTTON as u32) | WS_TABSTOP,
-    );
-    state.footer = create_control(hwnd, w!("STATIC"), &launch::settings_path().display().to_string(), 5, WINDOW_STYLE::default());
-
-    for control in [
-        state.title,
-        state.subtitle,
-        state.logon,
-        state.service,
-        state.service_button,
-        state.notice,
-        state.footer,
-        state.log_button,
-    ] {
-        let font = if control == state.title { title } else { body };
-        unsafe { SendMessageW(control, WM_SETFONT, Some(WPARAM(font.0 as usize)), Some(LPARAM(1))) };
-    }
-    for row in &state.rows {
-        for control in [row.name, row.hint, row.status] {
-            unsafe { SendMessageW(control, WM_SETFONT, Some(WPARAM(body.0 as usize)), Some(LPARAM(1))) };
-        }
-        unsafe { SendMessageW(row.button, WM_SETFONT, Some(WPARAM(body.0 as usize)), Some(LPARAM(1))) };
-    }
-    layout(hwnd, state);
-    refresh(state);
-}
-
-/// Place everything for the client size the window has now.
-fn layout(hwnd: HWND, state: &mut State) {
-    let mut client = windows::Win32::Foundation::RECT::default();
-    if unsafe { GetClientRect(hwnd, &mut client) }.is_err() {
-        return;
-    }
-    let k = state.scale.max(1.0);
-    let px = |value: f32| (value * k).round() as i32;
-    let width = client.right;
-    let margin = px(20.0);
-    let button_width = px(120.0);
-    let button_height = px(30.0);
-    let text_width = (width - margin * 2 - button_width - px(16.0)).max(px(120.0));
-
-    let mut y = px(16.0);
-    move_to(state.title, margin, y, width - margin * 2, px(26.0));
-    y += px(30.0);
-    move_to(state.subtitle, margin, y, width - margin * 2, px(20.0));
-    y += px(30.0);
-
-    for row in &state.rows {
-        move_to(row.name, margin, y + px(4.0), text_width, px(20.0));
-        move_to(row.hint, margin, y + px(24.0), text_width, px(18.0));
-        move_to(row.status, margin, y + px(42.0), text_width, px(18.0));
-        move_to(row.button, width - margin - button_width, y + px(14.0), button_width, button_height);
-        y += px(68.0);
+        None
     }
 
-    for program in &state.programs {
-        move_to(program.name, margin, y + px(4.0), text_width, px(20.0));
-        move_to(program.hint, margin, y + px(24.0), text_width, px(18.0));
-        let half = (button_width - px(8.0)) / 2;
-        move_to(program.open, width - margin - button_width, y + px(8.0), half, button_height);
-        move_to(program.settings, width - margin - half, y + px(8.0), half, button_height);
-        y += px(58.0);
-    }
-
-    y += px(6.0);
-    move_to(state.logon, margin, y, width - margin * 2, px(24.0));
-    y += px(34.0);
-    move_to(state.service, margin, y + px(6.0), text_width, px(20.0));
-    move_to(state.service_button, width - margin - button_width, y, button_width, button_height);
-    y += px(40.0);
-    move_to(state.notice, margin, y, text_width, px(20.0));
-    move_to(state.log_button, width - margin - button_width, y - px(6.0), button_width, button_height);
-    move_to(state.footer, margin, client.bottom - px(24.0), width - margin * 2, px(18.0));
-}
-
-fn move_to(control: HWND, x: i32, y: i32, width: i32, height: i32) {
-    if control.0.is_null() {
-        return;
-    }
-    let _ = unsafe {
-        SetWindowPos(
-            control,
-            None,
-            x,
-            y,
-            width,
-            height,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        )
-    };
-}
-
-/// Read the world and write it into the controls. Called after every action and once a second.
-fn refresh(state: &mut State) {
-    for row in &state.rows {
-        let component = &launch::COMPONENTS[row.index];
-        let installed = launch::exe_of(component).is_some();
-        let alive = installed && launch::running(component.exe);
-        let wanted = state.settings.wants(component);
-        set_text(row.button, if wanted { "Остановить" } else { "Запустить" });
-        enable(row.button, installed);
-        let status = if !installed {
-            format!("не установлен: {} нет в папке программы", component.exe)
-        } else if alive {
-            "запущен".to_string()
-        } else if wanted {
-            "включён, жду запуска…".to_string()
-        } else {
-            "остановлен".to_string()
-        };
-        set_text(row.status, &status);
-    }
-    // A program that is not in the folder cannot be opened: say so by refusing the buttons.
-    for program in &state.programs {
-        let installed = launch::program_exe(&launch::PROGRAMS[program.index]).is_some();
-        enable(program.open, installed);
-        enable(program.settings, installed && !launch::PROGRAMS[program.index].settings.is_empty());
-    }
-    set_checked(state.logon, state.settings.autostart);
-    let active = crate::supervise::active();
-    set_text(
-        state.service,
-        if active {
-            "Служба запущена: включённые компоненты под её присмотром."
-        } else {
-            "Служба не запущена: сейчас никто не следит за компонентами."
-        },
-    );
-    set_text(state.service_button, if active { "Остановить службу" } else { "Включить службу" });
-}
-
-/// Once a second: refresh the picture and follow up on what was asked for.
-fn tick(state: &mut State) {
-    let fresh = launch::load();
-    if fresh.run != state.settings.run || fresh.autostart != state.settings.autostart {
-        state.settings = fresh;
-    }
-    let mut answered: Vec<(&'static str, bool)> = Vec::new();
-    state.waiting.retain(|(id, deadline)| {
-        let Some(component) = launch::COMPONENTS.iter().find(|component| component.id == *id) else { return false };
-        let alive = launch::running(component.exe);
-        if alive {
-            answered.push((component.name, true));
-            return false;
-        }
-        if Instant::now() >= *deadline {
-            answered.push((component.name, false));
-            return false;
-        }
-        true
-    });
-    for (name, ok) in answered {
-        if ok {
-            set_text(state.notice, &format!("{name}: запущен."));
-        } else {
-            set_text(
-                state.notice,
-                &format!("{name}: не запустился. Причина — в журнале {}", launch::log_path().display()),
-            );
-        }
-    }
-    if let Some(since) = state.service_wait {
-        let active = crate::supervise::active();
-        if active {
-            state.service_wait = None;
-            set_text(state.notice, "Служба запущена.");
-        } else if since.elapsed() > SPAWN_WAIT {
-            state.service_wait = None;
-            set_text(
-                state.notice,
-                &format!("Служба не запустилась. Причина — в журнале {}", launch::log_path().display()),
-            );
-        }
-    }
-    refresh(state);
-}
-
-fn command(state: &mut State, id: usize, control: HWND) {
-    if id == ID_LOGON {
-        // A checkbox flips itself before telling us, so read the state it now has.
-        let checked = (unsafe { SendMessageW(state.logon, BM_GETCHECK, None, None) }.0 & 0xFFFF) == 1;
-        state.settings.autostart = checked;
-        let saved = launch::save(&state.settings).is_ok();
-        let written = launch::logon::set(checked);
-        launch::log(&format!("settings: autostart {}", if checked { "on" } else { "off" }));
-        set_text(
-            state.notice,
-            if !saved {
-                "Не удалось сохранить настройки: проверьте папку настроек."
-            } else if !written {
-                "Настройки сохранены, но запись автозапуска не удалась (ключ Run в реестре)."
-            } else if checked {
-                "Автозапуск включён: при входе в Windows запускается служба."
-            } else {
-                "Автозапуск выключен."
+    fn click(&mut self, x: f32, y: f32) {
+        match self.hit(x, y) {
+            Some(Act::Tab(index)) => {
+                self.tab = index;
+                self.invalidate();
+            }
+            Some(Act::Done) => unsafe {
+                let _ = DestroyWindow(self.hwnd);
             },
-        );
-        refresh(state);
-        return;
+            Some(Act::Toggle(index)) => self.toggle_component(index),
+            Some(Act::ComponentSettings(index)) => self.open_component_settings(index),
+            Some(Act::OpenProgram(index)) => self.open_program(index, false),
+            Some(Act::ProgramSettings(index)) => self.open_program(index, true),
+            Some(Act::Logon) => self.toggle_logon(),
+            Some(Act::Service) => self.toggle_service(),
+            Some(Act::Log) => self.open_log(),
+            None => {}
+        }
     }
-    if id == ID_SERVICE {
+
+    // ---- actions ---------------------------------------------------------------
+
+    fn say(&mut self, text: impl Into<String>, tone: Tone) {
+        self.notice = text.into();
+        self.tone = tone;
+        self.invalidate();
+    }
+
+    /// One switch per component: «пусть работает». Turning it off also closes the program,
+    /// because a switch that says off while the program runs is a lie.
+    fn toggle_component(&mut self, index: usize) {
+        let Some(component) = launch::COMPONENTS.get(index) else { return };
+        let was = self.settings.wants(component);
+        self.settings.set(component.id, !was);
+        if launch::save(&self.settings).is_err() {
+            self.say("Не удалось сохранить настройки: проверьте папку настроек.", Tone::Bad);
+            return;
+        }
+        launch::log(&format!("settings: {} {}", component.exe, if was { "off" } else { "on" }));
+        if was {
+            let closed = launch::close(component.exe);
+            let line = if closed {
+                format!("{}: выключен и закрыт.", component.name)
+            } else {
+                format!("{}: выключен (закрывать было нечего).", component.name)
+            };
+            self.say(line, Tone::Info);
+            return;
+        }
+        // Nothing is watching yet: the switch would be a lie without the service.
+        if !crate::supervise::active() {
+            launch::start_service();
+            self.service_wait = Some(Instant::now());
+        }
+        self.waiting.push((component.id, Instant::now() + SPAWN_WAIT));
+        self.say(format!("{}: включаю…", component.name), Tone::Info);
+    }
+
+    /// «Настройки…» on a component's row: the component opens its own page, in its own window.
+    fn open_component_settings(&mut self, index: usize) {
+        let Some(component) = launch::COMPONENTS.get(index) else { return };
+        if component.settings.is_empty() {
+            self.say(format!("{}: собственных настроек пока нет.", component.name), Tone::Info);
+            return;
+        }
+        if launch::start_component_with(component, component.settings) {
+            self.say(
+                format!("{}: открываю настройки (в своём окне — там есть и «Готово»).", component.name),
+                Tone::Info,
+            );
+        } else {
+            self.say(
+                format!("{}: не найден рядом со службой — переустановите AuraUI.", component.name),
+                Tone::Bad,
+            );
+        }
+    }
+
+    fn toggle_logon(&mut self) {
+        let wanted = !self.settings.autostart;
+        self.settings.autostart = wanted;
+        let saved = launch::save(&self.settings).is_ok();
+        let written = launch::logon::set(wanted);
+        launch::log(&format!("settings: autostart {}", if wanted { "on" } else { "off" }));
+        let (text, tone) = if !saved {
+            ("Не удалось сохранить настройки: проверьте папку настроек.", Tone::Bad)
+        } else if !written {
+            ("Настройки сохранены, но запись автозапуска не удалась (ключ Run в реестре).", Tone::Bad)
+        } else if wanted {
+            ("Автозапуск включён: при входе в Windows запускается служба.", Tone::Ok)
+        } else {
+            ("Автозапуск выключен.", Tone::Info)
+        };
+        self.say(text, tone);
+    }
+
+    fn toggle_service(&mut self) {
         if crate::supervise::active() {
             launch::close("auraservice.exe");
             launch::log("settings: service stopped by hand");
-            set_text(state.notice, "Служба остановлена. Компоненты останутся как есть.");
+            self.say("Служба остановлена. Компоненты останутся как есть.", Tone::Info);
         } else if launch::start_service() {
-            state.service_wait = Some(Instant::now());
+            self.service_wait = Some(Instant::now());
             launch::log("settings: service start requested");
-            set_text(state.notice, "Запускаю службу…");
+            self.say("Запускаю службу…", Tone::Info);
         } else {
             launch::log("settings: the service could not be started");
-            set_text(state.notice, "Не удалось запустить auraservice.exe --run: смотрите журнал.");
+            self.say("Не удалось запустить auraservice.exe --run: смотрите журнал.", Tone::Bad);
         }
-        refresh(state);
-        return;
     }
-    if id == ID_LOG {
-        let path: Vec<u16> = launch::log_path().display().to_string().encode_utf16().chain(Some(0)).collect();
-        // The log may not exist yet; the folder is still worth opening in that case.
-        let target: Vec<u16> = if launch::log_path().is_file() {
-            path
+
+    fn open_program(&mut self, index: usize, wants_settings: bool) {
+        let Some(program) = launch::PROGRAMS.get(index) else { return };
+        let arguments: &[&str] = if wants_settings { program.settings } else { &[] };
+        if wants_settings && arguments.is_empty() {
+            self.say(format!("{}: собственных настроек пока нет.", program.name), Tone::Info);
+            return;
+        }
+        if launch::start_program(program, arguments) {
+            let text = if wants_settings {
+                format!("{}: открываю настройки.", program.name)
+            } else {
+                format!("{}: открываю.", program.name)
+            };
+            self.say(text, Tone::Info);
         } else {
-            launch::dir().display().to_string().encode_utf16().chain(Some(0)).collect()
+            self.say(
+                format!("{}: не найден рядом со службой — переустановите AuraUI.", program.name),
+                Tone::Bad,
+            );
+        }
+    }
+
+    fn open_log(&mut self) {
+        let target = if launch::log_path().is_file() {
+            launch::log_path()
+        } else {
+            launch::dir()
         };
+        let wide = wide(&target.display().to_string());
         let opened = unsafe {
             windows::Win32::UI::Shell::ShellExecuteW(
-                Some(state.notice),
+                Some(self.hwnd),
                 w!("open"),
-                PCWSTR(target.as_ptr()),
+                PCWSTR(wide.as_ptr()),
                 None,
                 None,
                 windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
             )
         };
         if opened.0 as isize <= 32 {
-            set_text(state.notice, &format!("Путь журнала: {}", launch::log_path().display()));
+            self.say(format!("Путь журнала: {}", launch::log_path().display()), Tone::Info);
         }
-        return;
     }
-    if id >= ID_PROGRAM {
-        let index = (id - ID_PROGRAM) / 2;
-        let wants_settings = (id - ID_PROGRAM) % 2 == 1;
-        let Some(program) = launch::PROGRAMS.get(index) else { return };
-        let arguments: &[&str] = if wants_settings { program.settings } else { &[] };
-        if arguments.is_empty() && wants_settings {
-            set_text(state.notice, &format!("{}: собственных настроек пока нет.", program.name));
+
+    // ---- the clock -------------------------------------------------------------
+
+    /// Once a second: read the world again and follow up on what was asked for.
+    fn tick(&mut self) {
+        let fresh = launch::load();
+        if fresh.run != self.settings.run || fresh.autostart != self.settings.autostart {
+            self.settings = fresh;
+        }
+        let mut answered: Vec<(&'static str, bool)> = Vec::new();
+        self.waiting.retain(|(id, deadline)| {
+            let Some(component) = launch::COMPONENTS.iter().find(|component| component.id == *id) else {
+                return false;
+            };
+            if launch::running(component.exe) {
+                answered.push((component.name, true));
+                return false;
+            }
+            if Instant::now() >= *deadline {
+                answered.push((component.name, false));
+                return false;
+            }
+            true
+        });
+        for (name, ok) in answered {
+            if ok {
+                self.say(format!("{name}: запущен."), Tone::Ok);
+            } else {
+                self.say(
+                    format!("{name}: не запустился. Причина — в журнале {}", launch::log_path().display()),
+                    Tone::Bad,
+                );
+            }
+        }
+        if let Some(since) = self.service_wait {
+            if crate::supervise::active() {
+                self.service_wait = None;
+                self.say("Служба запущена.", Tone::Ok);
+            } else if since.elapsed() > SPAWN_WAIT {
+                self.service_wait = None;
+                self.say(
+                    format!("Служба не запустилась. Причина — в журнале {}", launch::log_path().display()),
+                    Tone::Bad,
+                );
+            }
+        }
+        self.invalidate();
+    }
+
+    // ---- painting --------------------------------------------------------------
+
+    fn draw(&self, cv: &aura_windows::gfx::Canvas) {
+        let look = &self.look;
+        let page = RectF::new(0.0, 0.0, self.width, self.height);
+        page::background(cv, look, page);
+        page::header(cv, look, page, "Настройки AuraUI", "Готово", self.hover == Some(Act::Done));
+        let l = layout(look, self.width, self.height, self.tab);
+        page::tabs(cv, look, l.tray, &l.tabs, &TABS, self.tab);
+        page::card(cv, look, l.card);
+
+        match self.tab {
+            TAB_COMPONENTS => self.draw_components(cv, look, &l),
+            TAB_PROGRAMS => self.draw_programs(cv, look, &l),
+            _ => self.draw_start(cv, look, &l),
+        }
+
+        let tone = match self.tone {
+            Tone::Ok => look.ok,
+            Tone::Bad => look.bad,
+            Tone::Info => look.text2,
+        };
+        let notice = if self.notice.is_empty() { self.resting_line() } else { self.notice.clone() };
+        page::footer(cv, look, page, &notice, tone);
+        // The settings file is named in the corner: «nothing is saved» should have a place to look.
+        let path = launch::settings_path().display().to_string();
+        let style = TextStyle::ui(look.font(10.5)).align(Align::End);
+        cv.text(&path, RectF::new(l.footer.x, l.footer.y - look.px(16.0), l.footer.w, look.px(16.0)), &style, look.text3);
+    }
+
+    fn resting_line(&self) -> String {
+        let active = crate::supervise::active();
+        if active {
+            String::from("Служба запущена: включённые компоненты под её присмотром.")
+        } else {
+            String::from("Служба не запущена: сейчас никто не следит за компонентами.")
+        }
+    }
+
+    fn draw_components(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {
+        for (index, component) in launch::COMPONENTS.iter().enumerate() {
+            let Some(row) = l.rows.get(index) else { break };
+            if let Some(line) = page::row_separator(look, l.card, index) {
+                page::separator(cv, line, look.hair);
+            }
+            let installed = launch::exe_of(component).is_some();
+            let alive = installed && launch::running(component.exe);
+            let wanted = self.settings.wants(component);
+            let (status, tone) = if !installed {
+                (format!("не установлен: {} нет в папке программы", component.exe), look.bad)
+            } else if alive {
+                (String::from("запущен"), look.ok)
+            } else if wanted {
+                (String::from("включён, жду запуска…"), look.warn)
+            } else {
+                (String::from("остановлен"), look.text3)
+            };
+            page::row_text_painted(cv, look, row.text, component.name, &format!("{} · {status}", component.hint), tone);
+            if let Some((field, act)) = row.toggle {
+                page::toggle(cv, look, field, wanted, self.hover == Some(act), installed);
+            }
+            for (field, act) in &row.buttons {
+                page::button(cv, look, *field, "Настройки…", self.hover == Some(*act), installed);
+            }
+        }
+    }
+
+    fn draw_programs(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {
+        for (index, program) in launch::PROGRAMS.iter().enumerate() {
+            let Some(row) = l.rows.get(index) else { break };
+            if let Some(line) = page::row_separator(look, l.card, index) {
+                page::separator(cv, line, look.hair);
+            }
+            let installed = launch::program_exe(program).is_some();
+            let has_settings = !program.settings.is_empty();
+            page::row_text_painted(cv, look, row.text, program.name, program.hint, look.text2);
+            for (field, act) in &row.buttons {
+                let (label, enabled) = match act {
+                    Act::OpenProgram(_) => ("Открыть", installed),
+                    _ => ("Настройки…", installed && has_settings),
+                };
+                page::button(cv, look, *field, label, self.hover == Some(*act), enabled);
+            }
+        }
+    }
+
+    fn draw_start(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {
+        let active = crate::supervise::active();
+        for index in 0..3 {
+            let Some(row) = l.rows.get(index) else { break };
+            if let Some(line) = page::row_separator(look, l.card, index) {
+                page::separator(cv, line, look.hair);
+            }
+            match index {
+                0 => {
+                    page::row_text_painted(
+                        cv,
+                        look,
+                        row.text,
+                        "Запускать при входе в Windows",
+                        "одна запись автозапуска — служба, она и поднимает компоненты",
+                        look.text2,
+                    );
+                    if let Some((field, act)) = row.toggle {
+                        page::toggle(cv, look, field, self.settings.autostart, self.hover == Some(act), true);
+                    }
+                }
+                1 => {
+                    let hint = if active {
+                        "служба запущена: держит включённые компоненты и поднимает их при падении"
+                    } else {
+                        "служба не запущена: никто не следит за компонентами"
+                    };
+                    page::row_text_painted(cv, look, row.text, "Служба запуска", hint, if active { look.ok } else { look.warn });
+                    for (field, act) in &row.buttons {
+                        let label = if active { "Остановить службу" } else { "Включить службу" };
+                        page::accent_button(cv, look, *field, label, self.hover == Some(*act), true);
+                    }
+                }
+                _ => {
+                    let hint = launch::log_path().display().to_string();
+                    page::row_text_painted(cv, look, row.text, "Журнал службы", &hint, look.text2);
+                    for (field, act) in &row.buttons {
+                        page::button(cv, look, *field, "Открыть", self.hover == Some(*act), true);
+                    }
+                }
+            }
+        }
+    }
+
+    fn paint(&mut self) {
+        let mut client = RECT::default();
+        if unsafe { GetClientRect(self.hwnd, &mut client) }.is_err() {
             return;
         }
-        if launch::start_program(program, arguments) {
-            set_text(
-                state.notice,
-                &if wants_settings {
-                    format!("{}: открываю настройки.", program.name)
-                } else {
-                    format!("{}: открываю.", program.name)
-                },
-            );
-        } else {
-            set_text(
-                state.notice,
-                &format!("{}: не найден рядом со службой — переустановите AuraUI.", program.name),
-            );
+        self.width = (client.right - client.left) as f32;
+        self.height = (client.bottom - client.top) as f32;
+        let (width, height) = (self.width as i32, self.height as i32);
+        if width <= 0 || height <= 0 {
+            return;
         }
-        let _ = control;
-        return;
-    }
-    if id < ID_ROW {
-        let _ = control;
-        return;
-    }
-    let index = id - ID_ROW;
-    let Some(component) = launch::COMPONENTS.get(index) else { return };
-    let was = state.settings.wants(component);
-    state.settings.set(component.id, !was);
-    if launch::save(&state.settings).is_err() {
-        set_text(state.notice, "Не удалось сохранить настройки: проверьте папку настроек.");
-        refresh(state);
-        return;
-    }
-    launch::log(&format!("settings: {} {}", component.exe, if was { "off" } else { "on" }));
-    if was {
-        let closed = launch::close(component.exe);
-        let line = if closed {
-            format!("{}: выключен и закрыт.", component.name)
-        } else {
-            format!("{}: выключен (закрывать было нечего).", component.name)
-        };
-        set_text(state.notice, &line);
-    } else {
-        // Nothing is watching yet: the switch would be a lie without the service.
-        if !crate::supervise::active() {
-            launch::start_service();
-            state.service_wait = Some(Instant::now());
+        let mut paint = PAINTSTRUCT::default();
+        let dc = unsafe { BeginPaint(self.hwnd, &mut paint) };
+        if Surface::ensure(&mut self.surface, width, height).is_some() {
+            if let (Some(gfx), Some(surface)) = (self.gfx.as_ref(), self.surface.as_ref()) {
+                if gfx.draw(surface, |cv| self.draw(cv)).is_ok() {
+                    unsafe {
+                        let _ = BitBlt(dc, 0, 0, width, height, Some(surface.dc), 0, 0, SRCCOPY);
+                    }
+                }
+            }
         }
-        state.waiting.push((component.id, Instant::now() + SPAWN_WAIT));
-        set_text(state.notice, &format!("{}: включаю…", component.name));
+        let _ = unsafe { EndPaint(self.hwnd, &paint) };
     }
-    refresh(state);
 }
 
-/// Kept for the compiler's sake: `Component` is used through the rows above.
-#[allow(dead_code)]
-fn _component(_: &Component) {}
+unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if message == WM_NCDESTROY {
+        let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+        if !state.is_null() {
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            drop(Box::from_raw(state));
+        }
+        return DefWindowProcW(hwnd, message, wp, lp);
+    }
+    let state = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut App;
+    if state.is_null() {
+        return DefWindowProcW(hwnd, message, wp, lp);
+    }
+    let app = &mut *state;
+    match message {
+        WM_SIZE => {
+            app.invalidate();
+            LRESULT(0)
+        }
+        WM_PAINT => {
+            app.paint();
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            app.tick();
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            // `wParam` carries the new DPI in its low word; `lParam` the rectangle Windows
+            // suggests, already inside the new display's work area.
+            let dpi = (wp.0 & 0xffff) as f32;
+            if dpi >= 96.0 {
+                let suggested = lp.0 as *const RECT;
+                if !suggested.is_null() {
+                    let rect = unsafe { *suggested };
+                    unsafe {
+                        let _ = SetWindowPos(
+                            hwnd,
+                            None,
+                            rect.left,
+                            rect.top,
+                            rect.right - rect.left,
+                            rect.bottom - rect.top,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                }
+                app.look = Look::of(app.dark, dpi / 96.0);
+                app.invalidate();
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            let x = (lp.0 & 0xffff) as i16 as f32;
+            let y = ((lp.0 >> 16) & 0xffff) as i16 as f32;
+            let hit = app.hit(x, y);
+            if hit != app.hover {
+                app.hover = hit;
+                app.invalidate();
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            let x = (lp.0 & 0xffff) as i16 as f32;
+            let y = ((lp.0 >> 16) & 0xffff) as i16 as f32;
+            app.click(x, y);
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_DESTROY => {
+            PostQuitMessage(0);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, message, wp, lp),
+    }
+}
+
+/// Open the settings window; returns when it is closed.
+pub fn run() -> windows::core::Result<()> {
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // Direct2D factories want a COM-initialised thread: this is the UI thread.
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
+        let module = GetModuleHandleW(None)?;
+        let instance = HINSTANCE(module.0);
+        let class = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
+            lpfnWndProc: Some(procedure),
+            hInstance: instance,
+            hCursor: LoadCursorW(None, IDC_ARROW)?,
+            lpszClassName: CLASS,
+            ..Default::default()
+        };
+        RegisterClassW(&class);
+        let dark = aura_windows::theme::system_dark_mode();
+        let scale = GetDpiForSystem() as f32 / 96.0;
+        let width = (PAGE.0 * scale).round() as i32;
+        let height = (PAGE.1 * scale).round() as i32;
+        let caption = wide(TITLE);
+        let window = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            CLASS,
+            PCWSTR(caption.as_ptr()),
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            width,
+            height,
+            None,
+            None,
+            Some(instance),
+            None,
+        )?;
+        let scale = GetDpiForWindow(window) as f32 / 96.0;
+        let state = Box::new(App {
+            hwnd: window,
+            dark,
+            gfx: Gfx::new(FACE).ok(),
+            surface: None,
+            look: Look::of(dark, scale),
+            settings: launch::load(),
+            tab: TAB_COMPONENTS,
+            hover: None,
+            notice: String::new(),
+            tone: Tone::Info,
+            waiting: Vec::new(),
+            service_wait: None,
+            width: width as f32,
+            height: height as f32,
+        });
+        let pointer = Box::into_raw(state);
+        SetWindowLongPtrW(window, GWLP_USERDATA, pointer as isize);
+        aura_windows::theme::set_dark_frame(window, dark);
+        aura_windows::theme::round_corners(window, false);
+        let title = wide(TITLE);
+        let _ = SetWindowTextW(window, PCWSTR(title.as_ptr()));
+        let _ = ShowWindow(window, SW_SHOW);
+        let _ = SetTimer(Some(window), TIMER, 1000, None);
+        let mut message = MSG::default();
+        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+            let _ = TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        let _ = KillTimer(Some(window), TIMER);
+        if com {
+            CoUninitialize();
+        }
+    }
+    Ok(())
+}

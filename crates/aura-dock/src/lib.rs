@@ -64,6 +64,9 @@ pub struct Options {
     pub monitor: Option<usize>,
     /// The main dock's process id (helpers quit when it exits).
     pub parent: Option<u32>,
+    /// `--settings`: open the panel's settings page. If a panel is already running, the page
+    /// opens there — asking for settings must never do nothing at all.
+    pub settings: bool,
 }
 
 /// Work from the user's folder, not the install folder Velopack starts us in. Every app
@@ -188,6 +191,7 @@ pub fn run() -> Result<()> {
             "--demo" => opts.demo = it.next().cloned(),
             "--monitor" => opts.monitor = it.next().and_then(|v| v.parse().ok()),
             "--parent" => opts.parent = it.next().and_then(|v| v.parse().ok()),
+            "--settings" => opts.settings = true,
             _ => {}
         }
     }
@@ -203,6 +207,11 @@ pub fn run() -> Result<()> {
             };
             let _mutex = CreateMutexW(None, false, &windows::core::HSTRING::from(name));
             if GetLastError() == ERROR_ALREADY_EXISTS {
+                // One panel per display: a second copy leaves at once. `--settings` still has
+                // to arrive somewhere, so it is handed to the panel that is already running.
+                if opts.settings {
+                    dock::show_settings_of_running_panel();
+                }
                 return Ok(());
             }
             std::mem::forget(_mutex);

@@ -1104,6 +1104,7 @@ dependencies = [
 name = "aura-service"
 version = "0.3.23"
 dependencies = [
+ "aura-windows",
  "serde",
  "serde_json",
  "windows",

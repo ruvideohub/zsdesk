@@ -19,12 +19,16 @@ path = "src/main.rs"
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+# The shared settings page: the same canvas and the same numbers as the rest of the suite.
+aura-windows = { path = "../aura-windows" }
 
 [dependencies.windows]
 version = "0.62.2"
 features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Com",
     "Win32_System_Console",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_LibraryLoader",
