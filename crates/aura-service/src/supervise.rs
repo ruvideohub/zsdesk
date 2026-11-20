@@ -30,9 +30,18 @@ const MUTEX: windows::core::PCWSTR = w!("Local\\AuraExplorer.Service");
 /// The supervisor's main loop; returns when there is nothing left to keep alive.
 pub fn run() -> windows::core::Result<()> {
     unsafe {
-        let Ok(lock) = CreateMutexW(None, false, MUTEX) else { return Ok(()) };
+        let lock = match CreateMutexW(None, false, MUTEX) {
+            Ok(lock) => lock,
+            Err(error) => {
+                // Nothing would work without the lock, and a silent exit looks like "the
+                // service does nothing": say so in the log.
+                log(&format!("service: cannot take the single-instance lock: {error}"));
+                return Ok(());
+            }
+        };
         if GetLastError() == ERROR_ALREADY_EXISTS {
             // A supervisor is already running: this copy must not start anything.
+            log("service: another copy is already running; this one exits");
             let _ = windows::Win32::Foundation::CloseHandle(lock);
             return Ok(());
         }
@@ -55,13 +64,13 @@ pub fn run() -> windows::core::Result<()> {
             }
             settings = fresh;
         }
-        reconcile(&settings, &mut running);
+        reconcile(&mut settings, &mut running);
         std::thread::sleep(TICK);
     }
 }
 
 /// Start what should run, stop what should not, and restart what died.
-fn reconcile(settings: &Settings, running: &mut Vec<Running>) {
+fn reconcile(settings: &mut Settings, running: &mut Vec<Running>) {
     // Forget children that are gone, and stop the ones that were switched off.
     let mut i = 0;
     while i < running.len() {
@@ -77,6 +86,15 @@ fn reconcile(settings: &Settings, running: &mut Vec<Running>) {
         if running[i].exited() {
             let mut done = running.remove(i);
             let _ = done.child.wait();
+            let restart = COMPONENTS.iter().find(|c| c.id == id).is_some_and(|c| c.restart_when_exits);
+            if !restart {
+                // A window the user closed: leave it closed and turn its switch off, so the
+                // settings say what is true instead of promising a program that never comes.
+                settings.set(id, false);
+                let _ = launch::save(settings);
+                log(&format!("service: {id} exited and stays closed; its switch is off now"));
+                continue;
+            }
             // Back off, so a component that fails at once is not restarted in a loop.
             running.push(Running { id: done.id, child: done.child, retry_at: Instant::now() + BACKOFF });
             log(&format!("service: {id} exited; next attempt in {} s", BACKOFF.as_secs()));
@@ -111,7 +129,7 @@ fn reconcile(settings: &Settings, running: &mut Vec<Running>) {
                 log(&format!("service: {} started (pid {})", component.id, child.id()));
                 running.push(Running { id: component.id, child, retry_at: Instant::now() });
             }
-            None => log(&format!("service: {} could not start ({})", component.id, component.exe)),
+            None => log(&format!("service: {} is not running (see the line above)", component.id)),
         }
     }
 }
@@ -131,7 +149,15 @@ fn spawn(component: &Component, profile: Option<&std::path::Path>) -> Option<std
     if let Some(home) = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from).filter(|p| p.is_dir()) {
         command.current_dir(home);
     }
-    command.spawn().ok()
+    match command.spawn() {
+        Ok(child) => Some(child),
+        Err(error) => {
+            // A missing or blocked program must leave a trace: "the component does not start"
+            // is the one report the log has to answer.
+            log(&format!("service: {} did not start: {error}", component.exe));
+            None
+        }
+    }
 }
 
 /// Is a supervisor running? (The settings window says whether the components are watched.)

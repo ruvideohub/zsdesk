@@ -30,9 +30,18 @@ pub struct Component {
     /// Does it take `--profile-dir`? The service passes one profile down to every component
     /// that understands it, so the components never disagree about where the settings are.
     pub takes_profile: bool,
+    /// Should the service start it again after it exits? True for the background components
+    /// (they are supposed to stay up), false for a window the user may close on purpose.
+    pub restart_when_exits: bool,
 }
 
 /// The components, in the order the settings window lists them.
+///
+/// The desktop widgets are deliberately absent: `widgets.exe` is the panel's child — the panel
+/// draws the clock card's settings, restarts the host when they change and stops it when it
+/// stops, so it is started with `--dock <panel window>` and cannot be started without one.
+/// Two owners would mean two clock hosts and a restart loop. Making the widgets a program of
+/// their own is the next step of the same plan.
 pub const COMPONENTS: &[Component] = &[
     Component {
         id: "fences",
@@ -42,6 +51,7 @@ pub const COMPONENTS: &[Component] = &[
         args: &["--tray"],
         on_by_default: true,
         takes_profile: true,
+        restart_when_exits: true,
     },
     Component {
         id: "dock",
@@ -51,15 +61,7 @@ pub const COMPONENTS: &[Component] = &[
         args: &[],
         on_by_default: true,
         takes_profile: false,
-    },
-    Component {
-        id: "widgets",
-        name: "Виджеты рабочего стола",
-        hint: "Часы в углу рабочего стола (их видят и настройки панели)",
-        exe: "widgets.exe",
-        args: &[],
-        on_by_default: true,
-        takes_profile: false,
+        restart_when_exits: true,
     },
     Component {
         id: "files",
@@ -69,6 +71,9 @@ pub const COMPONENTS: &[Component] = &[
         args: &[],
         on_by_default: false,
         takes_profile: true,
+        // A window, not a background program: closing it must not bring it back. The service
+        // turns its switch off instead, so the window says what is true.
+        restart_when_exits: false,
     },
 ];
 
@@ -218,7 +223,11 @@ pub fn close(exe: &str) -> bool {
         BOOL(1)
     }
 
-    let pids = pids(exe);
+    let mut pids = pids(exe);
+    // Never close ourselves: the settings window is this same program, and "stop the service"
+    // must not take the window with it.
+    let own = std::process::id();
+    pids.retain(|pid| *pid != own);
     if pids.is_empty() {
         return false;
     }
@@ -389,6 +398,13 @@ mod tests {
         assert!(settings.profile_dir().is_some());
         // Only the components that understand the argument receive it.
         assert!(COMPONENTS.iter().find(|component| component.id == "fences").unwrap().takes_profile);
-        assert!(!COMPONENTS.iter().find(|component| component.id == "widgets").unwrap().takes_profile);
+        assert!(!COMPONENTS.iter().find(|component| component.id == "dock").unwrap().takes_profile);
+    }
+
+    #[test]
+    fn the_widgets_are_not_the_services_business() {
+        // `widgets.exe` is started by the panel with `--dock <panel window>`; a copy started by
+        // the service would have no panel to report to and would only fight the real one.
+        assert!(COMPONENTS.iter().all(|component| component.exe != "widgets.exe"));
     }
 }
