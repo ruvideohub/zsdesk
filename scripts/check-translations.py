@@ -18,6 +18,10 @@ import re
 import sys
 from pathlib import Path
 
+# Windows consoles and CI logs are not UTF-8 by default; the reports here are Russian.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 CATALOGUE = ROOT / "crates" / "aura-core" / "resources" / "strings.en.json"
 CJK = re.compile(r"[\u3400-\u9fff\uff00-\uffef]")
