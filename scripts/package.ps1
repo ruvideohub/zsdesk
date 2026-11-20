@@ -135,6 +135,10 @@ $files = [ordered]@{}
 foreach ($file in (Get-ChildItem -LiteralPath $StageDir -Recurse -File | Sort-Object FullName)) {
     if ($file.LastWriteTimeUtc.Year -lt 1980) { $file.LastWriteTimeUtc = [datetime]'1980-01-01T00:00:00Z' }
     $relative = $file.FullName.Substring($StageDir.Length + 1).Replace('\', '/')
+    # Манифест не описывает сам себя: при -ManifestOnly он уже лежит в папке, и записать его
+    # хеш невозможно — файл меняется ровно тем, что в него пишется. Запись «сам себя» с
+    # устаревшим хешем заставила бы install.ps1 отказаться от собственного архива.
+    if ($relative -eq 'manifest.json') { continue }
     $files[$relative] = [ordered]@{
         bytes  = $file.Length
         sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -95,6 +95,11 @@ if (-not $SkipManifest) {
             $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($hash -ne [string]$recorded.sha256) { $problems.Add("хеш $key не совпал с manifest.json — файл подменили после упаковки") }
         }
+        # Манифест не описывает сам себя — иначе его «хеш» всегда устаревший, и установщик,
+        # сверяющий файлы по манифесту, откажется от собственного архива.
+        if ($manifest.files.PSObject.Properties['manifest.json']) {
+            $problems.Add('manifest.json описывает сам себя: такой хеш не может быть верным')
+        }
         foreach ($recordedName in $manifest.files.PSObject.Properties.Name) {
             if ($recordedName -eq 'manifest.json') { continue }
             if (-not $present.ContainsKey($recordedName)) { $problems.Add("manifest.json обещает $recordedName, а файла нет") }
