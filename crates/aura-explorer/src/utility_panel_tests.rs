@@ -36,7 +36,7 @@ fn capture(hwnd:HWND,path:&Path)->Result<()>{
         let mut origin=POINT{x:bounds.left,y:bounds.top};unsafe{ScreenToClient(hwnd,&mut origin)}.ok()?;
         let saved=unsafe{SaveDC(surface.dc)};unsafe{let _=SetViewportOrgEx(surface.dc,origin.x,origin.y,None);
             SendMessageW(child,WM_PRINT,Some(WPARAM(surface.dc.0 as usize)),Some(LPARAM((PRF_CLIENT|PRF_NONCLIENT|PRF_ERASEBKGND|PRF_CHILDREN)as isize)));
-            if saved!=0{RestoreDC(surface.dc,saved);}}
+            if saved!=0{let _=RestoreDC(surface.dc,saved);}}
     }
     let bytes=surface.pixel_bytes()as u32;let mut bmp=Vec::new();bmp.extend(b"BM");bmp.extend((54+bytes).to_le_bytes());bmp.extend([0;4]);bmp.extend(54u32.to_le_bytes());bmp.extend(40u32.to_le_bytes());
     bmp.extend(r.right.to_le_bytes());bmp.extend((-r.bottom).to_le_bytes());bmp.extend(1u16.to_le_bytes());bmp.extend(32u16.to_le_bytes());bmp.extend([0;4]);bmp.extend(bytes.to_le_bytes());bmp.extend([0;16]);

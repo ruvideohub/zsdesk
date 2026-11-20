@@ -50,7 +50,7 @@ pub(crate) fn show_search(profile:&Path)->Result<()>{
         }
         aura_windows::theme::set_dark_frame(hwnd,dark);
         let activate=true;#[cfg(test)]let activate=activate&&!TEST_NO_ACTIVATE.with(Cell::get);
-        unsafe{let _=ShowWindow(hwnd,if activate{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE});RedrawWindow(Some(hwnd),None,None,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_ERASE);
+        unsafe{let _=ShowWindow(hwnd,if activate{SW_SHOWNORMAL}else{SW_SHOWNOACTIVATE});let _=RedrawWindow(Some(hwnd),None,None,RDW_INVALIDATE|RDW_ALLCHILDREN|RDW_ERASE);
             if activate{let _=SetForegroundWindow(hwnd);PostMessageW(Some(hwnd),WM_APPPLUS_FOCUS,WPARAM(0),LPARAM(0)).ok();}}
         return Ok(());
     }
@@ -205,7 +205,7 @@ impl Panel{
         self.font=unsafe{CreateFontIndirectW(&font)};font.lfHeight=-self.s(23);font.lfWeight=600;self.title_font=unsafe{CreateFontIndirectW(&font)};
         for hwnd in [self.edit,self.list,self.action,self.close]{if !hwnd.0.is_null(){unsafe{SendMessageW(hwnd,WM_SETFONT,Some(WPARAM(self.font.0 as usize)),Some(LPARAM(1)));}}}
         if let Ok(link)=unsafe{GetDlgItem(Some(self.hwnd),14)}{unsafe{SendMessageW(link,WM_SETFONT,Some(WPARAM(self.font.0 as usize)),Some(LPARAM(1)));}}
-        unsafe{DeleteObject(old.into());DeleteObject(old_title.into());if !self.list.0.is_null(){SendMessageW(self.list,LB_SETITEMHEIGHT,Some(WPARAM(0)),Some(LPARAM(self.s(58)as isize)));}
+        unsafe{let _=DeleteObject(old.into());let _=DeleteObject(old_title.into());if !self.list.0.is_null(){SendMessageW(self.list,LB_SETITEMHEIGHT,Some(WPARAM(0)),Some(LPARAM(self.s(58)as isize)));}
             SetWindowPos(self.hwnd,None,rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,SWP_NOZORDER|SWP_NOACTIVATE).ok();}
         self.layout();
     }
@@ -217,9 +217,9 @@ impl Panel{
             content::rounded(dc,area,rgb(self.palette.input_focused),composite(self.palette.input_border,self.palette.layer),self.s(8));
             let pen=unsafe{CreatePen(PS_SOLID,self.s(1).max(1),composite(self.palette.text_secondary,self.palette.input_focused))};
             let old=unsafe{SelectObject(dc,pen.into())};let brush=unsafe{SelectObject(dc,GetStockObject(NULL_BRUSH))};
-            unsafe{let _=Ellipse(dc,self.s(30),self.s(77),self.s(40),self.s(87));MoveToEx(dc,self.s(38),self.s(85),None);let _=LineTo(dc,self.s(44),self.s(91));SelectObject(dc,brush);SelectObject(dc,old);let _=DeleteObject(pen.into());}
+            unsafe{let _=Ellipse(dc,self.s(30),self.s(77),self.s(40),self.s(87));let _=MoveToEx(dc,self.s(38),self.s(85),None);let _=LineTo(dc,self.s(44),self.s(91));SelectObject(dc,brush);SelectObject(dc,old);let _=DeleteObject(pen.into());}
             if unsafe{GetFocus()}==self.edit{let pen=unsafe{CreatePen(PS_SOLID,self.s(2).max(1),rgb(self.palette.accent))};let old=unsafe{SelectObject(dc,pen.into())};
-                unsafe{MoveToEx(dc,area.left+self.s(6),area.bottom-self.s(2),None);let _=LineTo(dc,area.right-self.s(6),area.bottom-self.s(2));SelectObject(dc,old);let _=DeleteObject(pen.into());}}
+                unsafe{let _=MoveToEx(dc,area.left+self.s(6),area.bottom-self.s(2),None);let _=LineTo(dc,area.right-self.s(6),area.bottom-self.s(2));SelectObject(dc,old);let _=DeleteObject(pen.into());}}
         }
         draw_text(dc,&self.status,RECT{left:self.s(22),top:r.bottom-self.s(77),right:r.right-self.s(20),bottom:r.bottom-self.s(52)},self.font,
             if self.search_error{rgb(self.palette.danger)}else{composite(self.palette.text_secondary,self.palette.layer)});
@@ -265,19 +265,19 @@ impl Panel{
                 self.update_package=Some((path,portable,hash));set_text(self.action,if portable{aura_core::i18n::text("打开更新包")}else{aura_core::i18n::text("安装更新")});
             },Err(error)=>self.status=error,
         }
-        unsafe{EnableWindow(self.action,true);InvalidateRect(Some(self.hwnd),None,false);}
+        unsafe{let _=EnableWindow(self.action,true);let _=InvalidateRect(Some(self.hwnd),None,false);}
     }
     fn updates(&mut self){
         if let Some((path,_,hash))=&self.update_package{
             if let Err(error)=crate::update_check::open_download(self.hwnd,path,hash){self.status=aura_core::tr_format!("无法打开更新包：{error:#}" , error=error);self.update_package=None;set_text(self.action,aura_core::i18n::text("重新下载"));}return;
         }
         let release=self.update_release.clone();
-        self.status=if release.is_some(){aura_core::i18n::text("正在下载并校验更新…").into()}else{aura_core::i18n::text("正在检查更新…").into()};unsafe{EnableWindow(self.action,false);}
+        self.status=if release.is_some(){aura_core::i18n::text("正在下载并校验更新…").into()}else{aura_core::i18n::text("正在检查更新…").into()};unsafe{let _=EnableWindow(self.action,false);}
         let reply=self.reply.clone();let hwnd=self.hwnd.0 as isize;
         if std::thread::Builder::new().name("aura-update-check".into()).spawn(move||{
             let result=match release{Some(release)=>crate::update_check::download(&release,&reply.alive),None=>crate::update_check::check()}.map_err(|error|aura_core::tr_format!("更新失败：{error:#}" , error=error));
             if reply.alive.load(Ordering::Acquire){*reply.value.lock().unwrap_or_else(|e|e.into_inner())=Some(result);let _=unsafe{PostMessageW(Some(HWND(hwnd as*mut _)),UPDATE,WPARAM(0),LPARAM(0))};}
-        }).is_err(){self.status=aura_core::i18n::text("无法启动更新检查").into();unsafe{EnableWindow(self.action,true);}}
+        }).is_err(){self.status=aura_core::i18n::text("无法启动更新检查").into();unsafe{let _=EnableWindow(self.action,true);}}
     }
 }
 fn location_arguments(path:&Path,reveal:bool)->Vec<std::ffi::OsString>{
@@ -321,7 +321,7 @@ unsafe extern "system" fn procedure(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRES
         WM_APPPLUS_EMPTY if lp.0==state.list.0 as isize=>{let mut rect=RECT::default();if unsafe{GetClientRect(state.list,&mut rect)}.is_ok(){state.paint_empty_results(HDC(wp.0 as*mut _),rect);}return LRESULT(0);},
         WM_CTLCOLOREDIT|WM_CTLCOLORSTATIC=>{let dc=HDC(wp.0 as*mut _);unsafe{SetTextColor(dc,rgb(state.palette.text));SetBkColor(dc,rgb(state.palette.input_focused));}return LRESULT(state.input_brush.0 as isize);},
         WM_CTLCOLORLISTBOX=>return LRESULT(state.input_brush.0 as isize),
-        WM_PAINT=>{let mut ps=PAINTSTRUCT::default();let dc=unsafe{BeginPaint(hwnd,&mut ps)};state.paint(dc);unsafe{EndPaint(hwnd,&ps);}},
+        WM_PAINT=>{let mut ps=PAINTSTRUCT::default();let dc=unsafe{BeginPaint(hwnd,&mut ps)};state.paint(dc);unsafe{let _=EndPaint(hwnd,&ps);}},
         WM_PRINTCLIENT=>{state.paint(HDC(wp.0 as*mut _));return LRESULT(0);},
         WM_DRAWITEM if lp.0!=0=>{let item=unsafe{&*(lp.0 as*const DRAWITEMSTRUCT)};
             if item.CtlID==10&&state.kind!=Kind::Search{state.paint_info(item.hDC,item.rcItem);return LRESULT(1);}
@@ -329,14 +329,14 @@ unsafe extern "system" fn procedure(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRES
                 let primary=item.CtlID==12&&state.kind==Kind::About;let color=if primary{rgb(state.palette.accent)}else{color};
                 unsafe{FillRect(item.hDC,&r,state.brush);}
                 let brush=unsafe{CreateSolidBrush(color)};let pen=unsafe{CreatePen(PS_SOLID,1,composite(state.palette.divider,state.palette.input_focused))};let old_brush=unsafe{SelectObject(item.hDC,brush.into())};let old_pen=unsafe{SelectObject(item.hDC,pen.into())};
-                unsafe{RoundRect(item.hDC,r.left,r.top,r.right-1,r.bottom-1,state.s(8),state.s(8));SelectObject(item.hDC,old_brush);SelectObject(item.hDC,old_pen);DeleteObject(brush.into());DeleteObject(pen.into());}
+                unsafe{let _=RoundRect(item.hDC,r.left,r.top,r.right-1,r.bottom-1,state.s(8),state.s(8));SelectObject(item.hDC,old_brush);SelectObject(item.hDC,old_pen);let _=DeleteObject(brush.into());let _=DeleteObject(pen.into());}
                 draw_text(item.hDC,&text(item.hwndItem),RECT{left:r.left+state.s(12),right:r.right-state.s(8),..r},state.font,
                     if primary{rgb(state.palette.accent_text)}else{composite(if item.itemState.0&ODS_DISABLED.0!=0{state.palette.text_disabled}else{state.palette.text},state.palette.input_focused)});
                 if item.itemState.0&ODS_FOCUS.0!=0{let focus=RECT{left:r.left+3,top:r.top+3,right:r.right-4,bottom:r.bottom-4};let _=unsafe{DrawFocusRect(item.hDC,&focus)};}
                 return LRESULT(1);
             }
             if item.CtlID==11{if let Some(path)=state.paths.get(item.itemID as usize){
-            let selected=item.itemState.0&ODS_SELECTED.0!=0;let brush=unsafe{CreateSolidBrush(if selected{composite(state.palette.hover,state.palette.input_focused)}else{rgb(state.palette.input_focused)})};unsafe{FillRect(item.hDC,&item.rcItem,brush);DeleteObject(brush.into());}
+            let selected=item.itemState.0&ODS_SELECTED.0!=0;let brush=unsafe{CreateSolidBrush(if selected{composite(state.palette.hover,state.palette.input_focused)}else{rgb(state.palette.input_focused)})};unsafe{FillRect(item.hDC,&item.rcItem,brush);let _=DeleteObject(brush.into());}
             let r=item.rcItem;draw_text(item.hDC,&path.file_name().unwrap_or(path.as_os_str()).to_string_lossy(),RECT{left:r.left+state.s(12),top:r.top+state.s(4),right:r.right-state.s(8),bottom:r.top+state.s(29)},state.font,rgb(state.palette.text));
             draw_text(item.hDC,&path.to_string_lossy(),RECT{left:r.left+state.s(12),top:r.top+state.s(29),right:r.right-state.s(8),bottom:r.bottom-state.s(4)},state.font,composite(state.palette.text_secondary,state.palette.input_focused));return LRESULT(1);}}},
         WM_COMMAND=>{let id=wp.0&0xffff;let event=(wp.0>>16)as u32;

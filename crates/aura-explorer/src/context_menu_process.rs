@@ -395,6 +395,7 @@ pub struct Client{
     mode:Mode,item_count:usize,owner_class:String,diagnostic_written:bool,
 }
 impl Client{
+#[allow(dead_code)]
     pub fn spawn(owner:HWND,point:POINT,pidls:Vec<Vec<u8>>,folder:Option<PathBuf>,options:ContextMenuOptions,intercept:MenuInterceptions,mode:Mode)->Result<Self>{
         Self::spawn_extended(owner,point,pidls,folder,options,intercept,mode,false)
     }

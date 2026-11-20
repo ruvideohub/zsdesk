@@ -891,8 +891,8 @@ mod tests {
         unsafe{SetWindowSubclass(host.hwnd,Some(count_layout),probe,data).ok()?;
             SetWindowSubclass(actual,Some(count_layout),probe,data).ok()?;}
         for _ in 0..16{unsafe{let _=host.resize(rect);}}
-        unsafe{RemoveWindowSubclass(host.hwnd,Some(count_layout),probe);
-            RemoveWindowSubclass(actual,Some(count_layout),probe);}
+        unsafe{let _=RemoveWindowSubclass(host.hwnd,Some(count_layout),probe);
+            let _=RemoveWindowSubclass(actual,Some(count_layout),probe);}
         assert_eq!(changes.get(),0,"unchanged layout forced a native tree repaint");
         let metrics=|hwnd|[TVM_GETITEMHEIGHT,TVM_GETINDENT].map(|message|unsafe{SendMessageW(hwnd,message,None,None)}.0);
         let actual_metrics=metrics(actual);

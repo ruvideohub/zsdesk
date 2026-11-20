@@ -2680,6 +2680,7 @@ impl DesktopHost {
 
     /// Chooses the Shell drop target under `point` (screen) for fence `id`.
     /// Over another tab's chip the drop goes into that tab.
+#[allow(dead_code)]
     fn drop_target_at(&self, id: u64, point: POINT) -> Option<DropSpot> {self.drop_target_with_keys(id,point,0)}
     fn drop_target_with_keys(&self, id: u64, point: POINT, keys:u32) -> Option<DropSpot> {
         let index = self.win_index(id)?;

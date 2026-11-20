@@ -120,7 +120,7 @@ impl State{
             aura_core::tr_format!("{}    {} / {}    点击进度区域定位", if unsafe{engine.IsPaused()}.as_bool(){aura_core::i18n::text("▶ 播放")}else{aura_core::i18n::text("Ⅱ 暂停")}, time_text(current), time_text(duration))
         }else{aura_core::i18n::text("媒体已关闭").into()};
         let mut text:Vec<_>=text.encode_utf16().collect();let mut area=if self.notice.borrow().is_empty(){footer}else{RECT{left:12,top:12,right:rect.right-12,bottom:rect.bottom-12}};
-        unsafe{DrawTextW(dc,&mut text,&mut area,DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,old_font);EndPaint(self.hwnd.get(),&ps);}
+        unsafe{DrawTextW(dc,&mut text,&mut area,DT_WORDBREAK|DT_NOPREFIX);SelectObject(dc,old_font);let _=EndPaint(self.hwnd.get(),&ps);}
     }
 }
 impl Drop for State{fn drop(&mut self){self.shutdown();}}

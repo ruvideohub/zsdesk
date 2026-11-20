@@ -47,6 +47,7 @@ impl QuickPreview {
         let kind=match &*self.state.content.borrow(){Content::Empty=>"information",Content::Handler(preview)=>if preview.rendered.is_some(){"wps"}else{"system"},Content::Text(_)=>"text",Content::Image(_)=>"image",Content::Media(_)=>"media"};
         (kind.into(),self.state.notice.borrow().clone())
     }
+#[allow(dead_code)]
     pub(super) fn open(owner: HWND, path: &Path) -> Result<Self> {
         Self::open_with_options(owner, path, PreviewProviderPreference::System, aura_windows::theme::system_dark_mode(), false)
     }

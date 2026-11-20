@@ -79,6 +79,7 @@ pub fn settings_changed(profile:&Path){
 
 pub struct FastSearch{shared:Arc<Shared>,events:Receiver<SearchEvent>,worker:Option<JoinHandle<()>>}
 impl FastSearch{
+#[allow(dead_code)]
     pub fn new(path:PathBuf,hwnd:HWND,message:u32)->Result<Self>{Self::new_with_options(path,hwnd,message,SearchOptions::default())}
     pub fn new_with_options(path:PathBuf,hwnd:HWND,message:u32,options:SearchOptions)->Result<Self>{Self::create(path,hwnd,message,options,None,None,None)}
     pub fn new_with_notifier(path:PathBuf,options:SearchOptions,notifier:Arc<dyn Fn()+Send+Sync>)->Result<Self>{Self::create(path,HWND::default(),0,options,None,Some(notifier),None)}

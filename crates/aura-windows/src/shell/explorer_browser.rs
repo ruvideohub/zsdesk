@@ -747,6 +747,7 @@ struct BrowserSite {
     source: usize,
     #[allow(dead_code)]
     browser: Weak<IExplorerBrowser>,
+#[allow(dead_code)]
     modern: Rc<Cell<bool>>,
     panes: Rc<Cell<Panes>>,
     selection_pending: Rc<Cell<bool>>,
