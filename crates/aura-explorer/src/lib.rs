@@ -8,6 +8,7 @@
 //!   window with it, and the two can be updated separately.
 
 mod app;
+pub(crate) mod archive;
 mod language;
 mod commands;
 // Compiled in every edition; unreachable without the `desktop` feature and dropped by the linker.

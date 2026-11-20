@@ -27,6 +27,8 @@ pub(super) struct Target {
     rename: bool,
     paste: bool,
     folder: bool,
+    /// Exactly one `.zip` is selected, so «Распаковать здесь» has something to do.
+    archive: bool,
 }
 
 impl Target {
@@ -35,6 +37,10 @@ impl Target {
         let files = request.file_actions && (background || file_transfer::paths_from_pidls(&request.pidls).is_ok());
         // A selected folder is a paste target, exactly like the Shell menu treats it.
         let single_folder = !background && request.pidls.len() == 1 && is_folder(&request.pidls[0]);
+        let archive = !background
+            && request.pidls.len() == 1
+            && file_transfer::paths_from_pidls(&request.pidls)
+                .is_ok_and(|paths| crate::archive::archive_among(&paths).is_some());
         Self {
             background,
             count: request.pidls.len(),
@@ -43,6 +49,7 @@ impl Target {
             rename: request.rename && !background && request.pidls.len() == 1,
             paste: file_transfer::has_paste_content() && (background || single_folder),
             folder: request.folder.is_some(),
+            archive,
         }
     }
 }
@@ -90,6 +97,7 @@ fn command_page(options: &ContextMenuOptions, target: &Target, handlers: &[Strin
     push(&mut rows, files, Action::Delete);
     push(&mut rows, files, Action::Shortcut);
     push(&mut rows, files, Action::Compress);
+    push(&mut rows, target.archive, Action::Extract);
     push(&mut rows, target.background && target.folder, Action::Terminal);
     push(&mut rows, true, Action::Properties);
     rows.push(MenuItemSpec::Separator);
@@ -100,7 +108,7 @@ fn command_page(options: &ContextMenuOptions, target: &Target, handlers: &[Strin
 /// One row of the page: its identifier, its catalogue caption and its shortcut.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
-    Open, Cut, Copy, CopyPath, Paste, NewFolder, Refresh, Rename, Delete, Shortcut, Compress, Terminal, Properties, More,
+    Open, Cut, Copy, CopyPath, Paste, NewFolder, Refresh, Rename, Delete, Shortcut, Compress, Extract, Terminal, Properties, More,
 }
 
 impl Action {
@@ -109,7 +117,8 @@ impl Action {
             Self::Open => "open", Self::Cut => "cut", Self::Copy => "copy", Self::CopyPath => "copypath",
             Self::Paste => "paste", Self::NewFolder => "newfolder", Self::Refresh => "refresh",
             Self::Rename => "rename", Self::Delete => "delete", Self::Shortcut => "shortcut",
-            Self::Compress => "compress", Self::Terminal => "terminal", Self::Properties => "properties",
+            Self::Compress => "compress", Self::Extract => "extract",
+            Self::Terminal => "terminal", Self::Properties => "properties",
             Self::More => "more",
         }
     }
@@ -118,7 +127,8 @@ impl Action {
             Self::Open => "打开", Self::Cut => "剪切", Self::Copy => "复制", Self::CopyPath => "复制路径",
             Self::Paste => "粘贴", Self::NewFolder => "新建文件夹", Self::Refresh => "刷新",
             Self::Rename => "重命名", Self::Delete => "删除", Self::Shortcut => "创建快捷方式",
-            Self::Compress => "压缩为 ZIP 文件", Self::Terminal => "在此处打开终端",
+            Self::Compress => "压缩为 ZIP 文件", Self::Extract => "解压到当前文件夹",
+            Self::Terminal => "在此处打开终端",
             Self::Properties => "属性", Self::More => "显示更多选项",
         }
     }
@@ -135,7 +145,7 @@ impl Action {
             Self::Rename => ZsAccelerator::new(ZsAcceleratorKey::Function(2)),
             Self::Delete => ZsAccelerator::new(ZsAcceleratorKey::Delete),
             Self::Properties => enter.with_alt(),
-            Self::Shortcut | Self::Compress | Self::Terminal | Self::More => return None,
+            Self::Shortcut | Self::Compress | Self::Extract | Self::Terminal | Self::More => return None,
         })
     }
 }
@@ -151,6 +161,8 @@ pub(super) fn outcome(id: &str) -> Option<MenuOutcome> {
         "refresh" => MenuOutcome::Refresh,
         "rename" => MenuOutcome::Rename,
         "delete" => MenuOutcome::Delete { permanent:false },
+        "compress" => MenuOutcome::Compress,
+        "extract" => MenuOutcome::Extract,
         _ => return None,
     })
 }
