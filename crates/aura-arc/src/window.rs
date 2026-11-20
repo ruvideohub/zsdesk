@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use aura_windows::gfx::{Align, Color, Gfx, RectF, Surface, TextStyle};
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, BitBlt, EndPaint, InvalidateRect, UpdateWindow, HDC, PAINTSTRUCT};
+use windows::Win32::Graphics::Gdi::{BeginPaint, BitBlt, EndPaint, InvalidateRect, UpdateWindow, PAINTSTRUCT, SRCCOPY};
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::Dialogs::{
     GetOpenFileNameW, OFN_ALLOWMULTISELECT, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
@@ -23,7 +24,7 @@ use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDR
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
     GetWindowLongPtrW, LoadCursorW, PostQuitMessage, RegisterClassExW,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CS_HREDRAW,
+    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
     CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCURSOR, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE,
     WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
     WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
@@ -590,11 +591,11 @@ impl App {
                 }
                 cv.text(labels[index].0, RectF::new(rect.x + 8.0, rect.y, rect.w - 40.0, 20.0), &style(13.0), p.text);
                 cv.text(labels[index].1, RectF::new(rect.x + 8.0, rect.y + 16.0, rect.w - 40.0, 16.0), &style(11.5), p.text_secondary);
-                let box = RectF::new(rect.right() - 26.0, rect.y + 6.0, 18.0, 18.0);
-                cv.round(box, 5.0, if on { p.accent } else { p.field });
-                cv.stroke_round(box, 5.0, if on { p.accent } else { p.divider }, 1.0);
+                let toggle = RectF::new(rect.right() - 26.0, rect.y + 6.0, 18.0, 18.0);
+                cv.round(toggle, 5.0, if on { p.accent } else { p.field });
+                cv.stroke_round(toggle, 5.0, if on { p.accent } else { p.divider }, 1.0);
                 if on {
-                    cv.glyph("\u{e73e}", box, 12.0, Color::rgba8(0x10, 0x14, 0x18, 255));
+                    cv.glyph("\u{e73e}", toggle, 12.0, Color::rgba8(0x10, 0x14, 0x18, 255));
                 }
             }
             let hovered = self.hover == Some(Hit::SettingsDone);
@@ -960,12 +961,14 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
         if !console.0.is_null() {
             let _ = ShowWindow(console, windows::Win32::UI::WindowsAndMessaging::SW_HIDE);
         }
+        // Direct2D factories want a COM-initialised thread: this is the UI thread.
+        let com = CoInitializeEx(None, COINIT_APARTMENTTHREADED).is_ok();
         let instance = GetModuleHandleW(None)
             .map(|module| HINSTANCE(module.0))
             .unwrap_or(HINSTANCE(std::ptr::null_mut()));
         let class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: Some(window_proc),
             hInstance: instance,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or(HCURSOR(std::ptr::null_mut())),
@@ -1033,6 +1036,9 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             }
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
+        }
+        if com {
+            CoUninitialize();
         }
     }
     0
