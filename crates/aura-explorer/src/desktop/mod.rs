@@ -40,12 +40,23 @@ fn stale_startup_for_profile(current:&str,expected:&str)->bool{
         &&crate::explorer_forwarder::same_path(std::path::Path::new(&old[3]),std::path::Path::new(&new[3]))
         &&old_exe.try_exists().is_ok_and(|exists|!exists)
 }
+/// The fences moved to `fences.exe`: a logon entry left pointing at the file window in the
+/// same folder, with exactly the same arguments, is this installation's older shape.
+fn entry_before_fences_exe(current:&str,expected:&str)->bool{
+    let Some(old)=startup_arguments(current)else{return false;};let Some(new)=startup_arguments(expected)else{return false;};
+    if old.len()!=4||new.len()!=4||old[1]!="--desktop"||old[2]!="--profile-dir"||new[1..]!=old[1..]{return false;}
+    let old_exe=std::path::Path::new(&old[0]);let new_exe=std::path::Path::new(&new[0]);
+    let same_folder=old_exe.parent().zip(new_exe.parent()).is_some_and(|(a,b)|crate::explorer_forwarder::same_path(a,b));
+    let name=|path:&std::path::Path|path.file_name().and_then(|n|n.to_str()).map(|n|n.to_ascii_lowercase());
+    same_folder&&name(old_exe).is_some_and(|n|n=="auraexplorer.exe")&&name(new_exe).is_some_and(|n|n=="fences.exe")
+}
 pub fn startup_enabled(config: &std::path::Path) -> anyhow::Result<bool> {
     let executable = std::env::current_exe()?;
     let expected = host::fence_startup_command(&executable, config)
         .ok_or_else(|| anyhow::anyhow!("{}", aura_core::tr_format!("无法确定桌面格子的程序和配置目录")))?;
     for name in [startup_value(config),crate::edition::desktop_startup_value().into()]{
-        if aura_windows::desktop::autostart_command(&name)?.as_deref().is_some_and(|current|aura_windows::desktop::autostart_owned(current,&expected)){return Ok(true);}
+        if aura_windows::desktop::autostart_command(&name)?.as_deref()
+            .is_some_and(|current|aura_windows::desktop::autostart_owned(current,&expected)||entry_before_fences_exe(current,&expected)){return Ok(true);}
     }Ok(false)
 }
 
@@ -58,7 +69,7 @@ pub fn set_startup_enabled(config: &std::path::Path, enabled: bool) -> anyhow::R
     let name=startup_value(config);let legacy_name=crate::edition::desktop_startup_value();
     let legacy=aura_windows::desktop::autostart_command(legacy_name)?;
     let current=aura_windows::desktop::autostart_command(&name)?;
-    let stale=current.as_ref().filter(|current|stale_startup_for_profile(current,&expected));
+    let stale=current.as_ref().filter(|current|stale_startup_for_profile(current,&expected)||entry_before_fences_exe(current,&expected));
     if let Some(current)=stale{
         aura_windows::desktop::set_autostart(&name,current,false)?;
     }
@@ -66,7 +77,7 @@ pub fn set_startup_enabled(config: &std::path::Path, enabled: bool) -> anyhow::R
         if let Some(previous)=stale{if aura_windows::desktop::autostart_command(&name)?.is_none(){let _=aura_windows::desktop::set_autostart(&name,previous,true);}}
         return Err(error.into());
     }
-    if let Some(legacy)=legacy.filter(|legacy|aura_windows::desktop::autostart_owned(legacy,&expected)||stale_startup_for_profile(legacy,&expected)){
+    if let Some(legacy)=legacy.filter(|legacy|aura_windows::desktop::autostart_owned(legacy,&expected)||stale_startup_for_profile(legacy,&expected)||entry_before_fences_exe(legacy,&expected)){
         // Enabling has succeeded before retiring a demonstrably stale entry.
         // set_autostart rechecks the exact value; unrelated installs survive.
         aura_windows::desktop::set_autostart(legacy_name,&legacy,false)?;
@@ -80,11 +91,12 @@ pub fn uninstall_owned_startup(config: &std::path::Path, executable: &std::path:
     let Some(expected) = host::fence_startup_command(executable, config) else { return Ok(()); };
     let value = crate::edition::desktop_startup_value();
     let scoped=startup_value(config);
-    if aura_windows::desktop::autostart_command(&scoped)?.as_deref().is_some_and(|current|aura_windows::desktop::autostart_owned(current,&expected)){
+    if aura_windows::desktop::autostart_command(&scoped)?.as_deref()
+        .is_some_and(|current|aura_windows::desktop::autostart_owned(current,&expected)||entry_before_fences_exe(current,&expected)){
         aura_windows::desktop::set_autostart(&scoped,&expected,false)?;
     }
     if aura_windows::desktop::autostart_command(value)?.as_deref()
-        .is_some_and(|current| aura_windows::desktop::autostart_owned(current, &expected)) {
+        .is_some_and(|current| aura_windows::desktop::autostart_owned(current, &expected)||entry_before_fences_exe(current, &expected)) {
         aura_windows::desktop::set_autostart(value, &expected, false)?;
     }
     Ok(())

@@ -10,6 +10,16 @@ rust-version = "1.88"
 description = "AuraDock: the panel and Launchpad of the AuraExplorer desktop (Rust + Windows Composition)"
 publish = false
 
+# Two programs from this package: the panel and the desktop-widget host. Everything they
+# share is the library (src/lib.rs).
+[[bin]]
+name = "aura-dock"
+path = "src/main.rs"
+
+[[bin]]
+name = "widgets"
+path = "src/bin/widgets.rs"
+
 [build-dependencies]
 # Gives the panel executable its icon and version block (see build.rs).
 embed-resource = "3.0"

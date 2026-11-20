@@ -75,7 +75,6 @@ const T_DRAG_PREVIEW: usize = 19;
 /// A drag rested on a window tile: bring that window forward.
 const T_DRAG_SWITCH: usize = 20;
 /// The desktop clock card: one second, redraws only when its text changes.
-const T_CLOCK: usize = 24;
 pub const WM_APP_WINKEY: u32 = WM_APP + 4;
 /// The desktop clock card was right-clicked: open its menu.
 pub const WM_APP_CLOCK_MENU: u32 = WM_APP + 12;
@@ -681,7 +680,8 @@ struct Dock {
     wtick: u64,
     /// The Start button's four panes, and whether they're spread (hovered).
     /// The desktop clock card, when the settings ask for one.
-    clock: Option<crate::desktop_clock::DesktopClock>,
+    /// The desktop clock card, hosted by `widgets.exe` in its own process.
+    clock_host: Option<std::process::Child>,
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -4820,6 +4820,11 @@ impl Dock {
     fn shutdown(&mut self) {
         self.hub.shutdown();
         self.helpers.stop();
+        // The desktop clock lives in its own process: it goes with the panel.
+        if let Some(mut child) = self.clock_host.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         crate::tray::stop();
         if self.integrate {
             taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar_edge);
@@ -5075,7 +5080,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     d.rescan();
                 },
                 T_REVEAL => d.on_reveal_timer(),
-                T_CLOCK => d.tick_clock(),
                 T_TRAY_RAISE => crate::tray::raise(),
                 T_UPDATE_CHECK => unsafe {
                     // Look again every hour (no network; a check runs only when due).
@@ -5407,13 +5411,6 @@ fn this_display(opts: &Options) -> (RECT, u32) {
 }
 
 impl Dock {
-    /// One second of the desktop clock: nothing is redrawn unless its text changed.
-    fn tick_clock(&mut self) {
-        if let Some(clock) = self.clock.as_mut() {
-            let _ = clock.tick(&self.compositor, &self.gfx);
-        }
-    }
-
     /// Is a full-screen app in front of this display?
     ///
     /// Games, video players and presentations cover the whole monitor and must not get a
@@ -5485,28 +5482,49 @@ impl Dock {
         }
     }
 
-    /// Create, update or remove the desktop clock card from the current settings.
+    /// Start, stop or restart the desktop clock card from the current settings.
+    ///
+    /// The card is a window of `widgets.exe` — its own process — since 0.3.19: a redraw
+    /// problem or a hang on the desktop must not take the panel with it. The panel is still
+    /// the single writer of the settings, and it is still the one that draws the card's menu;
+    /// the card only reports that it was dragged or right-clicked.
     fn restart_clock(&mut self) {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         if !self.is_main_dock() {
             return;
         }
+        // Whatever is running was started with the previous settings.
+        if let Some(mut child) = self.clock_host.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         if !self.cfg.desktop_clock {
-            if self.clock.take().is_some() {
-                let _ = unsafe { KillTimer(Some(self.hwnd), T_CLOCK) };
-            }
             return;
         }
-        let prefs = crate::desktop_clock::Prefs::from_config(&self.cfg);
-        if let Some(clock) = self.clock.as_mut() {
-            clock.set_prefs(prefs);
-            let _ = clock.repaint(&self.compositor, &self.gfx);
-            return;
+        let Ok(panel) = std::env::current_exe() else { return };
+        // `widgets.exe` sits next to the panel; without it (an installation updated by
+        // copying just the panel) the panel hosts the card in a second process of its own,
+        // through the same code.
+        let (exe, as_component) = match panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()) {
+            Some(widgets) => (widgets, false),
+            None => (panel, true),
+        };
+        let mut command = std::process::Command::new(exe);
+        if as_component {
+            command.arg("--component").arg("clock");
         }
-        match crate::desktop_clock::DesktopClock::new(&self.compositor, self.monitor, self.scale, prefs, self.hwnd) {
-            Ok(mut clock) => {
-                let _ = clock.repaint(&self.compositor, &self.gfx);
-                self.clock = Some(clock);
-                let _ = unsafe { SetTimer(Some(self.hwnd), T_CLOCK, 1000, None) };
+        let child = command
+            .arg("--dock")
+            .arg(format!("{:#x}", self.hwnd.0 as isize))
+            .arg("--parent")
+            .arg(std::process::id().to_string())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+        match child {
+            Ok(child) => {
+                self.clock_host = Some(child);
+                trace!("desktop clock: hosted by widgets.exe (pid {})", self.clock_host.as_ref().map(|c| c.id()).unwrap_or(0));
             }
             Err(error) => trace!("desktop clock unavailable: {error:?}"),
         }
@@ -5514,10 +5532,11 @@ impl Dock {
 
     /// The clock card's menu: where it sits, how big it is and what it shows.
     fn clock_menu(&mut self) {
-        let prefs = match self.clock.as_ref() {
-            Some(clock) => clock.prefs(),
-            None => return,
-        };
+        // The card runs in another process: ask the settings, which the panel owns.
+        if !self.cfg.desktop_clock {
+            return;
+        }
+        let prefs = crate::desktop_clock::Prefs::from_config(&self.cfg);
         let mut m = vec![MenuItem::header("Desktop Clock")];
         for (index, corner) in crate::config::ClockCorner::ALL.iter().enumerate() {
             m.push(MenuItem::item(format!("Corner: {}", corner.label()), CMD_CLOCK_CORNER_BASE + index).checked(prefs.corner == *corner));
@@ -5739,7 +5758,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             menu_lpw: None,
             lpw_press: None,
             wtick: 0,
-            clock: None,
+            clock_host: None,
             floor_y: 0,
             panel_top: false,
             band_topmost: false,

@@ -902,6 +902,10 @@ impl WindowState {
 
     fn launch_desktop(&mut self, extra: &[String]) {
         let Ok(exe) = std::env::current_exe() else { return };
+        // The desktop host has its own program next to ours (`fences.exe`); without it we
+        // host the desktop ourselves, exactly as before.
+        let fences = exe.parent().map(|dir| dir.join("fences.exe")).filter(|path| path.is_file());
+        let exe = fences.unwrap_or(exe);
         let mut command = std::process::Command::new(exe);
         command.arg("--desktop").args(extra);
         if let Some(dir) = self.config_path.parent() { command.arg("--profile-dir").arg(dir); }

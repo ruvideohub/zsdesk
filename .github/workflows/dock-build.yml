@@ -42,9 +42,11 @@ jobs:
         working-directory: aura
         shell: pwsh
         run: |
-          cargo build --locked --release -p aura-explorer
+          # `--bins`: each package builds the panel/file window *and* its own component
+          # (fences.exe from aura-explorer, widgets.exe from aura-dock).
+          cargo build --locked --release -p aura-explorer --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          cargo build --locked --release -p aura-dock
+          cargo build --locked --release -p aura-dock --bins
           exit $LASTEXITCODE
       - name: Collect the executables
         working-directory: aura
@@ -53,6 +55,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item -LiteralPath target/release/aura-explorer.exe -Destination dist/AuraExplorer.exe
           Copy-Item -LiteralPath target/release/aura-dock.exe -Destination dist/AuraDock.exe
+          # The two components: the desktop fence host and the desktop-widget host.
+          Copy-Item -LiteralPath target/release/fences.exe -Destination dist/fences.exe
+          Copy-Item -LiteralPath target/release/widgets.exe -Destination dist/widgets.exe
           # Один архив: два exe и установщик-скрипт с автозапуском рядом с ними.
           # The window hook DLL is loaded by name from the executable folder; without it the
           # Explorer takeover guard cannot start at all.

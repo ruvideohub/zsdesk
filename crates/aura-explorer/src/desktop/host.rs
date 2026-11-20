@@ -159,8 +159,15 @@ fn history_shortcut(key: u16, control: bool, shift: bool, alt: bool) -> Option<H
 pub(super) fn fence_startup_command(executable:&Path,config:&Path)->Option<String> {
     let profile=config.parent()?;
     if !executable.is_absolute() || !profile.is_absolute() {return None;}
+    // The fences have their own program since 0.3.19 (`fences.exe`, next to the file
+    // window). An installation made from an archive that predates it keeps pointing at the
+    // file window, which still hosts the desktop with `--desktop`.
+    let exe = match executable.parent().map(|dir| dir.join("fences.exe")).filter(|path| path.is_file()) {
+        Some(fences) => fences,
+        None => executable.to_path_buf(),
+    };
     let quote=crate::quick_search::control::quote_argument;
-    Some(format!("{} --desktop --profile-dir {}",quote(&executable.to_string_lossy()),quote(&profile.to_string_lossy())))
+    Some(format!("{} --desktop --profile-dir {}",quote(&exe.to_string_lossy()),quote(&profile.to_string_lossy())))
 }
 
 fn pending_collection_allowed(config: &DesktopConfig, known: &HashSet<String>, key: &str) -> bool {

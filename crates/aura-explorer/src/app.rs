@@ -135,6 +135,13 @@ fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
     } else if opts.import_report.is_some() || opts.apply_import {
         bail!("--import-report 和 --apply-import 必须与 --import-tencent 配合使用");
     }
+    // `fences.exe` is the desktop host: started bare (by hand, or from a shortcut) it shows
+    // the fences rather than a file window, which is not part of that program's job.
+    if crate::fences_component() && opts.mode == Mode::Explorer && opts.target.is_none() && !opts.select && !opts.win_e
+        && opts.diagnostics_main.is_none() && !opts.integration_enable && !opts.integration_refresh && !opts.uninstall_integration
+        && !opts.routing_apply && opts.import_source.is_none() {
+        opts.mode = Mode::Desktop(DesktopCommand::Show);
+    }
     Ok(opts)
 }
 

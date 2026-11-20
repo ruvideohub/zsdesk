@@ -78,7 +78,7 @@ function Stop-AuraExplorer {
             Start-Sleep -Milliseconds 250
         }
     }
-    Get-Process -Name 'AuraExplorer', 'aura-dock' -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name 'AuraExplorer', 'aura-dock', 'fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
 }
@@ -136,7 +136,11 @@ if ($Remove) {
 # ------------------------------------------------------------------ установка
 Write-Head 'Установка AuraExplorer'
 
+# fences.exe — хост сеток рабочего стола, widgets.exe — виджет рабочего стола (часы).
+# Оба необязательны: без них AuraExplorer сам поднимет сетки (`--desktop`), а панель —
+# часы во втором своём процессе, поэтому в списке обязательных их нет.
 $needed = @('AuraExplorer.exe', 'AuraDock.exe')
+$components = @('fences.exe', 'widgets.exe')
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
@@ -148,9 +152,15 @@ $sameFolder = ($Source.TrimEnd('\') -eq $Dir.TrimEnd('\'))
 if (-not $sameFolder) { Stop-AuraExplorer }
 
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-foreach ($file in $needed) {
+foreach ($file in $needed + $components) {
+    $from = Join-Path $Source $file
+    if (-not (Test-Path -LiteralPath $from -PathType Leaf)) {
+        if ($needed -contains $file) { continue }
+        Write-Note "$file нет в архиве — компонент останется внутри основных программ"
+        continue
+    }
     if (-not $sameFolder) {
-        Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $Dir -Force
+        Copy-Item -LiteralPath $from -Destination $Dir -Force
     }
     Write-Note "$file -> $Dir"
 }

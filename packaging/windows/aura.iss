@@ -99,7 +99,7 @@ Source: "{#SourceDir}\AuraExplorerWindowHook-*.dll"; DestDir: "{app}"; Flags: on
 Name: "{group}\{#ProductName}"; Filename: "{app}\AuraExplorer.exe"; AppUserModelID: "{#ProductModelId}"; Check: not WizardNoIcons
 Name: "{autodesktop}\{#ProductName}"; Filename: "{app}\AuraExplorer.exe"; AppUserModelID: "{#ProductModelId}"; Tasks: desktopicon; Check: not WizardNoIcons
 #if (Int(HasDesktop) != 0) && (Edition != "desktop-box")
-Name: "{group}\{cm:Fences}"; Filename: "{app}\AuraExplorer.exe"; Parameters: "--desktop"; Check: not WizardNoIcons
+Name: "{group}\{cm:Fences}"; Filename: "{app}\fences.exe"; Check: not WizardNoIcons
 #endif
 
 [Registry]

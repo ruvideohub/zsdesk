@@ -28,6 +28,11 @@ desktop = []
 desktop-box = ["desktop"]
 themed = ["network", "desktop"]
 
+# The desktop host as its own program (the file window starts it with `--desktop`).
+[[bin]]
+name = "fences"
+path = "src/bin/fences.rs"
+
 [[example]]
 name = "desktop_probe"
 path = "examples/desktop_probe.rs"
