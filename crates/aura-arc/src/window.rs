@@ -7,6 +7,7 @@
 //! Every action goes through the engine the command line uses, so the window cannot drift away
 //! from the program.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use aura_windows::gfx::{Align, Color, Gfx, RectF, Surface, TextStyle};
@@ -23,11 +24,12 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, LoadCursorW, PostQuitMessage, RegisterClassExW,
+    GetWindowLongPtrW, KillTimer, LoadCursorW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
     SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
     CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCURSOR, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE,
     WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
+    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WS_OVERLAPPEDWINDOW,
 };
 
 use crate::zip;
@@ -51,6 +53,11 @@ const FILTERS: [(&str, &str); 5] = [
     ("\u{e8b9}", "Медиа"),
     ("\u{e7b8}", "Архивы"),
 ];
+
+/// Our own message: a worker thread has news for the window.
+const WM_APP_WORK: u32 = 0x8000 + 1;
+/// The window's one timer, which keeps the progress bar moving while a worker runs.
+const TIMER: usize = 1;
 
 const ROW_HEIGHT: f32 = 30.0;
 const TOOLBAR_HEIGHT: f32 = 78.0;
@@ -151,6 +158,142 @@ impl Settings {
     }
 }
 
+/// What the window asks a worker thread to do. Everything the engine needs is moved in, so the
+/// window stays answerable while a big archive is packed or unpacked.
+enum Job {
+    Add { archive: PathBuf, files: Vec<PathBuf>, store: bool },
+    Extract { archive: PathBuf, destination: PathBuf, open_after: bool },
+    Test { archive: PathBuf },
+    Copy { archive: PathBuf, destination: PathBuf, names: Vec<String> },
+    Remove { archive: PathBuf, names: Vec<String> },
+}
+
+/// What a worker tells the window: how far it has come, and what it ended up doing.
+enum Done {
+    Progress { done: usize, total: usize },
+    Finished { status: String },
+}
+
+impl Job {
+    fn begin(&self) -> String {
+        match self {
+            Job::Add { .. } => String::from("Упаковываю…"),
+            Job::Extract { destination, .. } => format!("Распаковываю в {}…", destination.display()),
+            Job::Test { .. } => String::from("Проверяю…"),
+            Job::Copy { destination, .. } => format!("Копирую в {}…", destination.display()),
+            Job::Remove { .. } => String::from("Убираю из архива…"),
+        }
+    }
+
+    fn run(self, tell: &std::sync::mpsc::Sender<Done>) -> String {
+        match self {
+            Job::Add { archive, files, store } => {
+                let mut done = 0usize;
+                let outcome = zip::add(&archive, &files, store, |_, _| {
+                    done += 1;
+                    let _ = tell.send(Done::Progress { done, total: 0 });
+                });
+                match outcome {
+                    Ok(summary) => {
+                        let mut text = format!(
+                            "Добавлено: {}, {}",
+                            crate::items(summary),
+                            crate::size(summary.packed)
+                        );
+                        if summary.skipped > 0 {
+                            text.push_str(&format!(
+                                ", уже было: {}",
+                                crate::plural(summary.skipped, "запись", "записи", "записей")
+                            ));
+                        }
+                        if summary.failed > 0 {
+                            text.push_str(&format!(
+                                ", не удалось: {}",
+                                crate::plural(summary.failed, "файл", "файла", "файлов")
+                            ));
+                        }
+                        text
+                    }
+                    Err(error) => format!("{error}"),
+                }
+            }
+            Job::Extract { archive, destination, open_after } => {
+                let total = zip::entries(&archive).map(|entries| entries.len()).unwrap_or(0);
+                let mut done = 0usize;
+                let outcome = zip::extract(&archive, &destination, |_, _| {
+                    done += 1;
+                    let _ = tell.send(Done::Progress { done, total });
+                });
+                match outcome {
+                    Ok(summary) => {
+                        if open_after {
+                            open_folder(&destination);
+                        }
+                        let mut text = format!(
+                            "Распаковано: {} в {}",
+                            crate::items(summary),
+                            destination.display()
+                        );
+                        if summary.failed > 0 {
+                            text.push_str(&format!(
+                                ", с ошибками: {}",
+                                crate::plural(summary.failed, "файл", "файла", "файлов")
+                            ));
+                        }
+                        text
+                    }
+                    Err(error) => format!("{error}"),
+                }
+            }
+            Job::Test { archive } => {
+                let total = zip::entries(&archive).map(|entries| entries.len()).unwrap_or(0);
+                let mut done = 0usize;
+                let outcome = zip::test(&archive, |_, _| {
+                    done += 1;
+                    let _ = tell.send(Done::Progress { done, total });
+                });
+                match outcome {
+                    Ok(summary) if summary.failed == 0 => format!("Всё цело: {}", crate::items(summary)),
+                    Ok(summary) => format!(
+                        "Повреждено: {} из {}",
+                        crate::plural(summary.failed, "файл", "файла", "файлов"),
+                        summary.files + summary.failed
+                    ),
+                    Err(error) => format!("{error}"),
+                }
+            }
+            Job::Copy { archive, destination, names } => {
+                let total = names.len();
+                let mut done = 0usize;
+                let outcome = zip::extract_only(&archive, &destination, &names, |_, _| {
+                    done += 1;
+                    let _ = tell.send(Done::Progress { done, total });
+                });
+                match outcome {
+                    Ok(summary) if summary.files + summary.folders > 0 => format!(
+                        "Скопировано: {} в {}",
+                        crate::items(summary),
+                        destination.display()
+                    ),
+                    Ok(_) => String::from("Копировать нечего: выбранные записи пусты."),
+                    Err(error) => format!("{error}"),
+                }
+            }
+            Job::Remove { archive, names } => {
+                let _ = tell.send(Done::Progress { done: 0, total: 0 });
+                let name = archive
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                match zip::remove(&archive, &names) {
+                    Ok(summary) => format!("Убрано из «{name}»: {}", crate::items(summary)),
+                    Err(error) => format!("{error}"),
+                }
+            }
+        }
+    }
+}
+
 struct App {
     hwnd: HWND,
     gfx: Option<Gfx>,
@@ -159,7 +302,10 @@ struct App {
     archive: Option<PathBuf>,
     entries: Vec<zip::Entry>,
     visible: Vec<usize>,
-    selected: Option<usize>,
+    /// Rows picked in the table, by their position in `visible`.
+    selected: BTreeSet<usize>,
+    /// Where a Shift+click range starts.
+    anchor: Option<usize>,
     filter: usize,
     query: String,
     scroll: f32,
@@ -168,6 +314,11 @@ struct App {
     settings_open: bool,
     status: String,
     busy: bool,
+    /// What the worker is saying, while there is one.
+    work: Option<std::sync::mpsc::Receiver<Done>>,
+    total: usize,
+    done: usize,
+    ticks: usize,
     width: f32,
     height: f32,
 }
@@ -253,7 +404,8 @@ impl App {
             .filter(|(_, entry)| query.is_empty() || entry.name.to_lowercase().contains(&query))
             .map(|(index, _)| index)
             .collect();
-        self.selected = None;
+        self.selected.clear();
+        self.anchor = None;
         self.scroll = 0.0;
     }
 
@@ -265,15 +417,19 @@ impl App {
 
     fn summary(&self) -> String {
         let (size, packed) = self.totals();
-        match self.selected.and_then(|index| self.visible.get(index)).and_then(|index| self.entries.get(*index)) {
-            Some(entry) => format!("Выбрано: 1 объект ({})", crate::size(entry.size)),
-            None => format!(
-                "{}, {} в архиве, {} после сжатия",
-                crate::plural(self.entries.len(), "объект", "объекта", "объектов"),
-                crate::size(size),
-                crate::size(packed),
-            ),
+        if !self.selected.is_empty() {
+            return format!(
+                "Выбрано: {} ({})",
+                crate::plural(self.selected.len(), "объект", "объекта", "объектов"),
+                crate::size(self.selected_bytes())
+            );
         }
+        format!(
+            "{}, {} в архиве, {} после сжатия",
+            crate::plural(self.entries.len(), "объект", "объекта", "объектов"),
+            crate::size(size),
+            crate::size(packed),
+        )
     }
 
     fn name(&self) -> String {
@@ -325,86 +481,32 @@ impl App {
     fn add_files(&mut self) {
         let Some(archive) = self.archive.clone() else { return };
         let Some(files) = pick_files(self.hwnd, true, "Добавить в архив") else { return };
-        self.add_paths(&archive, &files);
+        self.start(Job::Add { archive, files, store: !self.settings.compress });
     }
 
     fn add_paths(&mut self, archive: &Path, files: &[PathBuf]) {
         if files.is_empty() {
             return;
         }
-        self.busy = true;
-        self.status = String::from("Упаковываю…");
-        self.invalidate();
-        let store = !self.settings.compress;
-        let summary = zip::add(archive, files, store, |_, _| {});
-        self.busy = false;
-        self.reload();
-        self.status = match summary {
-            Ok(summary) => {
-                let mut text = format!("Добавлено: {}, {}", crate::items(summary), crate::size(summary.packed));
-                if summary.skipped > 0 {
-                    text.push_str(&format!(
-                        ", уже было: {}",
-                        crate::plural(summary.skipped, "файл", "файла", "файлов")
-                    ));
-                }
-                if summary.failed > 0 {
-                    text.push_str(&format!(
-                        ", не удалось: {}",
-                        crate::plural(summary.failed, "файл", "файла", "файлов")
-                    ));
-                }
-                text
-            }
-            Err(error) => format!("{error}"),
-        };
-        self.invalidate();
+        self.start(Job::Add {
+            archive: archive.to_path_buf(),
+            files: files.to_vec(),
+            store: !self.settings.compress,
+        });
     }
 
     fn extract(&mut self) {
         let Some(archive) = self.archive.clone() else { return };
-        let destination = crate::beside(&archive);
-        self.busy = true;
-        self.status = format!("Распаковываю в {}…", destination.display());
-        self.invalidate();
-        let summary = zip::extract(&archive, &destination, |_, _| {});
-        self.busy = false;
-        self.status = match summary {
-            Ok(summary) => {
-                if self.settings.open_after {
-                    open_folder(&destination);
-                }
-                let mut text = format!("Распаковано: {} в {}", crate::items(summary), destination.display());
-                if summary.failed > 0 {
-                    text.push_str(&format!(
-                        ", с ошибками: {}",
-                        crate::plural(summary.failed, "файл", "файла", "файлов")
-                    ));
-                }
-                text
-            }
-            Err(error) => format!("{error}"),
-        };
-        self.invalidate();
+        self.start(Job::Extract {
+            destination: crate::beside(&archive),
+            archive,
+            open_after: self.settings.open_after,
+        });
     }
 
     fn test(&mut self) {
         let Some(archive) = self.archive.clone() else { return };
-        self.busy = true;
-        self.status = String::from("Проверяю…");
-        self.invalidate();
-        let result = zip::test(&archive, |_, _| {});
-        self.busy = false;
-        self.status = match result {
-            Ok(summary) if summary.failed == 0 => format!("Всё цело: {}", crate::items(summary)),
-            Ok(summary) => format!(
-                "Повреждено: {} из {}",
-                crate::plural(summary.failed, "файл", "файла", "файлов"),
-                summary.files + summary.failed
-            ),
-            Err(error) => format!("{error}"),
-        };
-        self.invalidate();
+        self.start(Job::Test { archive });
     }
 
     fn activate(&mut self, tool: usize) {
@@ -426,58 +528,120 @@ impl App {
     fn enabled(&self, tool: usize) -> bool {
         match tool {
             0 | 6 => true,
-            4 | 5 => self.selected.is_some(),
+            4 | 5 => !self.selected.is_empty(),
             _ => self.archive.is_some(),
         }
     }
 
-    fn selected_entry(&self) -> Option<&zip::Entry> {
-        let index = *self.visible.get(self.selected?)?;
-        self.entries.get(index)
-    }
-
-    /// «Копировать»: the picked row, unpacked beside the archive.
+    /// «Копировать»: the picked rows, unpacked beside the archive.
     fn copy_selected(&mut self) {
         let Some(archive) = self.archive.clone() else { return };
-        let Some(entry) = self.selected_entry().map(|entry| entry.name.clone()) else {
+        let names = self.selected_names();
+        if names.is_empty() {
             self.status = String::from("Сначала выберите запись в таблице.");
             self.invalidate();
             return;
-        };
-        let destination = crate::beside(&archive);
+        }
+        self.start(Job::Copy { archive, destination: crate::beside(&archive), names });
+    }
+
+    /// «Удалить»: the picked rows go, everything else is copied over untouched.
+    fn delete_selected(&mut self) {
+        let Some(archive) = self.archive.clone() else { return };
+        let names = self.selected_names();
+        if names.is_empty() {
+            self.status = String::from("Сначала выберите запись в таблице.");
+            self.invalidate();
+            return;
+        }
+        self.start(Job::Remove { archive, names });
+    }
+
+    /// The names behind the picked rows, in the order they appear.
+    fn selected_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for position in &self.selected {
+            let Some(index) = self.visible.get(*position) else { continue };
+            let Some(entry) = self.entries.get(*index) else { continue };
+            names.push(entry.name.clone());
+        }
+        names
+    }
+
+    fn selected_bytes(&self) -> u64 {
+        let mut bytes = 0;
+        for position in &self.selected {
+            let Some(index) = self.visible.get(*position) else { continue };
+            let Some(entry) = self.entries.get(*index) else { continue };
+            bytes += entry.size;
+        }
+        bytes
+    }
+
+    // ---- the worker ----------------------------------------------------------
+
+    /// Nothing in here blocks the window: the engine runs on its own thread and talks back
+    /// through a channel, and the window is woken by a message of its own.
+    fn start(&mut self, job: Job) {
+        if self.busy {
+            self.status = String::from("Подождите: идёт работа.");
+            self.invalidate();
+            return;
+        }
         self.busy = true;
-        self.status = format!("Копирую «{entry}» в {}…", destination.display());
-        self.invalidate();
-        let result = zip::extract_only(&archive, &destination, std::slice::from_ref(&entry), |_, _| {});
-        self.busy = false;
-        self.status = match result {
-            Ok(summary) if summary.files + summary.folders > 0 => {
-                format!("Скопировано: {} в {}", crate::items(summary), destination.display())
+        self.total = 0;
+        self.done = 0;
+        self.ticks = 0;
+        self.status = job.begin();
+        let (tell, hear) = std::sync::mpsc::channel();
+        self.work = Some(hear);
+        let window = self.hwnd.0 as isize;
+        std::thread::spawn(move || {
+            let status = job.run(&tell);
+            let _ = tell.send(Done::Finished { status });
+            let hwnd = HWND(window as *mut core::ffi::c_void);
+            unsafe {
+                let _ = PostMessageW(Some(hwnd), WM_APP_WORK, WPARAM(0), LPARAM(0));
             }
-            Ok(_) => String::from("Копировать нечего: выбранная запись пуста."),
-            Err(error) => format!("{error}"),
-        };
+        });
+        unsafe {
+            SetTimer(Some(self.hwnd), TIMER, 60, None);
+        }
         self.invalidate();
     }
 
-    /// «Удалить»: the picked row goes, everything else is copied over untouched.
-    fn delete_selected(&mut self) {
-        let Some(archive) = self.archive.clone() else { return };
-        let Some(entry) = self.selected_entry().map(|entry| entry.name.clone()) else {
-            self.status = String::from("Сначала выберите запись в таблице.");
-            self.invalidate();
-            return;
-        };
-        let name = self.name();
-        self.busy = true;
-        self.invalidate();
-        let result = zip::remove(&archive, std::slice::from_ref(&entry));
-        self.busy = false;
-        self.reload();
-        self.status = match result {
-            Ok(summary) => format!("Убрано из «{name}»: {}", crate::items(summary)),
-            Err(error) => format!("{error}"),
-        };
+    /// Reads whatever the worker has said since the last look and repaints.
+    fn poll(&mut self) {
+        self.ticks = self.ticks.wrapping_add(1);
+        let Some(hear) = self.work.take() else { return };
+        let mut finished = None;
+        loop {
+            match hear.try_recv() {
+                Ok(Done::Progress { done, total }) => {
+                    self.done = done;
+                    if total > 0 {
+                        self.total = total;
+                    }
+                }
+                Ok(Done::Finished { status }) => {
+                    finished = Some(status);
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        match finished {
+            Some(status) => {
+                self.busy = false;
+                self.status = status;
+                unsafe {
+                    let _ = KillTimer(Some(self.hwnd), TIMER);
+                }
+                self.reload();
+            }
+            // Nothing yet: keep listening and keep the bar moving.
+            None => self.work = Some(hear),
+        }
         self.invalidate();
     }
 
@@ -587,7 +751,7 @@ impl App {
             let Some(entry) = self.entries.get(index) else { break };
             let y = l.rows.y + slot as f32 * ROW_HEIGHT - (self.scroll - first as f32 * ROW_HEIGHT);
             let row = RectF::new(l.rows.x - 6.0, y, l.rows.w + 6.0, ROW_HEIGHT);
-            if self.selected == Some(position) {
+            if self.selected.contains(&position) {
                 cv.round(row.inset(2.0, 2.0), 8.0, p.surface_hover);
                 cv.stroke_round(row.inset(2.0, 2.0), 8.0, p.accent, 1.0);
             } else if self.hover == Some(Hit::Row(position)) {
@@ -621,13 +785,33 @@ impl App {
 
         // Status line.
         cv.line(0.0, l.status.y, width, l.status.y, p.divider, 1.0);
-        let left = if self.status.is_empty() { self.summary() } else { self.status.clone() };
+        let mut left = if self.status.is_empty() { self.summary() } else { self.status.clone() };
+        if self.busy && self.total > 0 {
+            left.push_str(&format!(" {} из {}", self.done.min(self.total), self.total));
+        }
         cv.text(&left, RectF::new(16.0, l.status.y, width - 220.0, l.status.h), &style(12.5), p.text_secondary);
         let (_, packed) = self.totals();
         let (size, _) = self.totals();
         let method = if self.entries.iter().any(|entry| entry.method != zip::STORED) { "Deflate" } else { "Без сжатия" };
         let ratio_text = if size > 0 { format!("{} • {}%", method, packed * 100 / size) } else { String::from(method) };
         cv.text(&ratio_text, RectF::new(width - 200.0, l.status.y, 184.0, l.status.h), &style_end(12.5), p.accent);
+        // While a worker runs the window says so with a bar, not with a frozen picture.
+        if self.busy {
+            let bar = RectF::new(l.status.x + 16.0, l.status.bottom() - 6.0, width - 32.0, 3.0);
+            cv.round(bar, 1.5, p.field);
+            if self.total > 0 {
+                let done = (self.done.min(self.total)) as f32 / self.total as f32;
+                if done > 0.0 {
+                    cv.round(RectF::new(bar.x, bar.y, bar.w * done, bar.h), 1.5, p.accent);
+                }
+            } else {
+                // Unknown length: a segment sweeping from left to right, moved by the timer.
+                let span = bar.w * 0.3;
+                let travel = bar.w - span;
+                let phase = (self.ticks % 40) as f32 / 40.0;
+                cv.round(RectF::new(bar.x + travel * phase, bar.y, span, bar.h), 1.5, p.accent);
+            }
+        }
 
         // Settings overlay.
         if self.settings_open {
@@ -726,7 +910,7 @@ impl App {
         None
     }
 
-    fn click(&mut self, x: f32, y: f32) {
+    fn click(&mut self, x: f32, y: f32, control: bool, shift: bool) {
         match self.hit(x, y) {
             Some(Hit::Tool(index)) => self.activate(index),
             Some(Hit::Filter(index)) => {
@@ -736,7 +920,22 @@ impl App {
                 self.invalidate();
             }
             Some(Hit::Row(position)) => {
-                self.selected = Some(position);
+                if control {
+                    if !self.selected.remove(&position) {
+                        self.selected.insert(position);
+                    }
+                    self.anchor = Some(position);
+                } else if shift {
+                    let anchor = self.anchor.unwrap_or(position);
+                    let (from, to) = if anchor <= position { (anchor, position) } else { (position, anchor) };
+                    for index in from..=to {
+                        self.selected.insert(index);
+                    }
+                } else {
+                    self.selected.clear();
+                    self.selected.insert(position);
+                    self.anchor = Some(position);
+                }
                 self.status.clear();
                 self.invalidate();
             }
@@ -796,9 +995,15 @@ impl App {
             0x74 => self.activate(3),
             // Delete, with a row picked: the same thing the «Удалить» tool does.
             0x2e => {
-                if self.selected.is_some() {
+                if !self.selected.is_empty() {
                     self.delete_selected();
                 }
+            }
+            0x41 if control => {
+                self.selected = (0..self.visible.len()).collect();
+                self.anchor = self.visible.first().copied();
+                self.status.clear();
+                self.invalidate();
             }
             _ => {}
         }
@@ -971,7 +1176,21 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
         WM_LBUTTONDOWN => {
             let x = (lp.0 & 0xffff) as i16 as f32;
             let y = ((lp.0 >> 16) & 0xffff) as i16 as f32;
-            app.click(x, y);
+            // MK_CONTROL and MK_SHIFT come with the click; asking for the keyboard state later
+            // would race with the person's own fingers.
+            let control = wp.0 & 0x0008 != 0;
+            let shift = wp.0 & 0x0004 != 0;
+            app.click(x, y, control, shift);
+            LRESULT(0)
+        }
+        WM_APP_WORK => {
+            app.poll();
+            LRESULT(0)
+        }
+        WM_TIMER => {
+            if app.busy {
+                app.poll();
+            }
             LRESULT(0)
         }
         WM_LBUTTONDBLCLK => {
@@ -1071,7 +1290,8 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             archive: None,
             entries: Vec::new(),
             visible: Vec::new(),
-            selected: None,
+            selected: BTreeSet::new(),
+            anchor: None,
             filter: 0,
             query: String::new(),
             scroll: 0.0,
@@ -1080,6 +1300,10 @@ pub fn run(archive: Option<PathBuf>) -> i32 {
             settings_open: false,
             status: String::new(),
             busy: false,
+            work: None,
+            total: 0,
+            done: 0,
+            ticks: 0,
             width: 860.0,
             height: 560.0,
         });
