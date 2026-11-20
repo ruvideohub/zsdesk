@@ -110,13 +110,49 @@ jobs:
           path: aura/installer/*
           if-no-files-found: ignore
       # The tests run after the archive is uploaded, so the archive exists either way — but a
-      # failing test must make the run red. It used to be `continue-on-error`, and a failing
-      # archiver test sat behind a green run for two releases: the packaged archive was
-      # corrupt, and nothing said so.
+      # failing test must make the run red. Two things were wrong with the old step:
+      #
+      #   * it sat behind `continue-on-error`, so a red test was a green run — the archiver's
+      #     "second add" test was failing for two releases and the shipped archive was corrupt;
+      #   * cargo stops at the first crate whose tests fail, and that crate is the archiver, so
+      #     nothing after it — core, windows, ui, service, the explorer — was ever run in CI.
+      #
+      # So each package is run on its own: one broken binary cannot hide the others, and the
+      # summary says which ones failed. On failure the step also prints what a test binary could
+      # not load, because "STATUS_ENTRYPOINT_NOT_FOUND" on its own says nothing.
       - name: Tests
         if: always()
+        shell: pwsh
         working-directory: aura
-        run: cargo test --locked --release --workspace --exclude aura-dock --exclude laminar-sys
+        run: |
+          $skip = @('aura-dock', 'laminar-sys')
+          $packages = @((cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            ForEach-Object { $_.name } | Where-Object { $skip -notcontains $_ })
+          $failed = @()
+          foreach ($package in $packages) {
+            Write-Host "::group::cargo test -p $package"
+            cargo test --locked --release -p $package
+            if ($LASTEXITCODE -ne 0) { $failed += $package }
+            Write-Host '::endgroup::'
+          }
+          if ($failed.Count -gt 0) {
+            Write-Host ("Упали: {0}" -f ($failed -join ', ')) -ForegroundColor Red
+            Write-Host 'Диагностика: что лежит рядом с тестовыми exe и что они грузят'
+            Get-ChildItem target/release/*.dll -ErrorAction SilentlyContinue | ForEach-Object { "release: {0} {1}" -f $_.Name, $_.Length }
+            Get-ChildItem target/release/deps/*.dll -ErrorAction SilentlyContinue | ForEach-Object { "deps: {0} {1}" -f $_.Name, $_.Length }
+            $dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($dumpbin) {
+              Get-ChildItem target/release/deps/aura_explorer-*.exe -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {
+                & $dumpbin.FullName /nologo /imports $_.FullName | Select-String -Pattern '\.dll' | Select-Object -First 40
+              }
+            } else {
+              Write-Host 'dumpbin.exe не найден'
+            }
+            Get-ChildItem "$env:SystemRoot\System32\vcruntime140*.dll", "$env:SystemRoot\System32\msvcp140*.dll" -ErrorAction SilentlyContinue |
+              ForEach-Object { "{0} {1}" -f $_.Name, $_.VersionInfo.FileVersion }
+            exit 1
+          }
+          Write-Host ("Тесты прошли: {0} пакетов" -f $packages.Count) -ForegroundColor Green
       # A second edition of the explorer (no default features) has to keep compiling.
       - name: Desktop edition compiles (does not block the archive)
         if: always()
