@@ -256,6 +256,28 @@ pub fn set_mic_muted(m: bool) -> bool {
     unsafe { ev.SetMute(m, std::ptr::null()).is_ok() }
 }
 
+/// Level of the default microphone, 0..1 (the same scale as [`master_volume`]).
+pub fn mic_volume() -> Option<f32> {
+    unsafe { mic_endpoint_volume()?.GetMasterVolumeLevelScalar().ok() }
+}
+
+/// Sets the default microphone's level (0..1). Raising it above zero also unmutes the
+/// microphone (Windows keeps the level while muted, so a drag from a muted state would
+/// otherwise look like it does nothing). Returns success.
+pub fn set_mic_volume(v: f32) -> bool {
+    let Some(ev) = mic_endpoint_volume() else { return false };
+    let v = v.clamp(0.0, 1.0);
+    unsafe {
+        if ev.SetMasterVolumeLevelScalar(v, std::ptr::null()).is_err() {
+            return false;
+        }
+        if v > 0.0 {
+            let _ = ev.SetMute(false, std::ptr::null());
+        }
+    }
+    true
+}
+
 /// Friendly name of the default output device (console role), e.g. "Speakers (Realtek(R) Audio)".
 pub fn default_output_name() -> Option<String> {
     unsafe {

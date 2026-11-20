@@ -2719,6 +2719,17 @@ impl Dock {
                         let _ = ReleaseCapture();
                     }
                 }
+                WM_RBUTTONUP => {
+                    // Right-click on a tray icon in the footer: the app's own menu, as on the
+                    // real taskbar.
+                    let key = match self.control_center.at(x, y) {
+                        Some((crate::control_center::CAct::Do(crate::widgets::WAct::Tray(key)), _, _)) => Some(key),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        self.tray_click(key, crate::tray::Click::Right);
+                    }
+                }
                 WM_MOUSEWHEEL => {}
                 WM_KEYDOWN => {
                     if wp.0 as u16 == windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 {
@@ -3238,6 +3249,9 @@ impl Dock {
     /// in front, at the pointer.
     fn tray_click(&mut self, key: u64, kind: crate::tray::Click) {
         self.close_launchpad();
+        // The drop-down is topmost: left open, the menu or flyout an app opens in answer to
+        // the click would appear behind it and the click would look lost.
+        self.close_control_center();
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
         crate::tray::click(key, kind, p);

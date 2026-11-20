@@ -75,3 +75,17 @@ jobs:
           name: aura-dock-windows-x64
           path: aura/dist/*
           if-no-files-found: error
+      # The tests used to live in a second workflow (build.yml) that had to be started by
+      # hand. They run here instead, after the executables are uploaded and without
+      # blocking them: a red step says "the tests broke", the archive still exists.
+      - name: Tests (do not block the archive)
+        if: always()
+        continue-on-error: true
+        working-directory: aura
+        run: cargo test --locked --release --workspace --exclude aura-dock --exclude laminar-sys
+      # A second edition of the explorer (no default features) has to keep compiling.
+      - name: Desktop edition compiles (does not block the archive)
+        if: always()
+        continue-on-error: true
+        working-directory: aura
+        run: cargo check --locked --release -p aura-explorer --no-default-features --features desktop

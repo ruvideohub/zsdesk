@@ -72,6 +72,7 @@ pub fn run(out: &str, light: bool, filter: Option<&str>, scale: f32, empty: bool
             bluetooth: Some(true),
             dark: true,
             media: Some(laminar_sys::media::NowPlaying { title: "Midnight Drive".into(), artist: "The Long Roads".into(), album: String::new(), playing: true, app_id: String::new(), thumbnail_png: None }),
+            ..Default::default()
         };
         let cfg = crate::config::Config::default();
         let names: HashMap<String, String> = HashMap::new();

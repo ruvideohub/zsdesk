@@ -332,7 +332,12 @@ pub fn click(key: u64, kind: Click, at: POINT) {
             } else {
                 (uid as usize, m as isize)
             };
-            let _ = PostMessageW(Some(owner), callback, WPARAM(wp), LPARAM(lp));
+            // A closed window or one of a program running higher (an elevated app: UIPI)
+            // simply refuses the message. Say so in the trace instead of losing the click in
+            // silence — that is how "half the tray icons don't react" is diagnosed.
+            if let Err(e) = PostMessageW(Some(owner), callback, WPARAM(wp), LPARAM(lp)) {
+                ttrace!("'{tip}': message {m:#x} refused ({e:?}) — a closed window, or the app runs elevated");
+            }
         };
         send(WM_MOUSEMOVE);
         match kind {

@@ -42,6 +42,8 @@ pub enum Req {
     Weather(f32, f32),
     SetVolume(f32),
     SetMuted(bool),
+    /// Set the microphone level (0..1); it also unmutes when raised above zero.
+    SetMicVolume(f32),
     SetWifi(bool),
     /// List visible Wi-Fi networks now, then again after a fresh scan.
     WifiList,
@@ -68,6 +70,12 @@ pub enum Req {
 pub struct ControlState {
     pub volume: Option<f32>,
     pub muted: Option<bool>,
+    /// Level of the default microphone, 0..1.
+    pub mic_volume: Option<f32>,
+    /// Adapters Windows reports as connected: (is_wifi, name), e.g. `(false, "Ethernet")`.
+    pub links: Vec<(bool, String)>,
+    /// SSID of the Wi-Fi network the machine is on (readable without the Location permission).
+    pub ssid: Option<String>,
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
     pub dark: bool,
@@ -120,6 +128,9 @@ fn control_state() -> ControlState {
     ControlState {
         volume: laminar_sys::audio::master_volume(),
         muted: laminar_sys::audio::is_muted(),
+        mic_volume: laminar_sys::audio::mic_volume(),
+        links: laminar_sys::radios::connected_links(),
+        ssid: laminar_sys::radios::wifi_current().map(|(ssid, _)| ssid),
         wifi: laminar_sys::radios::wifi_on(),
         bluetooth: laminar_sys::radios::bluetooth_on(),
         dark: laminar_sys::theme::apps_use_dark(),
@@ -162,15 +173,30 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
                     laminar_sys::audio::set_muted(m);
                     post(Reply::Control(control_state()));
                 }
+                Req::SetMicVolume(v) => {
+                    // The slider already shows the new level while the pointer moves, so this
+                    // stays quiet: the next Control refresh reports what Windows really took.
+                    laminar_sys::audio::set_mic_volume(v);
+                }
                 Req::SetWifi(on) => {
                     laminar_sys::radios::set_wifi(on);
                     post(Reply::Control(control_state()));
                 }
                 Req::WifiList => {
                     post(Reply::Wifi(laminar_sys::radios::wifi_networks_checked()));
-                    laminar_sys::radios::wifi_scan();
-                    std::thread::sleep(std::time::Duration::from_millis(2500));
-                    post(Reply::Wifi(laminar_sys::radios::wifi_networks_checked()));
+                    // The fresh scan takes a few seconds to land in the OS cache. Do the wait
+                    // on its own thread: sleeping here used to block every other request
+                    // (the volume and microphone sliders included) for those seconds.
+                    let later = out.clone();
+                    std::thread::spawn(move || {
+                        laminar_sys::radios::wifi_scan();
+                        std::thread::sleep(std::time::Duration::from_millis(2500));
+                        let list = laminar_sys::radios::wifi_networks_checked();
+                        later.lock().unwrap().push(Reply::Wifi(list));
+                        unsafe {
+                            let _ = PostMessageW(Some(HWND(hwnd as _)), WM_APP_SVC, WPARAM(0), LPARAM(0));
+                        }
+                    });
                 }
                 Req::WifiConnect(ssid) => match laminar_sys::radios::wifi_connect(&ssid) {
                     Ok(()) => {

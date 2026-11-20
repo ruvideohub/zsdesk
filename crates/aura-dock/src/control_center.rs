@@ -119,7 +119,9 @@ impl ControlCenter {
         Ok(Self {
             popup: Popup::new(c, true)?,
             open: false,
-            networks_open: false,
+            // The list is part of the section: showing it at once is what people expect
+            // from a control centre (and Windows' own one does the same).
+            networks_open: true,
             scale: 1.0,
             size: (W, 420.0),
             surface: None,
@@ -141,8 +143,9 @@ impl ControlCenter {
             return 0;
         }
         match d.wifi {
-            Some(Ok(list)) => list.len().min(NET_SHOWN),
-            _ => 1,
+            Some(Ok(list)) if !list.is_empty() => list.len().min(NET_SHOWN),
+            // Nothing to list: the reason, and a button that opens Windows' own settings.
+            _ => 2,
         }
     }
 
@@ -268,9 +271,9 @@ impl ControlCenter {
             .map(|hit| (hit.act.clone(), ((lx - hit.rect.0) / hit.rect.2).clamp(0.0, 1.0), hit.rect))
     }
 
-    /// Volume and brightness take drags; the rest are plain clicks.
+    /// The three sliders take drags; the rest are plain clicks.
     pub fn takes_drag(act: &CAct) -> bool {
-        matches!(act, CAct::Do(WAct::Volume) | CAct::Do(WAct::Brightness))
+        matches!(act, CAct::Do(WAct::Volume) | CAct::Do(WAct::MicVolume) | CAct::Do(WAct::Brightness))
     }
 
     pub fn start_drag(&mut self, rect: Rect, act: CAct) {
@@ -411,8 +414,11 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
     let volume = d.control.volume.unwrap_or(0.6);
     let muted = d.control.muted.unwrap_or(false);
     y = slider_row(c, &mut hits, y, if muted { G_MUTE } else { G_VOL }, "Sound", if muted { "Muted".to_string() } else { format!("{:.0}%", volume * 100.0) }, if muted { 0.0 } else { volume }, Some(WAct::Mute), Some(WAct::Volume), BLUE);
-    // The microphone has one switch, not a level: Windows exposes mute only.
-    y = slider_row(c, &mut hits, y, G_MIC, "Microphone", if d.mic_muted { "Off".to_string() } else { "On".to_string() }, if d.mic_muted { 0.0 } else { 1.0 }, Some(WAct::Mic), None, if d.mic_muted { ORANGE } else { GREEN });
+    // The microphone: the level of the default capture device, with the glyph as its mute
+    // switch (a drag above zero unmutes it again).
+    let mic = d.control.mic_volume.unwrap_or(0.7);
+    let (mic_text, mic_frac) = if d.mic_muted { ("Muted".to_string(), 0.0) } else { (format!("{:.0}%", mic * 100.0), mic) };
+    y = slider_row(c, &mut hits, y, G_MIC, "Microphone", mic_text, mic_frac, Some(WAct::Mic), Some(WAct::MicVolume), if d.mic_muted { ORANGE } else { GREEN });
     let bright = d.brightness.unwrap_or(0.7);
     let (bright_text, bright_frac) = if d.brightness_unsupported {
         ("Not supported".to_string(), 0.0)
@@ -428,15 +434,25 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
         Some(Ok(list)) => list.iter().collect(),
         _ => Vec::new(),
     };
-    let current = networks.iter().find(|n| n.connected).map(|n| n.ssid.clone());
+    // Windows hides the *list* without the Location permission, so the section also asks the
+    // system what the machine is actually connected through: the SSID of the current
+    // association, or a wired adapter. Without that it said "No networks" on a wired desktop
+    // and looked broken.
+    let current = networks.iter().find(|n| n.connected).map(|n| n.ssid.clone()).or_else(|| d.control.ssid.clone());
+    let wired = d.control.links.iter().find(|(wifi, _)| !*wifi);
     let head = (PAD - 6.0, y, inner + 12.0, 30.0);
     hits.push(Hit { rect: head, act: CAct::Networks });
     c.glyph(G_WIFI, PAD + 10.0, y + 15.0, 16.0, if d.airplane { c.text3() } else { c.text2() });
     label(c, "Network", PAD + 26.0, y + 7.0, 12.0, 600, c.text2(), 64.0);
-    let sub = match (d.airplane, &current) {
-        (true, _) => "Airplane mode".to_string(),
-        (false, Some(ssid)) => ssid.clone(),
-        _ if networks.is_empty() => "No networks".to_string(),
+    let sub = match (d.airplane, &current, wired) {
+        (true, ..) => "Airplane mode".to_string(),
+        // The signal of the network we are on, when the list happens to know it too.
+        (false, Some(ssid), _) => match networks.iter().find(|n| &n.ssid == ssid) {
+            Some(n) => format!("{ssid} · {}%", n.signal_percent),
+            None => ssid.clone(),
+        },
+        (false, None, Some((_, name))) => format!("{name} · connected"),
+        (false, None, None) if networks.is_empty() => "No networks".to_string(),
         _ => format!("{} available", networks.len()),
     };
     c.tw(&sub, PAD + 92.0, y + 6.0, 12.5, 500, c.text2(), inner - 92.0 - 26.0);
@@ -446,11 +462,18 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
     if networks_open {
         if networks.is_empty() {
             let message = match d.wifi {
-                Some(Err(code)) if *code == 5 => "Turn on Location access to see networks",
+                Some(Err(code)) if *code == 5 => "Location access is off: Windows hides the list",
                 Some(Err(_)) | None => "Looking for networks…",
-                _ => "No networks in range",
+                _ => "No Wi-Fi networks in range",
             };
-            label(c, message, PAD + 10.0, y + 8.0, 12.0, 400, c.text3(), inner - 20.0);
+            label(c, message, PAD + 10.0, y + 8.0, 11.5, 400, c.text3(), inner - 20.0);
+            y += NET_ROW_H;
+            // A way out of every dead end above: Windows' own network settings.
+            let row = (PAD - 6.0, y, inner + 12.0, NET_ROW_H - 4.0);
+            c.rr(row.0, row.1, row.2, row.3, 9.0, alpha(BLUE, 0.14));
+            c.glyph(G_SETTINGS, PAD + 10.0, y + 13.0, 13.0, BLUE);
+            label(c, "Network settings", PAD + 30.0, y + 6.0, 12.0, 600, c.text1(), inner - 40.0);
+            hits.push(Hit { rect: row, act: CAct::Do(WAct::Open("ms-settings:network".into())) });
             y += NET_ROW_H;
         } else {
             for net in networks.iter().take(NET_SHOWN) {
@@ -552,7 +575,10 @@ fn slider_row(c: &Canvas, hits: &mut Vec<Hit>, y: f32, glyph: &str, text: &str, 
     }
     c.tr(&value_text, c.w - pad, y + 15.0, 12.0, 600, c.text1());
     if let Some(act) = slider {
-        hits.push(Hit { rect: (track.0, y + 12.0, track.2, 18.0), act: CAct::Do(act) });
+        // The whole right-hand side of the row takes the click, not just the 6 px bar: the bar
+        // sits low in the row, so a tap a few pixels above or below it used to be lost (people
+        // learned to aim slightly above the bar).
+        hits.push(Hit { rect: (track.0, y + 4.0, track.2, ROW_H - 6.0), act: CAct::Do(act) });
     }
     y + ROW_H
 }

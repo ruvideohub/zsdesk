@@ -221,6 +221,13 @@ impl Dock {
                 self.control.volume = Some(frac);
                 self.services.send(Req::SetVolume(frac));
             }
+            WAct::MicVolume => {
+                self.control.mic_volume = Some(frac);
+                self.services.send(Req::SetMicVolume(frac));
+                if frac > 0.0 {
+                    self.hub.mic_muted = Some(false);
+                }
+            }
             WAct::Brightness => self.hub.set_brightness(frac),
             WAct::ControlCenter => self.toggle_control_center(),
             WAct::SetWallpaper => {

@@ -218,3 +218,96 @@ pub fn wifi_connect(ssid: &str) -> Result<(), u32> {
         result
     }
 }
+
+/// The Wi-Fi network this machine is associated with right now: (SSID, signal 0..100).
+///
+/// This asks for the *current connection*, not the scan results, so it works even where
+/// Windows 11 24H2 hides the list without the Location permission: the control centre can
+/// still say which network the computer is on.
+pub fn wifi_current() -> Option<(String, u8)> {
+    use windows::Win32::NetworkManagement::WiFi::{wlan_intf_opcode_current_connection, WlanQueryInterface, WLAN_CONNECTION_ATTRIBUTES};
+    unsafe {
+        let mut ver = 0u32;
+        let mut h = HANDLE::default();
+        if WlanOpenHandle(2, None, &mut ver, &mut h) != 0 {
+            return None;
+        }
+        let mut out = None;
+        let mut ifl: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+        if WlanEnumInterfaces(h, None, &mut ifl) == 0 && !ifl.is_null() {
+            let n = (*ifl).dwNumberOfItems as usize;
+            let ifs = std::slice::from_raw_parts((*ifl).InterfaceInfo.as_ptr(), n);
+            for itf in ifs {
+                let mut size = 0u32;
+                let mut data: *mut std::ffi::c_void = std::ptr::null_mut();
+                // Fails with ERROR_INVALID_STATE while the interface is not connected.
+                let e = WlanQueryInterface(h, &itf.InterfaceGuid, wlan_intf_opcode_current_connection, None, &mut size, &mut data, None);
+                if e == 0 && !data.is_null() {
+                    let ca = &*(data as *const WLAN_CONNECTION_ATTRIBUTES);
+                    let assoc = &ca.wlanAssociationAttributes;
+                    let len = (assoc.dot11Ssid.uSSIDLength as usize).min(32);
+                    if len > 0 {
+                        let ssid = String::from_utf8_lossy(&assoc.dot11Ssid.ucSSID[..len]).into_owned();
+                        out = Some((ssid, assoc.wlanSignalQuality.min(100) as u8));
+                    }
+                    WlanFreeMemory(data as *const _);
+                } else if !data.is_null() {
+                    WlanFreeMemory(data as *const _);
+                }
+                if out.is_some() {
+                    break;
+                }
+            }
+            WlanFreeMemory(ifl as *const _);
+        }
+        WlanCloseHandle(h, None);
+        out
+    }
+}
+
+/// Adapters Windows reports as connected: (is_wifi, friendly name), e.g.
+/// `[(false, "Ethernet"), (true, "Wi-Fi")]`.
+///
+/// The control centre uses it to name the connection when the Wi-Fi list is unavailable
+/// (a wired machine, or no Location permission on Windows 11 24H2+).
+pub fn connected_links() -> Vec<(bool, String)> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetAdaptersAddresses, GAA_FLAG_SKIP_ANYCAST, GAA_FLAG_SKIP_DNS_SERVER, GAA_FLAG_SKIP_MULTICAST, IP_ADAPTER_ADDRESSES_LH,
+    };
+    use windows::Win32::NetworkManagement::Ndis::IfOperStatusUp;
+    const IF_TYPE_ETHERNET: u32 = 6;
+    const IF_TYPE_IEEE80211: u32 = 71;
+    const ERROR_BUFFER_OVERFLOW: u32 = 111;
+    let mut out: Vec<(bool, String)> = Vec::new();
+    unsafe {
+        let mut size = 16 * 1024u32;
+        // Words, not bytes: the adapters are read through this buffer and need its alignment.
+        let mut buf: Vec<u64> = Vec::new();
+        let mut ptr: *mut IP_ADAPTER_ADDRESSES_LH = std::ptr::null_mut();
+        for _ in 0..3 {
+            buf.resize(size as usize / 8 + 1, 0);
+            ptr = buf.as_mut_ptr() as *mut IP_ADAPTER_ADDRESSES_LH;
+            let flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+            let e = GetAdaptersAddresses(0, flags, None, Some(ptr), &mut size);
+            if e == 0 {
+                break;
+            }
+            if e != ERROR_BUFFER_OVERFLOW {
+                return out;
+            }
+        }
+        let mut it = ptr;
+        while !it.is_null() {
+            let a = &*it;
+            let physical = matches!(a.IfType, IF_TYPE_ETHERNET | IF_TYPE_IEEE80211);
+            if physical && a.OperStatus == IfOperStatusUp {
+                let name = a.FriendlyName.to_string().unwrap_or_default();
+                if !name.is_empty() {
+                    out.push((a.IfType == IF_TYPE_IEEE80211, name));
+                }
+            }
+            it = a.Next;
+        }
+    }
+    out
+}
