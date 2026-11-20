@@ -233,50 +233,60 @@ impl IterationTimer {
 }
 impl Drop for IterationTimer { fn drop(&mut self) { note_iteration(self.0.elapsed().as_millis().min(60_000) as u32); } }
 
-/// One handler slower than this is worth a line of its own: a single 60 ms gap is what
-/// turns the arrow into the spinner mid-gesture.
+/// A handler this slow is worth a line of its own.
 const SLOW_HANDLER_MS:u32=60;
-/// A second in which the thread burned this much is worth a line as well.
-const BUSY_SECOND_MS:u32=300;
+/// Anything above this goes into the five-second census by label. The cursor starts to blink
+/// long before a frame is lost, so the interesting stalls are tens of milliseconds wide.
+const CENSUS_MS:u32=10;
+/// How much wall-clock time one census line covers.
+const CENSUS_SECS:u64=5;
+const CENSUS_LABELS:usize=6;
 thread_local!{static CURRENT_MESSAGE:std::cell::Cell<(u32,usize)>=const{std::cell::Cell::new((0,0))};}
-/// Per-second accumulator. Holds at most six distinct slow labels per second, so a session
-/// that is busy all the time still leaves a readable log instead of rotating itself away.
-#[derive(Clone,Copy)]struct LoopSecond{bucket:u64,busy:u32,count:u32,worst:u32,worst_message:(u32,usize),
-    logged:[(u32,usize);6],logged_len:usize}
-const EMPTY_SECOND:LoopSecond=LoopSecond{bucket:0,busy:0,count:0,worst:0,worst_message:(0,0),logged:[(0,0);6],logged_len:0};
-thread_local!{static LOOP_SECOND:std::cell::Cell<LoopSecond>=const{std::cell::Cell::new(EMPTY_SECOND)};}
+/// Five-second accumulator: one log line per window regardless of how busy the thread is.
+#[derive(Clone,Copy)]
+struct Census{window:u64,busy:u32,count:u32,worst:u32,worst_message:(u32,usize),
+    labels:[((u32,usize),u32,u32);CENSUS_LABELS],len:usize}
+const EMPTY_CENSUS:Census=Census{window:u64::MAX,busy:0,count:0,worst:0,worst_message:(0,0),
+    labels:[((0,0),0,0);CENSUS_LABELS],len:0};
+thread_local!{static CENSUS:std::cell::Cell<Census>=const{std::cell::Cell::new(EMPTY_CENSUS)};}
 fn handler_label(message:u32,wparam:usize)->String {
     if message==WM_TIMER { format!("timer-{wparam}") } else { format!("msg-{message:04X}") }
 }
 fn note_iteration(elapsed:u32) {
     let (message,wparam)=CURRENT_MESSAGE.with(std::cell::Cell::get);
-    let bucket=unsafe{windows::Win32::System::SystemInformation::GetTickCount64()}/1000;
-    let (log_handler,log_second)=LOOP_SECOND.with(|cell|{
-        let mut second=cell.get();
-        if second.bucket!=bucket {
-            let busy=if second.busy>=BUSY_SECOND_MS {
-                Some((second.busy,second.count,second.worst,second.worst_message))
-            } else { None };
-            second=LoopSecond{bucket,..EMPTY_SECOND};
-            cell.set(second);
-            (false,busy)
-        } else {
-            let known=second.logged[..second.logged_len].contains(&(message,wparam));
-            let mut log_handler=false;
-            if elapsed>=SLOW_HANDLER_MS&&!known&&second.logged_len<second.logged.len() {
-                second.logged[second.logged_len]=(message,wparam);second.logged_len+=1;log_handler=true;
-            }
-            cell.set(second);
-            (log_handler,None)
-        }
-    });
-    if log_handler {
+    if elapsed>=SLOW_HANDLER_MS {
         record("ui",&format!("handler-{elapsed}ms-{}",handler_label(message,wparam)),Some(message as i32));
     }
-    if let Some((busy,count,worst,label))=log_second {
-        record("ui",&format!("busy-second-{busy}-ms-of-{count}-messages-worst-{worst}-ms-{}",
-            handler_label(label.0,label.1)),None);
-    }
+    let window=unsafe{windows::Win32::System::SystemInformation::GetTickCount64()}/(CENSUS_SECS*1000);
+    let line=CENSUS.with(|cell|{
+        let mut census=cell.get();
+        let mut line=None;
+        if census.window!=window {
+            if census.count>0 {
+                let mut text=format!("census-{CENSUS_SECS}s-busy-{}-ms-of-{}-messages-worst-{}-ms-{}",
+                    census.busy,census.count,census.worst,handler_label(census.worst_message.0,census.worst_message.1));
+                for ((label_message,label_wparam),occurrences,peak) in census.labels[..census.len].iter() {
+                    text.push_str(&format!(",{}x{occurrences}/{peak}ms",handler_label(*label_message,*label_wparam)));
+                }
+                line=Some(text);
+            }
+            census=EMPTY_CENSUS;census.window=window;
+        }
+        census.busy=census.busy.saturating_add(elapsed);
+        census.count=census.count.saturating_add(1);
+        if elapsed>census.worst { census.worst=elapsed;census.worst_message=(message,wparam); }
+        if elapsed>=CENSUS_MS {
+            let key=(message,wparam);
+            match census.labels[..census.len].iter_mut().find(|entry|entry.0==key) {
+                Some(entry)=>{entry.1=entry.1.saturating_add(1);entry.2=entry.2.max(elapsed);}
+                None if census.len<CENSUS_LABELS=>{census.labels[census.len]=(key,1,elapsed);census.len+=1;}
+                None=>{}
+            }
+        }
+        cell.set(census);
+        line
+    });
+    if let Some(text)=line { record("ui",&text,None); }
 }
 
 pub(super) fn dispatch(message:&MSG)->bool {
