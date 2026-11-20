@@ -731,11 +731,13 @@ impl App {
             Some(Hit::Tool(index)) => self.activate(index),
             Some(Hit::Filter(index)) => {
                 self.filter = index;
+                self.status.clear();
                 self.reload();
                 self.invalidate();
             }
             Some(Hit::Row(position)) => {
                 self.selected = Some(position);
+                self.status.clear();
                 self.invalidate();
             }
             Some(Hit::SettingsToggle(index)) => {
@@ -777,12 +779,14 @@ impl App {
                     let _ = unsafe { DestroyWindow(self.hwnd) };
                 } else {
                     self.query.clear();
+                    self.status.clear();
                     self.reload();
                     self.invalidate();
                 }
             }
             0x08 => {
                 self.query.pop();
+                self.status.clear();
                 self.reload();
                 self.invalidate();
             }
@@ -805,6 +809,7 @@ impl App {
             return;
         }
         if self.query.len() < 120 {
+            self.status.clear();
             self.query.push(character);
             self.reload();
             self.invalidate();
@@ -946,7 +951,7 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
     let app = &mut *state;
     match message {
         WM_SIZE => {
-            app.paint();
+            app.invalidate();
             LRESULT(0)
         }
         WM_PAINT => {
