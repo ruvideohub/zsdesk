@@ -1,11 +1,12 @@
 //! Tray icon hosting: the icons apps normally put beside the clock (1Password, OneDrive,
-//! Discord...), shown in Launchpad's right panel while the Windows taskbar is hidden.
+//! Discord...), shown on the dock strip and in its overflow popup and Launchpad panel.
 //!
 //! How apps reach the tray: `Shell_NotifyIcon` finds the top-most window whose class is
 //! "Shell_TrayWnd" and sends it a WM_COPYDATA message describing the icon. Laminar creates
 //! its own (never shown) window of that class and keeps it above Explorer's, so those
-//! messages reach Laminar first. Laminar records each icon, then passes every message on
-//! to Explorer unchanged, so Explorer's tray stays complete for when Laminar quits.
+//! messages reach Laminar first. Laminar records each icon for the dock strip, overflow
+//! popup, and Launchpad, then passes every message to Explorer unchanged, so its tray stays
+//! complete when Laminar quits.
 //! Messages Laminar doesn't understand (AppBar registration, icon-position queries and
 //! the rest) only go to Explorer, and Explorer's answer is returned.
 //!
@@ -41,8 +42,11 @@ const NIF_ICON: u32 = 0x02;
 const NIF_TIP: u32 = 0x04;
 const NIF_STATE: u32 = 0x08;
 const NIF_GUID: u32 = 0x20;
+const NIF_SHOWTIP: u32 = 0x80;
 const NIS_HIDDEN: u32 = 0x01;
 const NIN_SELECT: u32 = WM_USER;
+const NIN_POPUPOPEN: u32 = WM_USER + 6;
+const NIN_POPUPCLOSE: u32 = WM_USER + 7;
 /// Signature at the start of a tray WM_COPYDATA payload.
 const TRAY_SIGNATURE: u32 = 0x3475_3423;
 /// COPYDATASTRUCT.dwData: 0 = AppBar message, 1 = notify icon, 3 = icon position query.
@@ -80,19 +84,21 @@ struct TrayData {
 
 /// One tray icon.
 pub struct Icon {
-    /// Stable id for this icon while Laminar runs (used by Launchpad's hit targets).
+    /// Session key used by the dock's tray-strip hit targets.
     pub key: u64,
     /// Bumped whenever the picture changes, so cached brushes know to redraw.
     pub gen: u64,
     pub owner: HWND,
     uid: u32,
     guid: Option<GUID>,
+    stable_id: String,
     callback: u32,
     version: u32,
     /// Laminar's own copy of the icon (the app may destroy its handle at any time).
     pub hicon: Option<HICON>,
     pub tip: String,
     pub hidden: bool,
+    show_tip: bool,
 }
 
 struct Host {
@@ -127,6 +133,42 @@ fn window_pid(h: HWND) -> u32 {
     let mut pid = 0u32;
     unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
     pid
+}
+
+fn process_image_path(h: HWND) -> Option<String> {
+    use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+    let pid = window_pid(h);
+    if pid == 0 { return None; }
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+        let _ = windows::Win32::Foundation::CloseHandle(process);
+        ok.then(|| String::from_utf16_lossy(&buf[..len as usize]).to_lowercase())
+    }
+}
+
+fn stable_id_for(owner: HWND, uid: u32, guid: Option<GUID>) -> String {
+    // Stable across process restarts where possible: GUID first, otherwise executable + uid.
+    if let Some(g) = guid {
+        let d = g.data4;
+        return format!("guid:{:08x}-{:04x}-{:04x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            g.data1, g.data2, g.data3, d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
+    }
+    let image = process_image_path(owner).unwrap_or_else(|| format!("pid:{}", window_pid(owner)));
+    let image = crate::apps::stable_path(&image).to_lowercase();
+    format!("{}#{}", image, uid)
+}
+
+impl Icon {
+    pub fn stable_id(&self) -> &str {
+        &self.stable_id
+    }
+
+    pub fn wants_standard_tip(&self) -> bool {
+        self.version < 4 || self.show_tip
+    }
 }
 
 /// Explorer's real taskbar window (skipping Laminar's own stand-in).
@@ -303,58 +345,106 @@ pub enum Click {
     Right,
 }
 
-/// Click an icon the way Explorer's tray does: mouse down, up, then the "selected" message.
-pub fn click(key: u64, kind: Click, at: POINT) {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TrayInput {
+    MouseMove,
+    LeftDown,
+    LeftUp,
+    RightDown,
+    RightUp,
+    PopupOpen,
+    PopupClose,
+    Select,
+    ContextMenu,
+}
+
+#[derive(Clone)]
+pub struct IconSnapshot {
+    pub key: u64,
+    pub generation: u64,
+    pub hicon: Option<HICON>,
+    pub stable_id: String,
+    pub tip: String,
+    pub hidden: bool,
+    pub standard_tip: bool,
+}
+
+pub fn snapshots() -> Vec<IconSnapshot> {
+    with_icons(|icons| icons.iter().map(|i| IconSnapshot {
+        key: i.key,
+        generation: i.gen,
+        hicon: i.hicon,
+        stable_id: i.stable_id().to_string(),
+        tip: i.tip.clone(),
+        hidden: i.hidden,
+        standard_tip: i.wants_standard_tip(),
+    }).collect())
+}
+
+fn event_code(input: TrayInput) -> u32 {
+    match input {
+        TrayInput::MouseMove => WM_MOUSEMOVE,
+        TrayInput::LeftDown => WM_LBUTTONDOWN,
+        TrayInput::LeftUp => WM_LBUTTONUP,
+        TrayInput::RightDown => WM_RBUTTONDOWN,
+        TrayInput::RightUp => WM_RBUTTONUP,
+        TrayInput::PopupOpen => NIN_POPUPOPEN,
+        TrayInput::PopupClose => NIN_POPUPCLOSE,
+        TrayInput::Select => NIN_SELECT,
+        TrayInput::ContextMenu => WM_CONTEXTMENU,
+    }
+}
+
+/// Send one callback to the owning app using the legacy or NOTIFYICON_VERSION_4 packing.
+pub fn send(key: u64, input: TrayInput, at: POINT) {
     let target = HOST.with(|h| {
         let b = h.borrow();
-        let host = b.as_ref()?;
-        let i = host.icons.iter().find(|i| i.key == key)?;
-        Some((i.owner, i.uid, i.callback, i.version, i.tip.clone()))
+        let icon = b.as_ref()?.icons.iter().find(|i| i.key == key)?;
+        Some((icon.owner, icon.uid, icon.callback, icon.version, icon.tip.clone()))
     });
     let Some((owner, uid, callback, version, tip)) = target else { return };
     if callback == 0 {
-        // The app never told us its click message. Ask it to register again (it answers
-        // TaskbarCreated with a full add); the next click will work.
-        ttrace!("{kind:?} click on '{tip}': no click message yet; asking the app to re-register");
+        // One request per physical click; down/up/select arrive as a sequence.
+        if !matches!(input, TrayInput::LeftDown | TrayInput::RightDown) { return; }
+        ttrace!("callback for '{tip}' is not registered; asking the app to re-register");
         unsafe {
-            let msg = RegisterWindowMessageW(w!("TaskbarCreated"));
-            let _ = PostMessageW(Some(owner), msg, WPARAM(0), LPARAM(0));
+            let message = RegisterWindowMessageW(w!("TaskbarCreated"));
+            let _ = PostMessageW(Some(owner), message, WPARAM(0), LPARAM(0));
         }
         return;
     }
-    ttrace!("{kind:?} click on '{tip}' (version {version})");
+    if version < 4 && matches!(input, TrayInput::PopupOpen | TrayInput::PopupClose) { return; }
+    let message = event_code(input);
+    let (wp, lp) = if version >= 4 {
+        (((at.y as u16 as usize) << 16) | (at.x as u16 as usize), ((uid as usize & 0xFFFF) << 16 | message as usize) as isize)
+    } else {
+        (uid as usize, message as isize)
+    };
+    if matches!(input, TrayInput::LeftUp | TrayInput::RightUp) {
+        unsafe { let _ = AllowSetForegroundWindow(window_pid(owner)); }
+    }
     unsafe {
-        // Let the app bring its window or menu to the front.
-        let _ = AllowSetForegroundWindow(window_pid(owner));
-        let send = |m: u32| {
-            let (wp, lp) = if version >= 4 {
-                (((at.y as u16 as usize) << 16) | (at.x as u16 as usize), ((uid as usize & 0xFFFF) << 16 | m as usize) as isize)
-            } else {
-                (uid as usize, m as isize)
-            };
-            // A closed window or one of a program running higher (an elevated app: UIPI)
-            // simply refuses the message. Say so in the trace instead of losing the click in
-            // silence — that is how "half the tray icons don't react" is diagnosed.
-            if let Err(e) = PostMessageW(Some(owner), callback, WPARAM(wp), LPARAM(lp)) {
-                ttrace!("'{tip}': message {m:#x} refused ({e:?}) — a closed window, or the app runs elevated");
-            }
-        };
-        send(WM_MOUSEMOVE);
-        match kind {
-            Click::Left => {
-                send(WM_LBUTTONDOWN);
-                send(WM_LBUTTONUP);
-                if version >= 3 {
-                    send(NIN_SELECT);
-                }
-            }
-            Click::Right => {
-                send(WM_RBUTTONDOWN);
-                send(WM_RBUTTONUP);
-                if version >= 3 {
-                    send(WM_CONTEXTMENU);
-                }
-            }
+        if let Err(e) = PostMessageW(Some(owner), callback, WPARAM(wp), LPARAM(lp)) {
+            ttrace!("'{tip}': message {message:#x} refused ({e:?}) — a closed window, or the app runs elevated");
+        }
+    }
+}
+
+/// Click an icon the way Explorer's tray does: mouse down, up, then its versioned selection event.
+pub fn click(key: u64, kind: Click, at: POINT) {
+    send(key, TrayInput::MouseMove, at);
+    match kind {
+        Click::Left => {
+            send(key, TrayInput::LeftDown, at);
+            send(key, TrayInput::LeftUp, at);
+            let version = with_icons(|icons| icons.iter().find(|i| i.key == key).map(|i| i.version).unwrap_or(0));
+            if version >= 3 { send(key, TrayInput::Select, at); }
+        }
+        Click::Right => {
+            send(key, TrayInput::RightDown, at);
+            send(key, TrayInput::RightUp, at);
+            let version = with_icons(|icons| icons.iter().find(|i| i.key == key).map(|i| i.version).unwrap_or(0));
+            if version >= 3 { send(key, TrayInput::ContextMenu, at); }
         }
     }
 }
@@ -393,19 +483,22 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
                         owner,
                         uid: n.uid,
                         guid,
+                        stable_id: stable_id_for(owner, n.uid, guid),
                         callback: 0,
                         version: 0,
                         hicon: None,
                         tip: String::new(),
                         hidden: false,
+                        show_tip: false,
                     });
                     host.next_key += 1;
                     host.icons.len() - 1
                 }
             };
             let i = &mut host.icons[idx];
-            if !owner.is_invalid() {
+            if !owner.is_invalid() && i.owner != owner {
                 i.owner = owner;
+                i.stable_id = stable_id_for(i.owner, i.uid, i.guid);
             }
             if n.flags & NIF_MESSAGE != 0 {
                 i.callback = n.callback;
@@ -422,6 +515,9 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
             }
             if n.flags & NIF_TIP != 0 {
                 i.tip = text(&n.tip);
+            }
+            if n.flags & (NIF_TIP | NIF_SHOWTIP) != 0 {
+                i.show_tip = n.flags & NIF_SHOWTIP != 0;
             }
             if n.flags & NIF_STATE != 0 && n.state_mask & NIS_HIDDEN != 0 {
                 i.hidden = n.state & NIS_HIDDEN != 0;
@@ -448,6 +544,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
         NIM_SETVERSION => match pos {
             Some(p) => {
                 host.icons[p].version = n.version;
+                changed(host);
                 true
             }
             None => false,

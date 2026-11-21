@@ -34,6 +34,7 @@ mod strings;
 mod taskbar;
 mod tracker;
 mod tray;
+mod tray_strip;
 mod ui;
 mod updater;
 mod widgets;

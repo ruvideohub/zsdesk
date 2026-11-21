@@ -247,6 +247,13 @@ pub struct Config {
     /// call: drop it from the widget menu and it stays dropped.
     #[serde(default)]
     pub cc_pin_added: bool,
+
+    /// Stable tray icon identities in the order chosen by the user.
+    #[serde(default)]
+    pub tray_order: Vec<String>,
+    /// Tray icons the user moved into the overflow popup.
+    #[serde(default)]
+    pub tray_hidden: Vec<String>,
 }
 
 impl Default for Config {
@@ -309,6 +316,8 @@ impl Default for Config {
             system_pos: None,
             system_locked: false,
             cc_pin_added: false,
+            tray_order: Vec::new(),
+            tray_hidden: Vec::new(),
             pins: Vec::new(),
         }
     }
@@ -409,6 +418,10 @@ impl Config {
         self.system_scale = self.system_scale.clamp(0.75, 1.5);
         self.panel_shadow = self.panel_shadow.clamp(0.0, 1.0);
         self.card_shadow = self.card_shadow.clamp(0.0, 1.0);
+        let mut seen = std::collections::HashSet::new();
+        self.tray_order.retain(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()));
+        seen.clear();
+        self.tray_hidden.retain(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()));
         // Pins saved before version-folder handling point into a folder an update deletes.
         // (In memory only: the next save writes the stable path.)
         let fix = |s: &mut String| {
@@ -447,6 +460,8 @@ impl Config {
             || self.match_windows_theme != o.match_windows_theme
             || self.extra_blur != o.extra_blur
             || self.pins != o.pins
+            || self.tray_order != o.tray_order
+            || self.tray_hidden != o.tray_hidden
             || self.auto_hide != o.auto_hide
             || self.per_display_windows != o.per_display_windows
             || self.card_shadow != o.card_shadow

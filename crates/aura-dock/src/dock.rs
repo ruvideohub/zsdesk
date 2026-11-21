@@ -50,7 +50,7 @@ pub const WM_APP_RESCAN: u32 = WM_APP + 1;
 pub const WM_APP_APPBAR: u32 = WM_APP + 2;
 const WM_APP_CONFIG: u32 = WM_APP + 3;
 /// Another process asked for the settings page (`AuraDock.exe --settings`).
-const WM_APP_SETTINGS: u32 = WM_APP + 5;
+const WM_APP_SETTINGS: u32 = WM_APP + 8;
 
 const T_SHRINK: usize = 1;
 const T_MEASURE: usize = 2;
@@ -70,7 +70,7 @@ const T_LP_TICK: usize = 15;
 const T_WEATHER: usize = 16;
 /// Keeps the tray stand-in window ahead of Explorer's.
 const T_TRAY_RAISE: usize = 17;
-/// Redraws Launchpad's tray icons shortly after they change (icons can animate quickly).
+/// Rebuilds tray-strip, overflow and Launchpad views after a burst of icon updates.
 const T_TRAY_RENDER: usize = 18;
 /// A drag rested on a running app: show its window tiles.
 const T_DRAG_PREVIEW: usize = 19;
@@ -231,6 +231,8 @@ const TIMER_MINUTES: [usize; 7] = [1, 5, 10, 15, 25, 45, 60];
 const T_WIDGETS: usize = 22;
 /// Holding a widget card lifts it (ready to drag) after this long.
 const T_LP_HOLD: usize = 23;
+/// Tray hover tooltip / app-owned popup delay.
+const T_TRAY_TIP: usize = 24;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -242,6 +244,10 @@ pub enum Kind {
     Update,
     /// A widget pinned to the dock (key "::widget{pin index}:{widget id}").
     Widget,
+    /// A notification-area icon, addressed by its session key.
+    Tray(u64),
+    /// Opens the overflow popup for icons not shown on the strip.
+    TrayOverflow,
 }
 
 /// The widget a dock item shows (key "::widget{pin}:{id}:{s|m|l}").
@@ -520,6 +526,35 @@ struct Drag {
     ext_widget: Option<Pin>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TrayOrigin {
+    Dock,
+    Popup,
+}
+
+struct TrayPress {
+    key: u64,
+    origin: TrayOrigin,
+    screen_x: i32,
+    screen_y: i32,
+}
+
+enum TrayDrop {
+    /// Insert beside another icon; `in_overflow` preserves/promotes the visibility group.
+    Relative { stable_id: String, after: bool, in_overflow: bool },
+    /// Move a visible strip icon into the overflow popup.
+    Hide,
+    /// Drag an overflow icon back to the visible strip.
+    Promote,
+}
+
+struct TrayDrag {
+    key: u64,
+    stable_id: String,
+    origin: TrayOrigin,
+    target: Option<TrayDrop>,
+}
+
 /// The floating copy of an icon that follows the pointer while dragging.
 struct Ghost {
     popup: crate::ui::Popup,
@@ -561,6 +596,17 @@ struct Dock {
     brushes: HashMap<String, CompositionSurfaceBrush>,
     /// Tray icon pictures by icon key: (picture generation, brush).
     tray_brushes: HashMap<u64, (u64, CompositionSurfaceBrush)>,
+    /// Live tray icon metadata and the current strip/overflow partition.
+    tray_items: Vec<crate::tray_strip::TrayIconView>,
+    tray_bar_keys: Vec<u64>,
+    tray_overflow_keys: Vec<u64>,
+    tray_popup: crate::tray_strip::TrayPopup,
+    tray_hover: Option<(u64, bool)>,
+    tray_tip_open: Option<u64>,
+    tray_custom_popup: Option<u64>,
+    tray_press: Option<TrayPress>,
+    tray_drag: Option<TrayDrag>,
+    tray_highlights: Vec<(u64, ShapeVisual)>,
     names: HashMap<String, String>,
     /// What glass shows: Windows' blurred desktop, plus any extra blur (see `update_glass`).
     backdrop: CompositionBrush,
@@ -1013,6 +1059,15 @@ impl Dock {
     // ---------------------------------------------------------------- model
 
     fn compute_items(&mut self) -> Vec<Item> {
+        self.tray_items = self.collect_tray_items();
+        let (tray_bar, tray_overflow) = crate::tray_strip::partition(
+            &self.tray_items,
+            &self.cfg.tray_order,
+            &self.cfg.tray_hidden,
+            crate::tray_strip::MAX_ON_BAR,
+        );
+        self.tray_bar_keys = tray_bar.iter().map(|i| i.key).collect();
+        self.tray_overflow_keys = tray_overflow.iter().map(|i| i.key).collect();
         let mut v = vec![Item { kind: Kind::Launch, key: "::launch".into(), pinned: true }];
         let pins = self.cfg.pins.clone();
         // The control centre is a pinned widget, but it belongs at the right-hand end of
@@ -1075,6 +1130,12 @@ impl Dock {
             v.extend(extra);
         }
         v.push(Item { kind: Kind::Separator, key: "::sep-end".into(), pinned: false });
+        for icon in &tray_bar {
+            v.push(Item { kind: Kind::Tray(icon.key), key: format!("::tray:{}", icon.key), pinned: false });
+        }
+        if !tray_overflow.is_empty() {
+            v.push(Item { kind: Kind::TrayOverflow, key: "::tray-overflow".into(), pinned: false });
+        }
         if self.update_icon_visible() {
             v.push(Item { kind: Kind::Update, key: "::update".into(), pinned: true });
         }
@@ -1114,6 +1175,12 @@ impl Dock {
             }
             return true;
         }
+        if it.kind == Kind::TrayOverflow {
+            return true;
+        }
+        if matches!(it.kind, Kind::Tray(_)) {
+            return self.brushes.contains_key(&it.key);
+        }
         if matches!(it.kind, Kind::Separator | Kind::Widget) || self.brushes.contains_key(&it.key) {
             return true;
         }
@@ -1144,7 +1211,20 @@ impl Dock {
 
     /// Recompute items; rebuild the visual tree only if they changed.
     fn refresh(&mut self, force: bool) {
+        let old_tray: Vec<(u64, String, String, bool, bool)> = self.tray_items.iter()
+            .map(|icon| (icon.key, icon.stable_id.clone(), icon.tip.clone(), icon.app_hidden, icon.standard_tip))
+            .collect();
+        let old_bar_keys = self.tray_bar_keys.clone();
+        let old_overflow_keys = self.tray_overflow_keys.clone();
         let candidates = self.compute_items();
+        let tray_changed = old_tray != self.tray_items.iter()
+            .map(|icon| (icon.key, icon.stable_id.clone(), icon.tip.clone(), icon.app_hidden, icon.standard_tip))
+            .collect::<Vec<_>>()
+            || old_bar_keys != self.tray_bar_keys
+            || old_overflow_keys != self.tray_overflow_keys;
+        if tray_changed && self.tray_hover.is_some() {
+            self.set_tray_hover(None, false);
+        }
         let ok: Vec<bool> = candidates.iter().map(|it| self.ensure_brush(it)).collect();
         // Drop apps whose icon couldn't load (e.g. uninstalled); no leading/trailing/doubled separators.
         let mut clean: Vec<Item> = Vec::new();
@@ -1158,7 +1238,8 @@ impl Dock {
             clean.push(it);
         }
         self.icons.flush();
-        if force || clean != self.items {
+        let visual_changed = force || clean != self.items;
+        if visual_changed {
             self.items = clean;
             if let Err(e) = self.rebuild() {
                 eprintln!("rebuild failed: {e:?}");
@@ -1168,6 +1249,9 @@ impl Dock {
         if self.control_center.open {
             let anchor = self.cc_anchor();
             self.control_center.reposition(self.monitor, anchor, self.panel_top);
+        }
+        if self.tray_popup.open && (visual_changed || tray_changed) {
+            self.show_tray_popup();
         }
     }
 
@@ -1186,6 +1270,7 @@ impl Dock {
         self.inds.clear();
         self.ind_state.clear();
         self.atts.clear();
+        self.tray_highlights.clear();
         self.wviews.clear();
         self.hover = None;
         let _ = self.show_label(None);
@@ -1244,9 +1329,43 @@ impl Dock {
                 }
                 slot.Children()?.InsertAtTop(&tile)?;
                 self.tiles.push(Some(tile.cast()?));
+            } else if let Kind::Tray(key) = it.kind {
+                slot.SetSize(v2(geo.b, geo.b))?;
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
+                let bg_size = geo.b * 0.86;
+                let (bg, _, _) = crate::ui::rounded(&c, bg_size, bg_size, 7.0 * self.scale, crate::ui::theme::fill_2())?;
+                bg.SetOffset(v3((geo.b - bg_size) / 2.0, (geo.b - bg_size) / 2.0, 0.0))?;
+                bg.SetOpacity(0.0)?;
+                slot.Children()?.InsertAtBottom(&bg)?;
+                self.tray_highlights.push((key, bg));
+                let tile = c.CreateSpriteVisual()?;
+                tile.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
+                if let Some(brush) = self.brushes.get(&it.key) { tile.SetBrush(brush)?; }
+                slot.Children()?.InsertAtTop(&tile)?;
+                self.tiles.push(Some(tile.cast()?));
+            } else if it.kind == Kind::TrayOverflow {
+                slot.SetSize(v2(geo.b, geo.b))?;
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
+                let bg_size = geo.b * 0.86;
+                let (bg, _, _) = crate::ui::rounded(&c, bg_size, bg_size, 7.0 * self.scale, crate::ui::theme::fill_2())?;
+                bg.SetOffset(v3((geo.b - bg_size) / 2.0, (geo.b - bg_size) / 2.0, 0.0))?;
+                bg.SetOpacity(0.0)?;
+                slot.Children()?.InsertAtBottom(&bg)?;
+                self.tray_highlights.push((u64::MAX, bg));
+                let tile = c.CreateContainerVisual()?;
+                tile.SetSize(v2(geo.b, geo.b))?;
+                let dot = (3.0 * self.scale).round().max(2.0);
+                let center = geo.b / 2.0;
+                for dx in [-1.0f32, 0.0, 1.0] {
+                    let (shape, _, _) = crate::ui::rounded(&c, dot, dot, dot / 2.0, crate::ui::theme::text_2())?;
+                    shape.SetOffset(v3(center + dx * dot * 2.1 - dot / 2.0, center - dot / 2.0, 0.0))?;
+                    tile.Children()?.InsertAtTop(&shape)?;
+                }
+                slot.Children()?.InsertAtTop(&tile)?;
+                self.tiles.push(Some(tile.cast()?));
             } else if it.is_icon() {
                 slot.SetSize(v2(geo.b, geo.b))?;
-                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?; // grow up and to the right
+                slot.SetCenterPoint(v3(0.0, geo.pivot_y(), 0.0))?;
                 let tile = c.CreateSpriteVisual()?;
                 tile.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
                 tile.SetBrush(&self.brushes[&it.key])?;
@@ -1826,6 +1945,14 @@ impl Dock {
         // Which item is under the pointer, measured before any magnification: the answer
         // doesn't change as the icons grow, so neither does the layout.
         let hit = self.geo.hit_base(x, y);
+        let tray_key = hit.and_then(|i| match self.items.get(i).map(|item| item.kind) {
+            Some(Kind::Tray(key)) => Some(key),
+            _ => None,
+        });
+        self.set_tray_hover(tray_key, false);
+        if self.tray_popup.open && !hit.map(|i| self.items[i].kind == Kind::TrayOverflow).unwrap_or(false) {
+            self.hide_tray_popup();
+        }
         // The peak follows the pointer continuously: the compositor then interpolates every
         // frame and the icons glide. Snapping it to slot centres (and writing it only when
         // the slot changed) made the whole bar step at a few frames a second, which is worse
@@ -1839,7 +1966,12 @@ impl Dock {
             self.start_hover(launch(hit));
             self.hover = hit;
             self.preview_hover(hit);
-            let _ = self.show_label(if self.preview.open { None } else { hit });
+            let standard_tip = hit.map(|i| match self.items[i].kind {
+                Kind::Tray(key) => self.tray_items.iter().find(|icon| icon.key == key).map(|icon| icon.standard_tip && !icon.tip.is_empty()).unwrap_or(false),
+                _ => true,
+            }).unwrap_or(false);
+            let label_hit = if self.preview.open || !standard_tip { None } else { hit };
+            let _ = self.show_label(label_hit);
         }
     }
 
@@ -1887,8 +2019,18 @@ impl Dock {
 
     fn on_leave(&mut self) {
         trace!("pointer leaves");
-        if self.menu_open || self.drag.is_some() {
+        if self.menu_open || self.drag.is_some() || self.tray_drag.is_some() {
             return;
+        }
+        let mut point = POINT::default();
+        let _ = get_cursor_pos(&mut point);
+        let popup = self.tray_popup.bounds();
+        let inside_tray_popup = self.tray_popup.open
+            && point.x >= popup.left && point.x < popup.right
+            && point.y >= popup.top && point.y < popup.bottom;
+        if !inside_tray_popup {
+            self.set_tray_hover(None, false);
+            if self.tray_popup.open { self.hide_tray_popup(); }
         }
         self.hovering = false;
         self.hover = None;
@@ -1964,6 +2106,11 @@ impl Dock {
             Kind::Launch => "Launchpad".to_string(),
             Kind::Stack => self.stack_of(&it.key).map(|v| v.1).unwrap_or_else(|| "Stack".into()),
             Kind::Widget => widget_of(&it.key).map(|d| d.name.to_string()).unwrap_or_else(|| "Widget".into()),
+            Kind::Tray(key) => self.tray_items.iter().find(|icon| icon.key == key)
+                .map(|icon| icon.tip.lines().next().unwrap_or_default().chars().take(70).collect::<String>())
+                .filter(|tip| !tip.trim().is_empty())
+                .unwrap_or_else(|| crate::strings::tr("Background app")),
+            Kind::TrayOverflow => crate::strings::tr(&format!("Show hidden tray icons ({})", self.tray_overflow_keys.len())),
             _ => self.names.get(&it.key).cloned().unwrap_or_else(|| it.key.clone()),
         };
         // Centred over the item's drawn width (a widget is wider than an icon).
@@ -2016,6 +2163,9 @@ impl Dock {
     fn on_click(&mut self, i: usize) {
         self.hide_preview();
         let it = self.items[i].clone();
+        if it.kind != Kind::TrayOverflow {
+            self.hide_tray_popup();
+        }
         // Opening or switching to something from the dock leaves Launchpad. (Clicking the
         // dock doesn't take focus from Launchpad, so it wouldn't close on its own.)
         if self.launchpad.open && matches!(it.kind, Kind::App | Kind::Stack) {
@@ -2024,6 +2174,10 @@ impl Dock {
         match it.kind {
             Kind::Launch => self.toggle_launchpad(),
             Kind::Update => self.update_menu(),
+            Kind::Tray(key) => self.tray_click(key, crate::tray::Click::Left),
+            Kind::TrayOverflow => {
+                if self.tray_popup.open { self.hide_tray_popup(); } else { self.show_tray_popup(); }
+            }
             Kind::Separator => {}
             Kind::Widget => self.widget_click(i),
             Kind::Stack => {
@@ -2057,6 +2211,17 @@ impl Dock {
     fn context_menu(&mut self, x: f32, y: f32, anchor: Option<POINT>) {
         let hit = self.geo.hit(if self.hovering { self.anchor_x } else { x }, y, if self.hovering { 1.0 } else { 0.0 });
         let item = hit.map(|i| self.items[i].clone());
+        match item.as_ref().map(|item| item.kind) {
+            Some(Kind::Tray(key)) => {
+                self.tray_click(key, crate::tray::Click::Right);
+                return;
+            }
+            Some(Kind::TrayOverflow) => {
+                if self.tray_popup.open { self.hide_tray_popup(); } else { self.show_tray_popup(); }
+                return;
+            }
+            _ => {}
+        }
         let app = item.clone().filter(|it| it.kind == Kind::App);
         let wins = app.as_ref().map(|it| self.item_windows(it)).unwrap_or_default();
         let mut m: Vec<MenuItem> = Vec::new();
@@ -2749,6 +2914,92 @@ impl Dock {
 
     /// Messages for pop-up windows (menus, previews, stacks, Launchpad, Settings).
     fn popup_message(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+        if hwnd == self.tray_popup.hwnd() {
+            let (x, y) = lparam_xy(lp);
+            let bounds = self.tray_popup.bounds();
+            let (screen_x, screen_y) = (bounds.left + x as i32, bounds.top + y as i32);
+            match msg {
+                WM_MOUSEACTIVATE => return Some(LRESULT(MA_NOACTIVATE as isize)),
+                WM_MOUSEMOVE => {
+                    unsafe {
+                        let mut tme = TRACKMOUSEEVENT {
+                            cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                            dwFlags: TME_LEAVE,
+                            hwndTrack: hwnd,
+                            dwHoverTime: 0,
+                        };
+                        let _ = TrackMouseEvent(&mut tme);
+                    }
+                    if self.tray_drag.is_some() {
+                        self.tray_drag_move(screen_x, screen_y);
+                    } else if let Some(press) = self.tray_press.as_ref() {
+                        if press.origin == TrayOrigin::Popup
+                            && ((screen_x - press.screen_x).pow(2) + (screen_y - press.screen_y).pow(2)) as f32 > (6.0 * self.scale).powi(2)
+                        {
+                            let key = press.key;
+                            self.tray_drag_start(key, TrayOrigin::Popup);
+                            self.tray_drag_move(screen_x, screen_y);
+                        } else {
+                            let key = self.tray_popup.cell_at(x, y);
+                            self.set_tray_hover(key, true);
+                        }
+                    } else {
+                        let key = self.tray_popup.cell_at(x, y);
+                        self.set_tray_hover(key, true);
+                    }
+                }
+                WM_MOUSELEAVE => {
+                    let mut point = POINT::default();
+                    let _ = get_cursor_pos(&mut point);
+                    let inside = point.x >= bounds.left && point.x < bounds.right && point.y >= bounds.top && point.y < bounds.bottom;
+                    if !inside && self.tray_drag.is_none() {
+                        self.set_tray_hover(None, false);
+                        let x = (point.x - self.monitor.left) as f32;
+                        let y = (point.y - self.win_top()) as f32;
+                        let over_overflow = self.geo.hit(x, y, 0.0)
+                            .and_then(|i| self.items.get(i))
+                            .map(|item| item.kind == Kind::TrayOverflow)
+                            .unwrap_or(false);
+                        if !over_overflow { self.hide_tray_popup(); }
+                    }
+                }
+                WM_LBUTTONDOWN => {
+                    if let Some(key) = self.tray_popup.cell_at(x, y) {
+                        if self.tray_popup.stable_id(key).is_some() {
+                            self.tray_press = Some(TrayPress { key, origin: TrayOrigin::Popup, screen_x, screen_y });
+                            unsafe { SetCapture(hwnd); }
+                        }
+                    }
+                }
+                WM_LBUTTONUP => {
+                    if self.tray_drag.is_some() {
+                        self.tray_drag_move(screen_x, screen_y);
+                        self.tray_drag_end(true);
+                    } else if let Some(press) = self.tray_press.take() {
+                        if self.tray_popup.cell_at(x, y) == Some(press.key) {
+                            self.tray_click(press.key, crate::tray::Click::Left);
+                        }
+                    }
+                    unsafe { let _ = ReleaseCapture(); }
+                }
+                WM_RBUTTONUP => {
+                    if let Some(key) = self.tray_popup.cell_at(x, y) {
+                        self.tray_click(key, crate::tray::Click::Right);
+                    }
+                }
+                WM_CAPTURECHANGED => {
+                    self.tray_press = None;
+                    if self.tray_drag.as_ref().map(|drag| drag.origin == TrayOrigin::Popup).unwrap_or(false) {
+                        self.tray_drag_end(false);
+                    }
+                }
+                WM_KEYDOWN if wp.0 as u16 == windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE.0 => {
+                    self.hide_tray_popup();
+                }
+                _ => return None,
+            }
+            return Some(LRESULT(0));
+        }
         if hwnd == self.control_center.hwnd() {
             let (x, y) = lparam_xy(lp);
             match msg {
@@ -3299,13 +3550,285 @@ impl Dock {
         }
     }
 
+    fn tray_dock_rect(&self, index: usize) -> Option<RECT> {
+        if index >= self.items.len() || index >= self.geo.left.len() { return None; }
+        let amount = if self.hovering && self.tray_drag.is_none() { 1.0 } else { 0.0 };
+        let pointer_x = if amount > 0.0 { self.anchor_x } else { self.geo.center_abs(index) };
+        let (center_x, magnification) = self.geo.slot_center(pointer_x, amount, index);
+        let (top, bottom) = self.geo.item_box(magnification);
+        let half = self.geo.b * magnification / 2.0;
+        Some(RECT {
+            left: self.monitor.left + (center_x - half).round() as i32,
+            top: self.win_top() + top.round() as i32,
+            right: self.monitor.left + (center_x + half).round() as i32,
+            bottom: self.win_top() + bottom.round() as i32,
+        })
+    }
+
+    fn tray_overflow_views(&self) -> Vec<crate::tray_strip::TrayIconView> {
+        self.tray_overflow_keys.iter().filter_map(|key| self.tray_items.iter().find(|icon| icon.key == *key).cloned()).collect()
+    }
+
+    fn show_tray_popup(&mut self) {
+        let Some(index) = self.items.iter().position(|item| item.kind == Kind::TrayOverflow) else {
+            self.hide_tray_popup();
+            return;
+        };
+        let Some(anchor) = self.tray_dock_rect(index) else { return };
+        let icons = self.tray_overflow_views();
+        if icons.is_empty() {
+            self.hide_tray_popup();
+            return;
+        }
+        self.close_launchpad();
+        self.close_control_center();
+        let _ = self.show_label(None);
+        if self.tray_hover.map(|(_, popup)| popup).unwrap_or(false) {
+            self.set_tray_hover(None, false);
+        }
+        let result = self.tray_popup.show(
+            &self.compositor,
+            &self.gfx,
+            &self.backdrop,
+            &icons,
+            anchor,
+            self.monitor,
+            self.panel_top,
+            self.scale,
+            self.cfg.panel_shadow,
+        );
+        if let Err(error) = result {
+            trace!("tray overflow popup failed: {error:?}");
+            self.tray_popup.hide();
+        }
+    }
+
+    fn hide_tray_popup(&mut self) {
+        if self.tray_hover.map(|(_, popup)| popup).unwrap_or(false) {
+            self.set_tray_hover(None, false);
+        } else {
+            self.tray_popup.set_hover(None);
+        }
+        if self.tray_popup.open {
+            self.tray_popup.hide();
+        }
+        self.tray_popup.set_drop_target(None);
+    }
+
+    fn set_tray_hover(&mut self, key: Option<u64>, in_popup: bool) {
+        let next = key.map(|key| (key, in_popup));
+        if self.tray_hover == next { return; }
+        if let Some(open_key) = self.tray_custom_popup {
+            if next.map(|(next_key, _)| next_key) != Some(open_key) {
+                let mut point = POINT::default();
+                let _ = get_cursor_pos(&mut point);
+                crate::tray::send(open_key, crate::tray::TrayInput::PopupClose, point);
+                self.tray_custom_popup = None;
+            }
+        }
+        let previous = self.tray_hover;
+        self.tray_hover = next;
+        self.tray_tip_open = None;
+        unsafe {
+            let _ = KillTimer(Some(self.hwnd), T_TRAY_TIP);
+            if next.is_some() {
+                SetTimer(Some(self.hwnd), T_TRAY_TIP, 500, None);
+            }
+        }
+        match next {
+            Some((key, true)) => {
+                // A previous icon's delayed tooltip must not linger while the next one waits.
+                self.tray_popup.reset_header(&self.compositor, &self.gfx);
+                self.tray_popup.set_hover(Some(key));
+            }
+            Some((_, false)) => {
+                if previous.map(|(_, popup)| popup).unwrap_or(false) {
+                    self.tray_popup.reset_header(&self.compositor, &self.gfx);
+                }
+                self.tray_popup.set_hover(None);
+            }
+            None => {
+                self.tray_popup.set_hover(None);
+                self.tray_popup.reset_header(&self.compositor, &self.gfx);
+            }
+        }
+        if let Some((key, _)) = next {
+            let mut point = POINT::default();
+            let _ = get_cursor_pos(&mut point);
+            crate::tray::send(key, crate::tray::TrayInput::MouseMove, point);
+        }
+    }
+
+    fn tray_tip_tick(&mut self) {
+        unsafe { let _ = KillTimer(Some(self.hwnd), T_TRAY_TIP); }
+        let Some((key, in_popup)) = self.tray_hover else { return };
+        if self.tray_tip_open == Some(key) { return; }
+        let Some(standard_tip) = self.tray_items.iter().find(|icon| icon.key == key).map(|icon| icon.standard_tip) else {
+            self.set_tray_hover(None, false);
+            return;
+        };
+        if standard_tip {
+            if in_popup && self.tray_popup.open {
+                self.tray_popup.show_tip(&self.compositor, &self.gfx, key);
+            }
+        } else {
+            let mut point = POINT::default();
+            let _ = get_cursor_pos(&mut point);
+            crate::tray::send(key, crate::tray::TrayInput::PopupOpen, point);
+            self.tray_custom_popup = Some(key);
+        }
+        self.tray_tip_open = Some(key);
+    }
+
+    fn tray_drag_start(&mut self, key: u64, origin: TrayOrigin) {
+        let Some(icon) = self.tray_items.iter().find(|icon| icon.key == key) else { return };
+        let stable_id = icon.stable_id.clone();
+        self.tray_press = None;
+        self.tray_drag = Some(TrayDrag { key, stable_id, origin, target: None });
+        self.set_tray_hover(None, false);
+        self.hide_preview();
+        self.stack_view.hide();
+        let _ = self.show_label(None);
+        if origin == TrayOrigin::Dock {
+            if let Some(index) = self.items.iter().position(|item| item.kind == Kind::Tray(key)) {
+                let _ = self.slots[index].SetOpacity(0.28);
+            }
+        }
+        let temp = Item { kind: Kind::Tray(key), key: format!("::tray:{key}"), pinned: false };
+        self.items.push(temp);
+        let ghost_result = self.show_ghost(self.items.len() - 1);
+        self.items.pop();
+        if let Err(error) = ghost_result {
+            trace!("tray drag ghost failed: {error:?}");
+        }
+    }
+
+    fn tray_drag_move(&mut self, screen_x: i32, screen_y: i32) {
+        self.move_ghost(screen_x, screen_y);
+        let Some(drag) = self.tray_drag.as_ref() else { return };
+        let (key, origin) = (drag.key, drag.origin);
+        let bounds = self.tray_popup.bounds();
+        let in_popup = self.tray_popup.open
+            && screen_x >= bounds.left && screen_x < bounds.right
+            && screen_y >= bounds.top && screen_y < bounds.bottom;
+        let mut popup_hover = None;
+        let target = if in_popup {
+            let x = screen_x - bounds.left;
+            let y = screen_y - bounds.top;
+            popup_hover = self.tray_popup.cell_at(x as f32, y as f32);
+            if let Some(target_key) = popup_hover {
+                let target_id = self.tray_popup.stable_id(target_key).map(str::to_owned);
+                let target_rect = self.tray_popup.screen_rect(target_key);
+                match (target_id, target_rect) {
+                    (Some(stable_id), Some(rect)) if target_key != key => Some(TrayDrop::Relative {
+                        stable_id,
+                        after: screen_y > (rect.top + rect.bottom) / 2
+                            || (screen_y == (rect.top + rect.bottom) / 2 && screen_x >= (rect.left + rect.right) / 2),
+                        in_overflow: true,
+                    }),
+                    _ => None,
+                }
+            } else if origin == TrayOrigin::Dock {
+                Some(TrayDrop::Hide)
+            } else {
+                None
+            }
+        } else {
+            let x = (screen_x - self.monitor.left) as f32;
+            let y = (screen_y - self.win_top()) as f32;
+            match self.geo.hit(x, y, 0.0).and_then(|index| self.items.get(index).map(|item| (index, item))) {
+                Some((index, item)) => match item.kind {
+                    Kind::Tray(target_key) if target_key != key => {
+                        let target_id = self.tray_items.iter().find(|icon| icon.key == target_key).map(|icon| icon.stable_id.clone());
+                        target_id.map(|stable_id| {
+                            let rect = self.tray_dock_rect(index).unwrap_or_default();
+                            TrayDrop::Relative { stable_id, after: screen_x >= (rect.left + rect.right) / 2, in_overflow: false }
+                        })
+                    }
+                    Kind::TrayOverflow if origin == TrayOrigin::Popup => Some(TrayDrop::Promote),
+                    Kind::TrayOverflow => Some(TrayDrop::Hide),
+                    _ => None,
+                },
+                None => None,
+            }
+        };
+        self.tray_popup.set_hover(popup_hover);
+        self.tray_popup.set_drop_target(popup_hover);
+        if let Some(drag) = self.tray_drag.as_mut() {
+            drag.target = target;
+        }
+        for (highlight_key, visual) in &self.tray_highlights {
+            let active = match self.tray_drag.as_ref().and_then(|drag| drag.target.as_ref()) {
+                Some(TrayDrop::Hide | TrayDrop::Promote) => *highlight_key == u64::MAX,
+                Some(TrayDrop::Relative { stable_id, in_overflow: false, .. }) => {
+                    self.tray_items.iter().any(|icon| icon.key == *highlight_key && icon.stable_id == *stable_id)
+                }
+                _ => false,
+            };
+            let _ = visual.SetOpacity(if active { 0.9 } else { 0.0 });
+        }
+    }
+
+    fn tray_drag_end(&mut self, commit: bool) {
+        let Some(drag) = self.tray_drag.take() else { return };
+        self.hide_ghost(!commit);
+        if let Some(index) = self.items.iter().position(|item| item.kind == Kind::Tray(drag.key)) {
+            let _ = self.slots[index].SetOpacity(1.0);
+        }
+        self.tray_popup.set_drop_target(None);
+        for (_, visual) in &self.tray_highlights { let _ = visual.SetOpacity(0.0); }
+        if !commit {
+            unsafe { let _ = PostMessageW(Some(self.hwnd), WM_APP_RESYNC_HOVER, WPARAM(0), LPARAM(0)); }
+            return;
+        }
+        let Some(target) = drag.target else {
+            unsafe { let _ = PostMessageW(Some(self.hwnd), WM_APP_RESYNC_HOVER, WPARAM(0), LPARAM(0)); }
+            return;
+        };
+        let mut cfg = self.cfg.clone();
+        // Include currently registered icons that have never been dragged before, preserving
+        // their live (registration) order after any identities already saved by the user.
+        for icon in &self.tray_items {
+            if !cfg.tray_order.iter().any(|id| id == &icon.stable_id) {
+                cfg.tray_order.push(icon.stable_id.clone());
+            }
+        }
+        match target {
+            TrayDrop::Relative { stable_id, after, in_overflow } => {
+                crate::tray_strip::move_before(&mut cfg.tray_order, &drag.stable_id, &stable_id, after);
+                if drag.origin == TrayOrigin::Dock && in_overflow {
+                    if !cfg.tray_hidden.iter().any(|id| id == &drag.stable_id) { cfg.tray_hidden.push(drag.stable_id); }
+                } else if drag.origin == TrayOrigin::Popup && !in_overflow {
+                    cfg.tray_hidden.retain(|id| id != &drag.stable_id);
+                }
+            }
+            TrayDrop::Hide => {
+                if !cfg.tray_hidden.iter().any(|id| id == &drag.stable_id) { cfg.tray_hidden.push(drag.stable_id); }
+            }
+            TrayDrop::Promote => {
+                cfg.tray_hidden.retain(|id| id != &drag.stable_id);
+                if let Some(first) = self.tray_bar_keys.iter().filter_map(|key| self.tray_items.iter().find(|icon| icon.key == *key)).find(|icon| icon.stable_id != drag.stable_id) {
+                    crate::tray_strip::move_before(&mut cfg.tray_order, &drag.stable_id, &first.stable_id, false);
+                } else if !cfg.tray_order.iter().any(|id| id == &drag.stable_id) {
+                    cfg.tray_order.insert(0, drag.stable_id);
+                }
+            }
+        }
+        self.save_and_apply(|current| {
+            current.tray_order = cfg.tray_order;
+            current.tray_hidden = cfg.tray_hidden;
+        });
+        unsafe { let _ = PostMessageW(Some(self.hwnd), WM_APP_RESYNC_HOVER, WPARAM(0), LPARAM(0)); }
+    }
+
     /// Click a tray icon: Launchpad closes first so the app's window or menu can come up
     /// in front, at the pointer.
     fn tray_click(&mut self, key: u64, kind: crate::tray::Click) {
         self.close_launchpad();
-        // The drop-down is topmost: left open, the menu or flyout an app opens in answer to
-        // the click would appear behind it and the click would look lost.
+        // Pop-ups are topmost. Hide both before an app opens its own menu or flyout.
         self.close_control_center();
+        self.hide_tray_popup();
+        self.set_tray_hover(None, false);
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
         crate::tray::click(key, kind, p);
@@ -3326,33 +3849,50 @@ impl Dock {
         Ok(b)
     }
 
-    /// Visible tray icons with their pictures, redrawn only when an icon changed.
-    fn tray_views(&mut self) -> Vec<lp::TrayView> {
-        let icons: Vec<(u64, u64, HICON, String)> = crate::tray::with_icons(|icons| {
-            icons.iter().filter(|i| !i.hidden).filter_map(|i| i.hicon.map(|h| (i.key, i.gen, h, i.tip.clone()))).collect()
+    /// All live tray icons, cached as composition brushes only when their picture changes.
+    fn collect_tray_items(&mut self) -> Vec<crate::tray_strip::TrayIconView> {
+        let snapshots = crate::tray::snapshots();
+        let live: std::collections::HashSet<u64> = snapshots.iter().map(|i| i.key).collect();
+        self.tray_brushes.retain(|key, _| live.contains(key));
+        self.brushes.retain(|key, _| {
+            !key.starts_with("::tray:") || key.strip_prefix("::tray:").and_then(|n| n.parse::<u64>().ok()).map(|id| live.contains(&id)).unwrap_or(false)
         });
-        self.tray_brushes.retain(|k, _| icons.iter().any(|i| i.0 == *k));
         let px = (24.0 * self.scale).ceil();
         let mut out = Vec::new();
-        for (key, gen, hicon, tip) in icons {
-            let fresh = self.tray_brushes.get(&key).map(|(g, _)| *g == gen).unwrap_or(false);
+        for icon in snapshots {
+            let Some(hicon) = icon.hicon else { continue };
+            let fresh = self.tray_brushes.get(&icon.key).map(|(generation, _)| *generation == icon.generation).unwrap_or(false);
             if !fresh {
                 match self.tray_brush(hicon, px) {
-                    Ok(b) => {
-                        self.tray_brushes.insert(key, (gen, b));
-                    }
-                    Err(e) => {
-                        trace!("tray icon {key} ('{tip}') couldn't be drawn: {e:?}");
-                        // Don't retry this picture on every redraw; wait for the app to change it.
-                        if let Ok(b) = self.compositor.CreateSurfaceBrush() {
-                            self.tray_brushes.insert(key, (gen, b));
+                    Ok(brush) => { self.tray_brushes.insert(icon.key, (icon.generation, brush)); }
+                    Err(error) => {
+                        trace!("tray icon {} ('{}') couldn't be drawn: {error:?}", icon.key, icon.tip);
+                        if let Ok(brush) = self.compositor.CreateSurfaceBrush() {
+                            self.tray_brushes.insert(icon.key, (icon.generation, brush));
                         }
                     }
                 }
             }
-            out.push(lp::TrayView { key, brush: self.tray_brushes.get(&key).map(|(_, b)| b.clone()), tip });
+            let brush = self.tray_brushes.get(&icon.key).map(|(_, brush)| brush.clone());
+            let cache_key = format!("::tray:{}", icon.key);
+            if let Some(brush) = &brush { self.brushes.insert(cache_key, brush.clone()); }
+            out.push(crate::tray_strip::TrayIconView {
+                key: icon.key,
+                stable_id: icon.stable_id,
+                tip: icon.tip,
+                brush,
+                app_hidden: icon.hidden,
+                standard_tip: icon.standard_tip,
+            });
         }
         out
+    }
+
+    /// Icons the Launchpad mirror should show (apps may keep icons in their own overflow).
+    fn tray_views(&mut self) -> Vec<lp::TrayView> {
+        let items = self.collect_tray_items();
+        self.tray_items = items.clone();
+        items.into_iter().filter(|icon| !icon.app_hidden).map(|icon| lp::TrayView { key: icon.key, brush: icon.brush, tip: icon.tip }).collect()
     }
 
     fn launchpad_results_ids(&self, need: &mut Vec<String>) {
@@ -3376,6 +3916,8 @@ impl Dock {
 
     fn open_launchpad(&mut self) {
         self.close_control_center();
+        self.hide_tray_popup();
+        self.set_tray_hover(None, false);
         self.hide_preview();
         self.stack_view.hide();
         let _ = self.show_label(None);
@@ -4994,6 +5536,21 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_MOUSEMOVE => {
             let (x, y) = lparam_xy(lp);
             with_dock(|d| {
+                let (screen_x, screen_y) = (d.monitor.left + x as i32, d.win_top() + y as i32);
+                if d.tray_drag.is_some() {
+                    d.tray_drag_move(screen_x, screen_y);
+                    return;
+                }
+                if let Some(press) = d.tray_press.as_ref() {
+                    if press.origin == TrayOrigin::Dock
+                        && ((screen_x - press.screen_x).pow(2) + (screen_y - press.screen_y).pow(2)) as f32 > (6.0 * d.scale).powi(2)
+                    {
+                        let key = press.key;
+                        d.tray_drag_start(key, TrayOrigin::Dock);
+                        d.tray_drag_move(screen_x, screen_y);
+                        return;
+                    }
+                }
                 if d.drag.is_some() {
                     d.drag_move(x, y);
                     return;
@@ -5018,7 +5575,24 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             let (x, y) = lparam_xy(lp);
             with_dock(|d| {
                 d.pressed = d.geo.hit(x, y, 1.0);
-                d.press = d.pressed.map(|i| (i, x, y));
+                d.tray_press = None;
+                if let Some(i) = d.pressed {
+                    if let Kind::Tray(key) = d.items[i].kind {
+                        if d.tray_items.iter().any(|icon| icon.key == key) {
+                            d.tray_press = Some(TrayPress {
+                                key,
+                                origin: TrayOrigin::Dock,
+                                screen_x: d.monitor.left + x as i32,
+                                screen_y: d.win_top() + y as i32,
+                            });
+                        }
+                        d.press = None;
+                    } else {
+                        d.press = Some((i, x, y));
+                    }
+                } else {
+                    d.press = None;
+                }
             });
             unsafe {
                 SetCapture(hwnd); // keep receiving the pointer while dragging off the dock
@@ -5029,7 +5603,18 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             let (x, y) = lparam_xy(lp);
             with_dock(|d| {
                 d.press = None;
-                if d.drag.is_some() {
+                if d.tray_drag.is_some() {
+                    let (screen_x, screen_y) = (d.monitor.left + x as i32, d.win_top() + y as i32);
+                    d.tray_drag_move(screen_x, screen_y);
+                    d.tray_drag_end(true);
+                } else if let Some(press) = d.tray_press.take() {
+                    let hit = d.geo.hit(x, y, 1.0);
+                    let same = hit.and_then(|i| match d.items.get(i).map(|item| item.kind) {
+                        Some(Kind::Tray(key)) => Some(key),
+                        _ => None,
+                    }) == Some(press.key);
+                    if same { d.tray_click(press.key, crate::tray::Click::Left); }
+                } else if d.drag.is_some() {
                     d.end_drag(true);
                 } else {
                     let hit = d.geo.hit(x, y, 1.0);
@@ -5048,6 +5633,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_CAPTURECHANGED => {
             with_dock(|d| {
                 d.press = None;
+                d.tray_press = None;
+                if d.tray_drag.as_ref().map(|drag| drag.origin == TrayOrigin::Dock).unwrap_or(false) {
+                    d.tray_drag_end(false);
+                }
                 if d.drag.is_some() {
                     d.end_drag(false);
                 }
@@ -5075,6 +5664,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     // enough, because Windows doesn't always give Launchpad focus to lose.
                     if d.launchpad.open && !d.synthetic() && !testctl() && !is_own_window(d.fg) {
                         d.close_launchpad();
+                    }
+                    if !is_own_window(d.fg) {
+                        if d.tray_popup.open { d.hide_tray_popup(); }
+                        if d.tray_hover.is_some() { d.set_tray_hover(None, false); }
                     }
                     d.attention.remove(&(d.fg.0 as isize)); // looked at: clear its dot
                     d.update_indicators();
@@ -5127,13 +5720,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             return LRESULT(0);
         }
         WM_APP_TRAY => {
-            with_dock(|d| {
-                if d.launchpad.open {
-                    unsafe { SetTimer(Some(hwnd), T_TRAY_RENDER, 150, None) };
-                } else {
-                    crate::tray::with_icons(|_| ()); // clears the pending flag
-                }
-            });
+            // Debounce bursts (apps commonly update picture + tooltip separately), then
+            // rebuild the strip and any open overflow grid from one consistent snapshot.
+            unsafe { SetTimer(Some(hwnd), T_TRAY_RENDER, 150, None) };
             return LRESULT(0);
         }
         WM_APP_CONFIG => {
@@ -5166,8 +5755,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 },
                 T_TRAY_RENDER => unsafe {
                     let _ = KillTimer(Some(hwnd), T_TRAY_RENDER);
-                    d.lp_render("right");
+                    d.refresh(true);
+                    if d.launchpad.open { d.lp_render("right"); }
                 },
+                T_TRAY_TIP => d.tray_tip_tick(),
                 T_FILES => unsafe {
                     let _ = KillTimer(Some(hwnd), T_FILES);
                     d.files_gen += 1;
@@ -5276,8 +5867,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 T_HIDE => unsafe {
                     let _ = KillTimer(Some(hwnd), T_HIDE);
                     if d.cfg.auto_hide && !d.hovering && !d.menu_open && !d.preview.open && d.drag.is_none() && !d.launchpad.open {
-                        if d.stack_view.open {
-                            // Stay up under an open stack (like macOS); check again until it closes.
+                        if d.stack_view.open || d.tray_popup.open {
+                            // Stay up under an open stack or tray popup; check again until it closes.
                             SetTimer(Some(hwnd), T_HIDE, 250, None);
                         } else {
                             d.set_tucked(true);
@@ -5542,6 +6133,8 @@ impl Dock {
                 self.close_launchpad();
             }
             self.close_control_center();
+            self.hide_tray_popup();
+            self.set_tray_hover(None, false);
             self.menu.hide(false);
             self.menu_open = false;
             self.preview.hide();
@@ -5853,6 +6446,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         let stack_view = StackView::new(&compositor)?;
         let launchpad = Launchpad::new(&compositor)?;
         let control_center = crate::control_center::ControlCenter::new(&compositor)?;
+        let tray_popup = crate::tray_strip::TrayPopup::new(&compositor)?;
 
         let mut dock = Dock {
             hwnd,
@@ -5874,6 +6468,16 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             icons: IconCache::open(),
             brushes: HashMap::new(),
             tray_brushes: HashMap::new(),
+            tray_items: Vec::new(),
+            tray_bar_keys: Vec::new(),
+            tray_overflow_keys: Vec::new(),
+            tray_popup,
+            tray_hover: None,
+            tray_tip_open: None,
+            tray_custom_popup: None,
+            tray_press: None,
+            tray_drag: None,
+            tray_highlights: Vec::new(),
             names: HashMap::new(),
             ptr,
             root,

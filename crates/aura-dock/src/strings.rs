@@ -53,6 +53,16 @@ pub fn tr(text: &str) -> String {
 
 /// Labels that carry a number: "Close All 3 Windows", "All Apps   12".
 fn patterned(text: &str) -> Option<String> {
+    if let Some(count) = text.strip_prefix("Background apps (").and_then(|s| s.strip_suffix(')')) {
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            return Some(format!("Фоновые приложения ({count})"));
+        }
+    }
+    if let Some(count) = text.strip_prefix("Show hidden tray icons (").and_then(|s| s.strip_suffix(')')) {
+        if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
+            return Some(format!("Показать скрытые значки области уведомлений ({count})"));
+        }
+    }
     // The control centre's network count: "4 available".
     if let Some(count) = text.strip_suffix(" available") {
         if !count.is_empty() && count.chars().all(|c| c.is_ascii_digit()) {
@@ -169,6 +179,7 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Restart" => "Перезагрузка",
         "User" => "Пользователь",
         "Launchpad" => "Launchpad",
+        "Background app" => "Фоновое приложение",
         // ---------------------------------------------------------------- updates
         "Developer build" => "Сборка разработчика",
         "Developer build: updates are off." => "Сборка разработчика: обновления выключены.",

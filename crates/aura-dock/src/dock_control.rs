@@ -54,6 +54,8 @@ impl Dock {
             return;
         }
         self.close_launchpad();
+        self.hide_tray_popup();
+        self.set_tray_hover(None, false);
         self.hide_preview();
         self.stack_view.hide();
         if self.menu_open {
