@@ -9,3 +9,6 @@ description = "Fences desktop-grid domain model and layout rules."
 [dependencies]
 aura-core = { path = "../aura-core" }
 serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

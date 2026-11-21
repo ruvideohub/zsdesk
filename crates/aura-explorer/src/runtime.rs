@@ -177,7 +177,7 @@ fn status(profile:&Path,workers:&[Worker],pool:&[WindowWorker],queued:usize,erro
     let value=serde_json::json!({"schema":1,"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"components":components,"last_error":error,
         "window_pool":pool.iter().map(|worker|serde_json::json!({"id":worker.id,"thread_id":worker.thread_id,"active":worker.job.is_some(),"requests":worker.requests,"stopping":worker.ending})).collect::<Vec<_>>(),
         "queued_window_requests":queued,"max_window_threads":MAX_WINDOW_THREADS,"max_idle_window_threads":MAX_IDLE_WINDOW_THREADS,"window_idle_timeout_seconds":WINDOW_IDLE_TIMEOUT.as_secs(),"retiring_menu_threads":0,
-        "pending_file_operations:aura_windows::shell::file_transfer::pending_operations(),"pending_extension_workers":crate::context_menu_process::pending_workers(),
+        "pending_file_operations":aura_windows::shell::file_transfer::pending_operations(),"pending_extension_workers":crate::context_menu_process::pending_workers(),
         "pending_search_workers":crate::fast_search::pending_workers()});
     if let Ok(bytes)=serde_json::to_vec(&value){
         if previous.as_ref()==Some(&bytes){return;}

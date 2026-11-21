@@ -9,6 +9,6 @@ pub(crate) fn same_path(a: &Path, b: &Path) -> bool {
     let mut right = units(b);
     while left.len() > 3 && left.last() == Some(&92) { left.pop(); }
     while right.len() > 3 && right.last() == Some(&92) { right.pop(); }
-    unsafe { windows::Win32::Globalization::CompareStringOrdinal(&left, &right, true) }
+    (unsafe { windows::Win32::Globalization::CompareStringOrdinal(&left, &right, true) })
         == windows::Win32::Globalization::CSTR_EQUAL
 }

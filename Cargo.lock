@@ -1074,6 +1074,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "windows",
+ "windows-core",
  "aura-core",
  "aura-fences-model",
  "aura-ui",
@@ -1085,6 +1086,7 @@ name = "aura-fences-model"
 version = "0.3.23"
 dependencies = [
  "serde",
+ "serde_json",
  "aura-core",
 ]
 
