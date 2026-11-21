@@ -22,7 +22,9 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/aura.rc");
     println!("cargo:rerun-if-changed=resources/aura.ico");
     println!("cargo:rerun-if-changed=resources/aura.exe.manifest");
-    embed_resource::compile("resources/aura.rc", embed_resource::NONE)
+    // The library's unit-test executable also imports Common Controls v6 functions.
+    // Link the manifest to tests as well as shipped binaries so Windows resolves them.
+    embed_resource::compile_for_everything("resources/aura.rc", embed_resource::NONE)
         .manifest_required()
         .expect("failed to embed the Windows application manifest");
 }
