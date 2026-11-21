@@ -6,7 +6,7 @@ use std::path::{Path,PathBuf};
 use anyhow::{Context,Result};
 #[derive(Clone,Copy,Debug,PartialEq,Eq)]
 pub enum Action {Open,Settings,Resident,Stop,Status,EnableAtLogin,Disable}
-pub(crate) fn dialog_enabled(profile:&Path)->bool{!crate::edition::DESKTOP_ONLY&&crate::storage::load(profile).is_ok_and(|session|session.ui.file_dialog_takeover)}
+pub(crate) fn dialog_enabled(profile:&Path)->bool{crate::storage::load(profile).is_ok_and(|session|session.ui.file_dialog_takeover)}
 
 pub fn launch(profile: &Path, settings: bool) -> Result<()> {
     if control::signal(profile, if settings { "settings" } else { "open" })? { return Ok(()); }

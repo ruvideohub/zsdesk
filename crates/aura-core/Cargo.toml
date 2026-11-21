@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "AuraExplorer domain model: tabs, grids, rules, layout and common types."
+description = "Shared and Explorer domain models, localization, archive utilities and common types."
 
 [dependencies]
 serde.workspace = true

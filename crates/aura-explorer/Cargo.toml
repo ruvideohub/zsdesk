@@ -21,17 +21,12 @@ pinyin = { version = "=0.11.0", default-features = false, features = ["plain"] }
 zsui = { path = "../../../zsui", default-features = false }
 
 [features]
-# Editions: standard, network, desktop, full, and a separate themed edition.
+# `desktop` is package metadata: those editions ship the separate Fences.exe companion.
+# AuraExplorer itself never embeds or starts the Fences host.
 default = ["network", "desktop"]
 network = []
 desktop = []
-desktop-box = ["desktop"]
 themed = ["network", "desktop"]
-
-# The desktop host as its own program (the file window starts it with `--desktop`).
-[[bin]]
-name = "fences"
-path = "src/bin/fences.rs"
 
 [[example]]
 name = "desktop_probe"

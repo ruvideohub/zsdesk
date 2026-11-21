@@ -27,7 +27,7 @@ fn forwarding_policy(registered:bool,window_open:bool,permanent:bool,temporary:b
     if registered{permanent}else{window_open&&temporary}
 }
 pub(crate) fn enabled(profile:&Path)->bool{
-    !crate::edition::DESKTOP_ONLY&&crate::storage::load(profile).is_ok_and(|session|
+    crate::storage::load(profile).is_ok_and(|session|
         forwarding_policy(owns_integration(profile),find_target(profile).is_some(),session.ui.forward_unhandled_windows,session.ui.forward_while_running))
 }
 struct Apartment;

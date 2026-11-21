@@ -22,8 +22,8 @@
 #define ProductDirectory "AuraUI"
 #define ProductAppId "{{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}"
 
-#if !FileExists(SourceDir + "\AuraExplorer.exe") || !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\auraservice.exe") || !FileExists(SourceDir + "\manifest.json")
-#error The payload is incomplete: AuraExplorer.exe, AuraDock.exe, auraservice.exe and manifest.json are required
+#if !FileExists(SourceDir + "\AuraExplorer.exe") || !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\auraservice.exe") || !FileExists(SourceDir + "\AuraArc.exe") || !FileExists(SourceDir + "\manifest.json")
+#error The verified AuraUI payload is incomplete: AuraExplorer.exe, AuraDock.exe, Fences.exe, widgets.exe, auraservice.exe, AuraArc.exe and manifest.json are required
 #endif
 
 [Setup]
@@ -56,7 +56,7 @@ VersionInfoDescription={#ProductName} {#MyAppVersion} Setup
 ; Программы закрываются перед установкой штатным механизмом Windows (Restart Manager),
 ; а не «поверх запущенных»: иначе exe занят и файл не заменится.
 CloseApplications=yes
-CloseApplicationsFilter=AuraExplorer.exe,AuraDock.exe,fences.exe,widgets.exe,AuraArc.exe
+CloseApplicationsFilter=AuraExplorer.exe,AuraDock.exe,Fences.exe,widgets.exe,auraservice.exe,AuraArc.exe
 RestartApplications=no
 
 [Languages]
@@ -72,7 +72,7 @@ Name: "autostart"; Description: "Запускать AuraUI при входе в 
 ; Программы: каждая — отдельный exe, все лежат рядом, потому что служба ищет их по имени.
 Source: "{#SourceDir}\AuraExplorer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\AuraDock.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\fences.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\Fences.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\widgets.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\auraservice.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\AuraArc.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -91,6 +91,7 @@ Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversi
 
 [Icons]
 Name: "{group}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"
+Name: "{group}\Fences — desktop grids"; Filename: "{app}\Fences.exe"
 Name: "{group}\AuraUI — настройки и запуск"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Comment: "Что запускать: компоненты, автозапуск, журнал"
 Name: "{group}\AuraArc — архиватор"; Filename: "{app}\AuraArc.exe"
 Name: "{group}\Удалить AuraUI"; Filename: "{uninstallexe}"
@@ -103,21 +104,24 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 ; вторую панель или сетки без владельца.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraDock"; Flags: deletevalue
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraExplorer.Desktop"; Flags: deletevalue
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraFences.Desktop"; Flags: deletevalue
 
 [Run]
+; В общей установке запуском Fences владеет служба, не отдельная запись Run.
+; Удаляем оставшийся запуск этой копии, если ранее включали standalone-autostart.
+Filename: "{app}\Fences.exe"; Parameters: "--uninstall-startup"; Flags: runhidden waituntilterminated
 ; Служба поднимает включённые компоненты сразу, не дожидаясь следующего входа в Windows.
 Filename: "{app}\auraservice.exe"; Parameters: "--run"; Description: "Запустить AuraUI"; Flags: nowait postinstall skipifsilent
 Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Description: "Открыть настройки: что запускать"; Flags: nowait postinstall skipifsilent unchecked
 
 [UninstallRun]
 ; Служба останавливается первой: иначе она поднимет то, что установщик только что убрал.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM fences.exe /IM widgets.exe /IM AuraArc.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM Fences.exe /IM widgets.exe /IM AuraArc.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AuraExplorer.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStopFiles"
 
 [Code]
-{ Перед установкой закрываем запущенные программы вежливо: у AuraExplorer есть свой ключ,
-  который гасит и панель, и сетки, и возвращает панель задач Windows на место. Манифест в
-  папке набора уже проверен scripts/verify-bundle.ps1, поэтому здесь только запуск. }
+{ Перед установкой AuraExplorer кооперативно закрывает свои окна; Restart Manager закрывает
+  независимые программы, включая Fences и AuraService. Манифест проверен упаковщиком. }
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExitCode: Integer;

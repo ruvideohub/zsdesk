@@ -60,6 +60,7 @@ $StartMenu  = if ($Programs) { Join-Path $Programs 'AuraExplorer.lnk' } else { $
 $ShellLink  = if ($Programs) { Join-Path $Programs 'AuraUI - запуск и компоненты.lnk' } else { $null }
 # Так ярлык назывался до службы; при обновлении его надо убрать, иначе их станет два.
 $OldShellLink = if ($Programs) { Join-Path $Programs 'AuraExplorer - сетки и панель.lnk' } else { $null }
+$FencesLink = if ($Programs) { Join-Path $Programs 'Fences.lnk' } else { $null }
 $Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'AuraExplorer.lnk' } else { $null }
 $Source    = $PSScriptRoot
 if (-not $Source) { $Source = (Get-Location).Path }
@@ -67,24 +68,26 @@ if (-not $Dir) { throw 'Не задана папка установки и пу�
 $Exe       = Join-Path $Dir 'AuraExplorer.exe'
 $Dock      = Join-Path $Dir 'AuraDock.exe'
 $Service   = Join-Path $Dir 'auraservice.exe'
+$Fences    = Join-Path $Dir 'Fences.exe'
 
 function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
 function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
 function Write-Ok([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
 
 function Stop-AuraExplorer {
-    # Вежливо: просим запущенный AuraExplorer закрыться (он сам погасит панель и вернёт
-    # панель задач Windows), потом ждём, и только затем добиваем остатки.
-    if (Test-Path -LiteralPath $Exe) {
-        try { Start-Process -FilePath $Exe -ArgumentList '--desktop', '--quit' -Wait -ErrorAction Stop | Out-Null } catch { }
-        for ($i = 0; $i -lt 40; $i++) {
-            $alive = Get-Process -Name 'AuraExplorer' -ErrorAction SilentlyContinue
-            if (-not $alive) { break }
-            Start-Sleep -Milliseconds 250
-        }
+    # Сначала останавливаем владельца запуска, иначе он немедленно поднимет Fences снова.
+    Get-Process -Name 'auraservice' -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
-    # Служба идёт первой: иначе она поднимет то, что мы только что закрыли.
-    Get-Process -Name 'auraservice', 'AuraExplorer', 'aura-dock', 'fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
+    # Fences — отдельная программа со своей shutdown-командой.
+    if (Test-Path -LiteralPath $Fences) {
+        try { Start-Process -FilePath $Fences -ArgumentList '--quit' -Wait -ErrorAction Stop | Out-Null } catch { }
+    }
+    # AuraExplorer предоставляет ограниченное кооперативное закрытие для обновления.
+    if (Test-Path -LiteralPath $Exe) {
+        try { Start-Process -FilePath $Exe -ArgumentList @('--shutdown-for-update', ('"{0}"' -f $Exe)) -Wait -ErrorAction Stop | Out-Null } catch { }
+    }
+    Get-Process -Name 'AuraExplorer', 'aura-dock', 'Fences', 'widgets', 'AuraArc' -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
 }
@@ -98,17 +101,21 @@ function Remove-Autostart([string]$Name) {
     if ($existing) { Remove-ItemProperty -Path $RunKey -Name $Name -Force; Write-Note "автозапуск «$Name» выключен" }
 }
 
-# Прежние записи автозапуска компонентов: сетки (`AuraExplorer.exe --desktop --profile-dir …`
-# или `fences.exe --desktop …`) и панель (`AuraDock.exe`). Их работу теперь делает служба,
+# Прежние записи автозапуска компонентов: старый AuraExplorer desktop-mode, отдельный
+# Fences и AuraDock. Их работу теперь делает AuraService, поэтому записи удаляются.
 # а оставленная запись подняла бы второй экземпляр — или вообще старую программу.
 function Remove-StaleAutostart {
     $key = Get-Item -LiteralPath $RunKey -ErrorAction SilentlyContinue
     if (-not $key) { return }
+    $fencesPrefix = '"' + [IO.Path]::GetFullPath($Fences) + '" '
     foreach ($name in @($key.GetValueNames())) {
         if ($name -eq 'AuraExplorer') { continue }
         $value = [string]$key.GetValue($name)
-        $ours = $value -match 'AuraExplorer(\.exe)?["\s]' -or $value -match 'fences\.exe' -or $value -match 'AuraDock\.exe'
-        if ($ours -and $value -match '--desktop') {
+        $oldExplorerDesktop = ($value -match 'AuraExplorer(\.exe)?["\s]') -and ($value -match '--desktop')
+        # Standalone Fences uses a profile-scoped Run value. Retire it only when it points
+        # to this exact suite copy; a different standalone Fences installation survives.
+        $thisFencesInstall = $value.StartsWith($fencesPrefix, [StringComparison]::OrdinalIgnoreCase)
+        if ($oldExplorerDesktop -or $thisFencesInstall) {
             Remove-ItemProperty -Path $RunKey -Name $name -Force -ErrorAction SilentlyContinue
             Write-Note "снята прежняя запись автозапуска «$name»"
         }
@@ -145,9 +152,11 @@ if ($Remove) {
     Stop-AuraExplorer
     Remove-Autostart 'AuraExplorer'
     Remove-Autostart 'AuraDock'
+    Remove-StaleAutostart
     Remove-Shortcut $StartMenu
     Remove-Shortcut $ShellLink
     Remove-Shortcut $OldShellLink
+    Remove-Shortcut $FencesLink
     Remove-Shortcut $Desktop
     if (Test-Path -LiteralPath $Dir) {
         Remove-Item -LiteralPath $Dir -Recurse -Force
@@ -161,16 +170,14 @@ if ($Remove) {
 # ------------------------------------------------------------------ установка
 Write-Head 'Установка AuraExplorer'
 
-# auraservice.exe — служба запуска: единственный владелец автозапуска и всех компонентов.
-# fences.exe — сетки рабочего стола, widgets.exe — виджеты, AuraArc.exe — архиватор
-# (работает и сам по себе). Весь набор описан в packaging/bundle.json, и если файла рядом
-# нет, архив неполный: скажем об этом прямо, но установку из-за этого не рвём.
-$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'auraservice.exe')
-$components = @('fences.exe', 'widgets.exe', 'AuraArc.exe')
+# AuraService owns the suite startup. Every required executable in bundle.json must be
+# present before install, so an incomplete desktop bundle is rejected rather than half-installed.
+$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'Fences.exe', 'widgets.exe', 'auraservice.exe', 'AuraArc.exe')
+$components = @()
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {
     Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
-    Write-Host 'Положи install.ps1 в ту же папку, что AuraExplorer.exe, AuraDock.exe и auraservice.exe (как в архиве сборки).' -ForegroundColor Red
+    Write-Host 'Положи install.ps1 рядом с AuraExplorer.exe, AuraDock.exe, Fences.exe и auraservice.exe (как в архиве сборки).' -ForegroundColor Red
     exit 1
 }
 
@@ -264,6 +271,8 @@ if ($StartMenu -or $Desktop) {
     if ($StartMenu) { Write-Note "меню «Пуск»: $StartMenu" }
     New-Shortcut $ShellLink $Service '--settings' 'AuraUI — запуск и компоненты: что и когда запускать'
     if ($ShellLink) { Write-Note "меню «Пуск»: $ShellLink" }
+    New-Shortcut $FencesLink $Fences '' 'Fences — самостоятельные сетки рабочего стола'
+    if ($FencesLink) { Write-Note "меню «Пуск»: $FencesLink" }
     if ($DesktopShortcut) {
         New-Shortcut $Desktop $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
         if ($Desktop) { Write-Note "рабочий стол: $Desktop" }
@@ -284,13 +293,8 @@ try {
 # ------------------------------------------------------------------ запуск
 if (-not $NoStart) {
     Stop-AuraExplorer
-    if (Test-Path -LiteralPath $Service) {
-        Start-Process -FilePath $Service -ArgumentList '--run' -WorkingDirectory $Dir
-        Write-Ok 'служба запущена: панель, сетки и виджеты поднимаются ею'
-    } else {
-        Start-Process -FilePath $Exe -ArgumentList '--desktop', '--tray' -WorkingDirectory $Dir
-        Write-Ok 'AuraExplorer запущен (служба не установлена)'
-    }
+    Start-Process -FilePath $Service -ArgumentList '--run' -WorkingDirectory $Dir
+    Write-Ok 'служба запущена: Fences, панель и остальные компоненты запускаются по её настройкам'
 }
 
 Write-Host ''

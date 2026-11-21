@@ -1,37 +1,39 @@
 # Панель AuraDock (док + Launchpad)
 
-Панель внизу экрана — это **Laminar Dock** (`davesousa/Laminar_Dock`, MIT, © 2026 Dave Sousa),
-взятый в исходниках и приспособленный к AuraExplorer. Вместе с ним в поставку входит `laminar-sys` —
+Панель внизу экрана — **Laminar Dock** (`davesousa/Laminar_Dock`, MIT, © 2026 Dave Sousa),
+взятый в исходниках и приспособленный для AuraUI. Вместе с ним в поставку входит `laminar-sys` —
 системный слой (приложения, поиск, звук, медиа, радио, тема, статистика).
 
 | Что | Где |
 |---|---|
 | Панель, трей, стеки, превью, поиск, Launchpad | `crates/aura-dock` |
 | Системные сервисы панели | `crates/laminar-sys` |
-| Запуск панели | служба `auraservice.exe` — единственный владелец запуска |
+| Владелец запуска панели и Fences | `auraservice.exe` |
 | Настройки панели | `%APPDATA%\AuraExplorer\Dock\config.json`; страница — `AuraDock.exe --settings` |
-| Установщик | `packaging/windows/aura.iss` + `packaging/bundle.json` (набор целиком) |
+| Установщик полного набора | `packaging/windows/aura.iss` + `packaging/bundle.json` |
 | Лицензия апстрима | `packaging/licenses/Laminar-MIT.txt` |
 
-## Один установщик, один запуск
+## Один установщик, централизованный запуск
 
-1. Установщик AuraUI (или `install.ps1`) кладёт рядом все программы набора, включая `AuraDock.exe`.
-2. При старте `AuraExplorer.exe` поднимает панель: `AuraDock.exe --parent <pid AuraExplorer>`.
-3. Дочерний процесс сам следит за родителем: как только `AuraExplorer.exe` завершился (в том числе
-   аварийно), панель закрывается и возвращает на место панель задач Windows.
-4. Панель не запускается в служебных режимах: `--quick-search`, `--quick-search-settings`,
-   `--background`, `--desktop --quit`. Отдельного `--no-dock` больше нет: панель запускает
-   служба, и её выключают переключателем в окне «AuraUI — настройки и запуск».
+1. `packaging/bundle.json` включает отдельные `AuraDock.exe`, `Fences.exe` и `auraservice.exe`;
+   `scripts/package.ps1` собирает и раскладывает их в один проверенный набор.
+2. При обычном запуске AuraExplorer вызывает `service_start::ensure_running`, который запускает
+   только `auraservice.exe --run`. Сама программа не создаёт процесс панели или Fences.
+3. AuraService по переключателям запускает Fences и AuraDock и владеет общей записью входа в
+   Windows. Настройки этих переключателей открываются через `auraservice.exe --settings`.
+4. `widgets.exe` пока остаётся дочерним процессом AuraDock; выделение виджетов в самостоятельный
+   сервисный компонент — отдельная будущая задача. Завершение панели завершает и её виджеты.
 
-Отдельного ярлыка и отдельного «второго приложения» больше нет: пользователь ставит одно,
-нажимает одно и получает рабочий стол (fences) и панель одновременно.
+В меню AuraExplorer и Fences есть переход к общему окну «Запуск и компоненты». В standalone
+Fences-установке без соседнего AuraService сетки используют собственную необязательную настройку
+запуска при входе; интегрированный пакет оставляет владельцем запуска службу.
 
 ## Что изменено относительно апстрима
 
 | Место | Изменение |
 |---|---|
 | `launchpad.rs` | одна тихая панель по центру вместо трёх (виджеты и центр управления выключены), подложка светлее (`scrim 0.22`) |
-| `updater.rs` | Velopack вырезан: панель обновляется вместе с AuraExplorer, `installed() == false`, автозапуск — забота AuraExplorer |
+| `updater.rs` | Velopack вырезан: панель обновляется вместе с AuraUI-набором, `installed() == false`, запуском в комплекте владеет AuraService |
 | `config.rs` | каталог настроек `%APPDATA%\AuraExplorer\Dock`, `check_updates` по умолчанию выключен |
 | `main.rs`, `dock.rs`, `tracker.rs` | имена окна, класса и мьютекса — `AuraExplorer.Dock` / `AuraExplorerDock`, меню говорит «AuraDock» |
 | `Cargo.toml` | пакет `aura-dock`, версия как у AuraExplorer, зависимости — только `windows`, `windows-core`, `windows-numerics`, `serde`, `serde_json`, `laminar-sys` |
@@ -64,11 +66,10 @@
 
 ## Значок AuraExplorer на панели
 
-Панель принадлежит AuraExplorer, поэтому его иконка стоит **первой слева** и появляется на любом
-профиле: `apps::ensure_own_pin` при старте сверяет `pins` с `AuraExplorer.exe`, лежащим рядом с
+На панели закреплена иконка AuraExplorer **первой слева**; она появляется на любом профиле: `apps::ensure_own_pin` при старте панели сверяет `pins` с `AuraExplorer.exe`, лежащим рядом с
 `AuraDock.exe`, и добавляет иконку с разделителем, если её нет. Картинку и подпись
 отдаёт сама оболочка (иконка берётся из ресурсов `AuraExplorer.exe`), поэтому отдельный файл
-значка не нужен. Клик открывает файловый менеджер и fences.
+значка не нужен. Клик открывает файловый менеджер; сетки запускаются через AuraService или ярлык Fences.
 
 ## Значок панели
 
@@ -79,7 +80,7 @@
   `AuraExplorer.exe`: скруглённая полоса с тремя плитками. Размеры 16…256, каждый нарисован
   отдельно с 4-кратным запасом, поэтому 16 и 20 px читаются, а не превращаются в кашу.
 - `crates/aura-dock/resources/aura-dock.rc` — иконка `101 ICON` и `VERSIONINFO`
-  (`AuraDock`, 0.3.21, MIT и упоминание Laminar Dock).
+  (`AuraDock`, 0.3.23, MIT и упоминание Laminar Dock).
 - `crates/aura-dock/build.rs` — встраивает `.rc` через `embed-resource` (тот же приём,
   что у `aura-explorer`; манифест панели не нужен, поэтому `manifest_optional`).
 - `scripts/make-icons.py` — перерисовывает `.ico` из кода: `python3 scripts/make-icons.py`.
@@ -110,7 +111,7 @@
 
 ## Виджет часов на рабочем столе
 
-`crates/aura-dock/src/desktop_clock.rs` — стеклянная карточка в углу рабочего стола: время
+`crates/aura-dock/src/desktop_clock.rs` — стеклянная карточка на рабочем столе: время
 крупным тонким шрифтом, под ним дата и день недели по-русски («четверг, 19 ноября»).
 Windows Composition рисует её той же поверхностью, что панель и Launchpad.
 
@@ -333,16 +334,18 @@ full-screen apps».
 
 ## Обновления
 
-Панель не обновляет себя: `updater::installed()` всегда `false`, поэтому меню и раздел About
-честно сообщают, что обновления приходят с AuraExplorer, а `begin_install()` объясняет, что нужно
-запустить установщик AuraExplorer. Проверка обновлений в настройках панели по умолчанию выключена —
-иначе панель полезла бы на GitHub за версией, которой у неё нет.
+Панель не обновляет себя: `updater::installed()` всегда `false`, поэтому обновление панели
+происходит вместе с AuraUI-набором, а `begin_install()` предлагает запустить установщик AuraUI.
+Проверка обновлений в настройках панели по умолчанию выключена — иначе панель полезла бы на
+GitHub за версией, которой у неё нет.
 
 ## Сборка
 
 ```bash
 cargo build -p aura-dock --release        # панель
-cargo build -p aura-explorer  --release        # файловый менеджер и fences
+cargo build -p aura-explorer --release        # файловый менеджер
+cargo build -p aura-fences --bin Fences --release # сетки — самостоятельный бинарник
+cargo build -p aura-service --release          # запуск компонентов
 ```
 
 Набор собирает `scripts/package.ps1` по описанию `packaging/bundle.json` (раскладка,

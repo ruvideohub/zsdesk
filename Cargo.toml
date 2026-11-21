@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "crates/aura-core",
     "crates/aura-platform",
+    "crates/aura-fences-model",
+    "crates/aura-fences",
     "crates/aura-explorer",
     "crates/aura-ui",
     "crates/aura-windows",

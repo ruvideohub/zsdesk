@@ -1,9 +1,8 @@
 //! `auraservice` — the one place that starts AuraUI's pieces.
 //!
-//! The suite used to start itself: the file manager wrote a logon entry that ran
-//! `AuraExplorer.exe --desktop --tray` and then spawned the dock, the fences and the widgets.
-//! Now every piece is its own executable, and this service is the only thing that starts them,
-//! so there is one owner and one set of switches:
+//! The file manager, Fences, and the dock are independent applications. In an integrated
+//! AuraUI installation this service is the shared owner of the startup settings and supervises
+//! enabled components; a standalone Fences installation can still run without this service:
 //!
 //! * `auraservice` — the settings window: a card per component, one switch each, and the logon
 //!   switch. What it shows is the truth on disk (`launch.json`) and in the process list.

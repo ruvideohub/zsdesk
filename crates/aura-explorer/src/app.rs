@@ -1,14 +1,12 @@
 use std::{ffi::OsString, path::PathBuf};
 use anyhow::{bail, Context, Result};
 use aura_core::model::explorer::{ExplorerSession, ExplorerTab, ShellLocation};
-use crate::{desktop::{self, DesktopCommand}, storage, window};
+use crate::{storage, window};
 
 #[derive(Debug, PartialEq, Eq)]
 enum Mode {
     Explorer,
-    Desktop(DesktopCommand),
-    /// Recovery watchdog for desktop icons (internal).
-    Guard(u32,Option<u32>),
+    /// Compatibility forwarding for the old Explorer import command-line entry.
     ImportTencent,
     QuickSearch(crate::quick_search::Action),
 }
@@ -48,6 +46,8 @@ fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
             if opts.window_location.replace(location).is_some(){bail!("窗口位置只能指定一次");}
             continue;
         }
+        // Compatibility switch consumed by service_start::wanted; it is not a file path.
+        if arg=="--no-dock" { continue; }
         if arg=="--focus-search"{opts.focus_search=true;continue;}
         if arg=="--search-settings"{opts.focus_search=true;opts.search_settings=true;continue;}
         if arg=="--integration-enable"{opts.integration_enable=true;continue;}
@@ -89,25 +89,9 @@ fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
         if arg == "--select" { opts.select = true; continue; }
         // Registered by system integration: behaves like a plain path argument.
         if arg == "--shell-open" {opts.shell_open=true; continue; }
-        if arg == "--desktop" { if matches!(opts.mode, Mode::ImportTencent | Mode::QuickSearch(_)) { bail!("不能混用桌面和其他启动模式"); } if opts.mode == Mode::Explorer { opts.mode = Mode::Desktop(DesktopCommand::Show); } continue; }
-        if arg == "--desktop-guard" {
-            if matches!(opts.mode, Mode::ImportTencent | Mode::QuickSearch(_)) { bail!("不能混用守护器和其他启动模式"); }
-            let pid = iter.next().context("缺少进程号")?.to_string_lossy().parse().context("进程号无效")?;
-            opts.mode = Mode::Guard(pid,None);
-            continue;
-        }
-        if arg=="--guard-thread"{
-            let thread=iter.next().context("缺少守护线程号")?.to_string_lossy().parse().context("线程号无效")?;
-            if let Mode::Guard(_,slot)=&mut opts.mode{*slot=Some(thread);}else{bail!("守护线程参数只能用于恢复进程");}continue;
-        }
-        if let Mode::Desktop(command) = &mut opts.mode {
-            if arg == "--organize" { *command = DesktopCommand::Organize; continue; }
-            if arg == "--restore" { *command = DesktopCommand::Restore; continue; }
-            if arg == "--new-fence" { *command = DesktopCommand::NewFence; continue; }
-            if arg == "--quit" { *command = DesktopCommand::Quit; continue; }
-            if arg == "--tray" { *command = DesktopCommand::Tray; continue; }
-            if arg == "--diagnostics" { *command = DesktopCommand::Diagnostics(PathBuf::from(iter.next().context("缺少诊断输出路径")?)); continue; }
-            if arg == "--map" { *command = DesktopCommand::Map(std::path::absolute(PathBuf::from(iter.next().context("缺少文件夹")?))?); continue; }
+        if matches!(arg.to_str(), Some("--desktop" | "--desktop-guard" | "--guard-thread" | "--organize" | "--restore"
+            | "--new-fence" | "--map" | "--tray" | "--quit" | "--diagnostics")) {
+            bail!("桌面格子已拆分为独立程序；请直接运行同目录下的 Fences.exe。AuraExplorer 不再提供桌面模式启动入口");
         }
         let target = if arg == "--this-pc" { OsString::from("shell:MyComputerFolder") } else { arg };
         if opts.target.replace(target).is_some() { bail!("只能指定一个文件或目录"); }
@@ -134,12 +118,6 @@ fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
         if opts.target.is_some() || opts.select || opts.classic { bail!("导入命令不能与文件浏览参数混用"); }
     } else if opts.import_report.is_some() || opts.apply_import {
         bail!("--import-report 和 --apply-import 必须与 --import-tencent 配合使用");
-    }
-    // `fences.exe` is the desktop host and nothing else: the mode is already a desktop one
-    // (see `fences_arguments`), so a leftover target path is a caller's mistake, not a file
-    // to open. Saying so beats opening a window nobody asked for.
-    if crate::fences_component() && opts.target.is_some() {
-        bail!("{}", aura_core::i18n::text("fences.exe 只负责桌面格子，不能打开文件和文件夹"));
     }
     Ok(opts)
 }
@@ -234,46 +212,43 @@ fn managed(options:&Options)->bool{
     !options.integration_enable&&!options.integration_refresh&&!options.routing_apply&&!options.uninstall_integration
         &&options.diagnostics_main.is_none()&&match &options.mode{
             Mode::Explorer=>true,
-            Mode::Desktop(command)=>!matches!(command,DesktopCommand::Quit|DesktopCommand::Diagnostics(_)),
             Mode::QuickSearch(action)=>matches!(action,crate::quick_search::Action::Open|crate::quick_search::Action::Settings|crate::quick_search::Action::Resident),
             _=>false,
         }
 }
 pub(crate) fn runtime_profile(args:&[OsString])->Result<Option<PathBuf>>{
-    let options=parse(edition_arguments(args.to_vec())?)?;
+    let options=parse(args.iter().cloned())?;
     if !managed(&options){return Ok(None);}
     Ok(Some(std::path::absolute(options.profile.map(|p|p.join("explorer-session.json")).unwrap_or_else(storage::config_path))?))
 }
-fn edition_arguments(mut args:Vec<OsString>)->Result<Vec<OsString>>{
-    if !crate::edition::DESKTOP_ONLY{return Ok(args);}
-    let options=parse(args.iter().cloned())?;
-    if options.uninstall_integration{return Ok(args);}
-    if options.integration_enable||options.integration_refresh||options.routing_apply||options.win_e||options.focus_search||options.diagnostics_main.is_some()
-        ||options.new_window||options.target.is_some()||options.select||matches!(options.mode,Mode::QuickSearch(_)){
-        bail!("桌面盒子独立版仅提供桌面格子；文件管理与搜索请使用 AuraExplorer 文件管理版本");
+
+fn run_fences_command(args: &[OsString]) -> Result<()> {
+    let executable = std::env::current_exe()?.with_file_name("Fences.exe");
+    if !executable.is_file() {
+        bail!("Fences.exe is not installed next to AuraExplorer; install the Fences component or run it separately");
     }
-    if options.mode==Mode::Explorer{args.push("--desktop".into());}
-    Ok(args)
+    let status = std::process::Command::new(&executable).args(args).status()
+        .with_context(|| format!("could not start {}", executable.display()))?;
+    if !status.success() { bail!("Fences command failed with status {status}"); }
+    Ok(())
 }
+
 pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
     if args.first().is_some_and(|arg| arg == "--build-info") {
         if args.len() != 1 { bail!("--build-info 不能与其他参数混用"); }
         println!("{}", serde_json::json!({"product":"AuraExplorer", "version":env!("CARGO_PKG_VERSION"),
             "edition":crate::edition::key(), "edition_name":crate::edition::name(),
-            "network":crate::edition::NETWORK, "desktop":crate::edition::DESKTOP, "themed":crate::edition::THEMED,"desktop_only":crate::edition::DESKTOP_ONLY,"platform":"windows-x64"}));
+            "network":crate::edition::NETWORK, "desktop":crate::edition::DESKTOP, "themed":crate::edition::THEMED,"platform":"windows-x64"}));
         return Ok(());
     }
-    // `fences.exe` is the desktop host, not a file window: its mode comes from the program.
-    let args = if crate::fences_component() { crate::fences_arguments(args) } else { args };
-    let args=edition_arguments(args)?;
     let app_id = crate::edition::application_id();
     let app_id: Vec<u16> = app_id.encode_utf16().chain(Some(0)).collect();
     let _ = unsafe { windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(windows::core::PCWSTR(app_id.as_ptr())) };
     let opts = parse(args.iter().cloned())?;
+    if opts.mode == Mode::ImportTencent { return run_fences_command(&args); }
     let config = std::path::absolute(opts.profile.as_ref().map(|p| p.join("explorer-session.json")).unwrap_or_else(storage::config_path))?;
     if !in_host{crate::language::initialize_profile(&config);}
     if !in_host&&managed(&opts){return crate::runtime::run(config,args);}
-    let desktop_config = config.with_file_name("desktop-fences.json");
     if opts.integration_enable{
         let exe=std::env::current_exe()?;
         aura_windows::integration::apply(aura_windows::integration::Integration::Default,&exe,&config.with_file_name("takeover-backup.json"))?;
@@ -298,17 +273,7 @@ pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
     }
     if let Some(report)=opts.diagnostics_main{return crate::instance::diagnose(&config,&std::path::absolute(report)?);}
     match opts.mode {
-        Mode::Desktop(_) | Mode::Guard(..) | Mode::ImportTencent if !crate::edition::DESKTOP => {
-            bail!("AuraExplorer {} 不包含桌面格子，请使用桌面版或全量版", crate::edition::name())
-        }
-        Mode::Desktop(command) => {
-            if !matches!(command,DesktopCommand::Quit|DesktopCommand::Diagnostics(_)){let _=crate::quick_search::start_if_enabled(&config);}
-            return desktop::run(desktop_config, config, command);
-        },
-        Mode::Guard(pid,thread) => return desktop::guard(desktop_config, pid,thread),
-        Mode::ImportTencent => return desktop::migration::run(
-            opts.import_source.as_deref().context("缺少腾讯布局路径")?, &desktop_config,
-            opts.import_report.as_deref().context("缺少导入报告路径")?, opts.apply_import),
+        Mode::ImportTencent => return run_fences_command(&args),
         Mode::QuickSearch(action) => return crate::quick_search::run(config, action),
         Mode::Explorer => {}
     }
@@ -401,14 +366,13 @@ mod tests {
         let ordinary=new_window_arguments(std::path::Path::new(r"E:\profile"),&ShellLocation::Path(r"E:\中文 空格".into())).unwrap();
         assert_eq!(parse(ordinary).unwrap().target,Some(r"E:\中文 空格".into()));
     }
-    #[test]fn standalone_box_routes_to_desktop_and_keeps_a_separate_identity(){
-        if crate::edition::DESKTOP_ONLY{
-            let arguments=edition_arguments(vec![]).unwrap();assert!(matches!(parse(arguments).unwrap().mode,Mode::Desktop(DesktopCommand::Show)));
-            assert_eq!(crate::edition::key(),"desktop-box");assert_eq!(crate::edition::profile_name(),"AuraExplorer-DesktopBox");
-            assert!(!crate::edition::NETWORK&&!crate::edition::THEMED);
-            assert_ne!(crate::edition::desktop_startup_value(),"AuraExplorer.Desktop");
-            for argument in ["--focus-search","--win-e","--integration-enable","--background",r"E:\folder"]{assert!(edition_arguments(vec![argument.into()]).is_err());}
-        }else{assert!(edition_arguments(vec![]).unwrap().is_empty());}
+    #[test]fn no_dock_is_a_helper_flag_not_a_path(){
+        assert!(parse(["--no-dock"].map(OsString::from)).unwrap().target.is_none());
+    }
+    #[test]fn legacy_desktop_host_arguments_are_rejected_with_standalone_guidance(){
+        for argument in ["--desktop","--desktop-guard","--guard-thread","--organize","--restore","--new-fence","--map","--tray","--quit","--diagnostics"] {
+            assert!(parse([argument].map(OsString::from)).is_err(),"legacy Fences argument accepted: {argument}");
+        }
     }
     #[test] fn win_e_starts_the_manager_without_a_synthetic_folder() {
         let options=parse(["--win-e"].map(OsString::from)).unwrap();
@@ -463,14 +427,6 @@ mod tests {
         let opts = parse(["--select", "--classic-menu", r"C:\工作 文件\图纸.pdf"].map(OsString::from)).unwrap();
         assert!(opts.select && opts.classic);
         assert_eq!(opts.target.unwrap(), r"C:\工作 文件\图纸.pdf");
-    }
-    #[test]
-    fn desktop_modes_parse() {
-        assert_eq!(parse(["--desktop"].map(OsString::from)).unwrap().mode, Mode::Desktop(DesktopCommand::Show));
-        assert_eq!(parse(["--desktop", "--organize"].map(OsString::from)).unwrap().mode, Mode::Desktop(DesktopCommand::Organize));
-        assert_eq!(parse(["--desktop-guard", "42"].map(OsString::from)).unwrap().mode, Mode::Guard(42,None));
-        // Without --desktop, desktop switches are treated as paths.
-        assert!(parse(["--organize"].map(OsString::from)).unwrap().target.is_some());
     }
     #[test]
     fn tencent_import_requires_report_and_defaults_to_preview() {

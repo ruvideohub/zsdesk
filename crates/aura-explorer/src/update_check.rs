@@ -45,7 +45,7 @@ fn select(value:&serde_json::Value,current:[u64;3],edition:&str,portable:bool)->
     let tag=value["tag_name"].as_str().context(aura_core::i18n::text("发布版本号缺失"))?;
     let remote=version(tag).context(aura_core::i18n::text("发布版本号格式无效"))?;
     if remote<=current{return Ok(Outcome::Current(if remote==current{aura_core::i18n::text("当前已是最新正式版本").into()}else{aura_core::tr_format!("当前本地版本较新；最新正式版为 {tag}" , tag=tag)}));}
-    ensure!(matches!(edition,"standard"|"network"|"desktop"|"full"|"themed"|"desktop-box"), "{}", aura_core::tr_format!("未知的程序版本类型"));
+    ensure!(matches!(edition,"standard"|"network"|"desktop"|"full"|"themed"), "{}", aura_core::tr_format!("未知的程序版本类型"));
     let suffix=if portable{".zip"}else{"-setup.exe"};
     let name=format!("AuraExplorer-{}-{edition}-x64{suffix}",tag.trim_start_matches('v'));
     let assets=value["assets"].as_array().context(aura_core::i18n::text("发布文件缺失"))?;

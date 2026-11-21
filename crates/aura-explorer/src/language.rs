@@ -39,7 +39,7 @@ pub fn notify_windows() {
             let mut buf = [0u16; 64];
             let n = unsafe { GetClassNameW(hwnd, &mut buf) }.max(0) as usize;
             if matches!(String::from_utf16_lossy(&buf[..n]).as_str(),
-                "AuraExplorer.Native.Explorer" | "AuraExplorer.UtilityPanel" | "AuraExplorer.Native.DesktopHost") {
+                "AuraExplorer.Native.Explorer" | "AuraExplorer.UtilityPanel") {
                 let _ = unsafe { PostMessageW(Some(hwnd), CHANGED, WPARAM(0), LPARAM(0)) };
             }
         }

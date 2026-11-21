@@ -1,19 +1,10 @@
-//! AuraExplorer as a library: the file window, the desktop fence host and the small
-//! background programs, shared by the two executables built from this package.
-//!
-//! - `AuraExplorer.exe` (`src/main.rs`) — the file manager, every background mode, and the
-//!   desktop host when an older installation has no `fences.exe`.
-//! - `fences.exe` (`src/bin/fences.rs`) — the desktop fence host on its own: it is what the
-//!   file window starts for the desktop, so a crash or a hang there no longer takes the file
-//!   window with it, and the two can be updated separately.
+//! AuraExplorer library: the file manager and its background components.
+//! The desktop-grid host is the independent `Fences.exe` application in `aura-fences`.
 
 mod app;
 pub(crate) mod archive;
 mod language;
 mod commands;
-// Compiled in every edition; unreachable without the `desktop` feature and dropped by the linker.
-#[cfg_attr(not(feature = "desktop"), allow(dead_code))]
-mod desktop;
 mod edition;
 mod storage;
 mod window;
@@ -46,28 +37,6 @@ mod icon_worker_tests{
     fn native_icon_worker_entry(){aura_windows::shell::icons::run_icon_test_worker().unwrap();}
 }
 
-#[cfg(test)]
-mod fences_arguments_tests{
-    use std::ffi::OsString;
-    fn of(words:&[&str])->Vec<OsString>{words.iter().map(OsString::from).collect()}
-    #[test]
-    fn the_grid_host_always_starts_in_desktop_mode(){
-        // Ровно та строка, которой служба запускает сетки: без режима она читалась как
-        // файловое окно с файлом «--tray», и сетки не показывались.
-        assert_eq!(crate::fences_arguments(of(&["--tray"])),of(&["--desktop","--tray"]));
-        assert_eq!(crate::fences_arguments(of(&[])),of(&["--desktop"]));
-        assert_eq!(crate::fences_arguments(of(&["--quit"])),of(&["--desktop","--quit"]));
-        assert_eq!(crate::fences_arguments(of(&["--organize","--profile-dir",r"C:\p"])),
-            of(&["--desktop","--organize","--profile-dir",r"C:\p"]));
-    }
-    #[test]
-    fn an_explicit_desktop_mode_is_left_alone(){
-        assert_eq!(crate::fences_arguments(of(&["--desktop","--tray"])),of(&["--desktop","--tray"]));
-        assert_eq!(crate::fences_arguments(of(&["--desktop-guard","42"])),of(&["--desktop-guard","42"]));
-        assert_eq!(crate::fences_arguments(of(&["--guard-thread","7"])),of(&["--guard-thread","7"]));
-    }
-}
-
 /// Lets the installer wait for all application windows and desktop guards to
 /// finish before replacing or uninstalling their files.
 struct ApplicationLifetime(Option<windows::Win32::Foundation::HANDLE>);
@@ -81,15 +50,6 @@ impl ApplicationLifetime {
 }
 impl Drop for ApplicationLifetime {
     fn drop(&mut self) { if let Some(handle) = self.0.take() { let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) }; } }
-}
-
-/// Set by `fences.exe` before the arguments are parsed: that program is the desktop host,
-/// and with no mode of its own it shows the fences instead of a file window.
-static FENCES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Is this the `fences.exe` program?
-pub(crate) fn fences_component() -> bool {
-    FENCES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `AuraExplorer.exe`: every mode, chosen by the command line.
@@ -125,28 +85,4 @@ pub fn run() {
             windows::core::w!("AuraExplorer"),windows::Win32::UI::WindowsAndMessaging::MB_OK|windows::Win32::UI::WindowsAndMessaging::MB_ICONERROR);}
         std::process::exit(1);
     }
-}
-
-/// `fences.exe`: the desktop fence host, as its own program.
-pub fn run_fences() {
-    FENCES.store(true, std::sync::atomic::Ordering::Relaxed);
-    run();
-}
-
-/// The command line `fences.exe` really runs.
-///
-/// The host of the desktop grids has one job, so its mode is decided by the program, not by
-/// the caller: `--desktop` is put in front unless the line already asks for a desktop mode.
-/// Without this, the line the service launches (`fences.exe --tray`) was read as *a file
-/// window with a file called `--tray`*: the grid host never started, and the copy that did
-/// start took the file window's single-instance lock and its session file, so it fought the
-/// real window instead of drawing the desktop.
-pub(crate) fn fences_arguments(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
-    let desktop = args.iter().any(|argument| {
-        matches!(argument.to_str(), Some("--desktop") | Some("--desktop-guard") | Some("--guard-thread"))
-    });
-    if desktop {
-        return args;
-    }
-    std::iter::once(std::ffi::OsString::from("--desktop")).chain(args).collect()
 }

@@ -6,6 +6,7 @@ use windows::{core::{w,BOOL},Win32::{Foundation::{CloseHandle,HANDLE,HWND,LPARAM
 
 pub fn message()->u32{unsafe{RegisterWindowMessageW(w!("AuraExplorer.ShutdownForUpdate.v1"))}}
 fn closable_class(class:&str)->bool{
+    // Keep the pre-split host class so a new updater can close windows from an older installation.
     matches!(class,"AuraExplorer.Native.Explorer"|"AuraExplorer.Native.DesktopHost"|"AuraExplorer.SearchHotkey"|"AuraExplorer.UtilityPanel"
         |"AuraExplorer.FolderOccupancy"|"AuraExplorer.Diagnostics.Window"|"AuraExplorer.QuickPreview"|"ZsuiMainWindow")
 }
@@ -35,7 +36,8 @@ pub fn request_windows(exe:&Path){
 #[cfg(test)]mod tests{
     use super::*;
     #[test]fn update_closes_product_windows_without_closing_extension_operation_hosts(){
-        assert!(closable_class("AuraExplorer.Native.Explorer"));assert!(closable_class("AuraExplorer.SearchHotkey"));
+        assert!(closable_class("AuraExplorer.Native.Explorer"));assert!(closable_class("AuraExplorer.Native.DesktopHost"));
+        assert!(closable_class("AuraExplorer.SearchHotkey"));
         for class in ["AuraExplorer.ExtensionMenu.Worker","AuraExplorer.DesktopReturnDrop","#32770","AuraExplorer.UnknownProvider","CabinetWClass"]{assert!(!closable_class(class));}
     }
 }

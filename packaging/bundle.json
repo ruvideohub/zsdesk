@@ -21,11 +21,11 @@
       "required": true
     },
     {
-      "name": "fences.exe",
+      "name": "Fences.exe",
       "role": "desktop",
       "title": "Сетки рабочего стола",
-      "note": "Хост сеток: группы значков на рабочем столе и значок в трее.",
-      "source": { "kind": "cargo", "package": "aura-explorer", "bin": "fences" },
+      "note": "Standalone host for desktop and folder grids; own profile and process.",
+      "source": { "kind": "cargo", "package": "aura-fences", "bin": "Fences" },
       "required": true
     },
     {

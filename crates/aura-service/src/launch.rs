@@ -59,7 +59,7 @@ pub const COMPONENTS: &[Component] = &[
         id: "fences",
         name: "Сетки рабочего стола",
         hint: "Группы значков на рабочем столе, значок в трее",
-        exe: "fences.exe",
+        exe: "Fences.exe",
         args: &["--tray"],
         on_by_default: true,
         takes_profile: true,

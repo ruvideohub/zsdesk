@@ -901,15 +901,18 @@ impl WindowState {
     }
 
     fn launch_desktop(&mut self, extra: &[String]) {
-        let Ok(exe) = std::env::current_exe() else { return };
-        // The desktop host has its own program next to ours (`fences.exe`); without it we
-        // host the desktop ourselves, exactly as before.
-        let fences = exe.parent().map(|dir| dir.join("fences.exe")).filter(|path| path.is_file());
-        let exe = fences.unwrap_or(exe);
-        let mut command = std::process::Command::new(exe);
-        command.arg("--desktop").args(extra);
-        if let Some(dir) = self.config_path.parent() { command.arg("--profile-dir").arg(dir); }
-        if let Err(error) = command.spawn() { self.show_message(aura_core::tr_format!("无法启动桌面格子：{error}", error=error)); }
+        let Ok(explorer) = std::env::current_exe() else { return };
+        let fences = explorer.with_file_name("Fences.exe");
+        if !fences.is_file() {
+            self.show_message(aura_core::i18n::text("未找到独立组件 Fences.exe；请安装包含桌面格子的版本。").into());
+            return;
+        }
+        let mut command = std::process::Command::new(&fences);
+        command.args(extra);
+        // Match the profile selected by AuraService / AuraExplorer, including for --quit.
+        if let Some(profile) = self.config_path.parent() { command.arg("--profile-dir").arg(profile); }
+        if let Some(dir) = fences.parent() { command.current_dir(dir); }
+        if let Err(error) = command.spawn() { self.show_message(aura_core::tr_format!("无法启动 Fences：{error}", error=error)); }
     }
 
     unsafe fn tab_list_menu(&mut self) {
@@ -980,7 +983,7 @@ impl WindowState {
 pub(super) const SHORTCUTS: &str = "文件管理器\nCtrl+T 新建标签　Ctrl+W / Ctrl+F4 关闭标签　Ctrl+Shift+T 恢复标签\nCtrl+Tab / Ctrl+Shift+Tab 切换标签　Ctrl+1…9 第 N 个标签\nAlt+← / Backspace 后退　Alt+→ 前进　Alt+↑ 上一级　F5 刷新\nCtrl+L / Alt+D / F4 地址栏　Ctrl+F / Ctrl+E / F3 搜索（输入即搜）\nCtrl+Shift+N 新建文件夹　Ctrl+Shift+C 复制路径　Ctrl+D 收藏\nAlt+P 预览窗格　Alt+Shift+P 详细信息窗格　Ctrl+F1 展开/收起命令栏\nF2 重命名　Del 删除　Shift+Del 永久删除　Alt+Enter 属性　Ctrl+A 全选\n顶部标签：右键关闭所点标签，右键空白处关闭当前标签，Shift+右键打开菜单\n标签中键关闭，拖动排序；收藏中键在新标签打开\n\n桌面格子\n鼠标悬停 展开折叠的格子　双击标题 折叠/展开　拖动标题 移动　拖动边缘 调整大小\nEnter 打开　F2 重命名　Del 删除　Ctrl+A / C / X / V 全选/复制/剪切/粘贴\n方向键 选择　Backspace 返回上一级（文件夹格子）　F5 刷新\n双击桌面空白处 隐藏/显示全部格子";
 
 fn desktop_host_running() -> bool {
-    unsafe { FindWindowW(windows::core::w!("AuraExplorer.Native.DesktopHost"), PCWSTR::null()) }.is_ok_and(|h| !h.0.is_null())
+    unsafe { FindWindowW(windows::core::w!("AuraFences.Native.DesktopHost"), PCWSTR::null()) }.is_ok_and(|h| !h.0.is_null())
 }
 
 fn open_folder_options() {

@@ -186,7 +186,6 @@ impl Drop for Session{fn drop(&mut self){self.restore();if self.worker.as_ref().
 pub struct Bridge{stop:Arc<AtomicBool>,worker:Option<JoinHandle<()>>}
 impl Bridge{
     pub fn start(profile:&Path)->Result<Option<Self>>{
-        if crate::edition::DESKTOP_ONLY{return Ok(None);}
         let profile=profile.to_path_buf();let stop=Arc::new(AtomicBool::new(false));let signal=stop.clone();
         let worker=thread::Builder::new().name("aura-file-dialogs".into()).spawn(move||{let _=run(&profile,&signal);})?;
         Ok(Some(Self{stop,worker:Some(worker)}))

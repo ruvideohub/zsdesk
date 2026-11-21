@@ -126,7 +126,6 @@ fn string_handle(instance:u32,value:&str)->Result<HSZ>{
 pub(crate) struct Server{state:Rc<State>,_resources:Resources}
 impl Server{
     pub(crate) fn start(profile:&Path)->Result<Option<Self>>{
-        if crate::edition::DESKTOP_ONLY{return Ok(None);}
         if !same_absolute(profile,&crate::storage::config_path()){return Ok(None);}
         let profile=std::path::absolute(profile)?;let executable=std::env::current_exe()?;
         if let Err(error)=integration::upgrade_default(&executable,&profile.with_file_name("takeover-backup.json")){
@@ -204,10 +203,6 @@ mod tests{
     #[test]fn folder_dde_non_default_profile_never_registers()->Result<()>{
         let other=crate::storage::config_path().with_file_name("dde-private-profile.json");
         assert!(Server::start(&other)?.is_none());assert!(ACTIVE.with(|slot|slot.borrow().is_none()));Ok(())
-    }
-    #[cfg(feature="desktop-box")]
-    #[test]fn folder_dde_desktop_box_never_registers_default_profile()->Result<()>{
-        assert!(Server::start(&crate::storage::config_path())?.is_none());assert!(ACTIVE.with(|slot|slot.borrow().is_none()));Ok(())
     }
     struct Fixture(PathBuf);impl Drop for Fixture{fn drop(&mut self){let _=fs::remove_file(self.0.join("file.txt"));let _=fs::remove_dir(self.0.join("目录 空格"));let _=fs::remove_dir(&self.0);}}
     fn fixture(root:&Path)->Result<Fixture>{

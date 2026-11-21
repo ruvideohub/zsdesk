@@ -1,0 +1,14 @@
+Fences — third-party notices
+============================
+
+This standalone Fences distribution uses ZSUI for native window layout and UI
+(Mozilla Public License 2.0), MinHook in its Windows platform layer
+(BSD-2-Clause), and portions of private context-menu interface declarations
+adapted from Explorer Column View by ItsMikesch (MIT).
+
+Full license texts are included in the `licenses` directory:
+- `MPL-2.0.txt`
+- `MinHook-LICENSE.txt`
+- `ExplorerColumnView-MIT.txt`
+
+The application license is provided separately as `LICENSE.txt`.

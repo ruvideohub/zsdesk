@@ -176,8 +176,8 @@ fn status(profile:&Path,workers:&[Worker],pool:&[WindowWorker],queued:usize,erro
     components.extend(pool.iter().filter(|worker|worker.job.is_some()&&!worker.ending).map(|_|"window"));
     let value=serde_json::json!({"schema":1,"pid":std::process::id(),"version":env!("CARGO_PKG_VERSION"),"components":components,"last_error":error,
         "window_pool":pool.iter().map(|worker|serde_json::json!({"id":worker.id,"thread_id":worker.thread_id,"active":worker.job.is_some(),"requests":worker.requests,"stopping":worker.ending})).collect::<Vec<_>>(),
-        "queued_window_requests":queued,"max_window_threads":MAX_WINDOW_THREADS,"max_idle_window_threads":MAX_IDLE_WINDOW_THREADS,"window_idle_timeout_seconds":WINDOW_IDLE_TIMEOUT.as_secs(),"retiring_menu_threads":crate::desktop::pending_menu_threads(),
-        "pending_file_operations":aura_windows::shell::file_transfer::pending_operations(),"pending_extension_workers":crate::context_menu_process::pending_workers(),
+        "queued_window_requests":queued,"max_window_threads":MAX_WINDOW_THREADS,"max_idle_window_threads":MAX_IDLE_WINDOW_THREADS,"window_idle_timeout_seconds":WINDOW_IDLE_TIMEOUT.as_secs(),"retiring_menu_threads":0,
+        "pending_file_operations:aura_windows::shell::file_transfer::pending_operations(),"pending_extension_workers":crate::context_menu_process::pending_workers(),
         "pending_search_workers":crate::fast_search::pending_workers()});
     if let Ok(bytes)=serde_json::to_vec(&value){
         if previous.as_ref()==Some(&bytes){return;}
@@ -235,7 +235,7 @@ pub fn run(profile:PathBuf,args:Vec<OsString>)->Result<()>{
             // profile permanently rejecting new file windows. Retiring workers
             // remain retired; the new request gets a live/fresh worker.
             shutting_down=false;
-            let kind=if request.args.iter().any(|a|a=="--desktop"){"desktop"}else if request.args.iter().any(|a|a=="--background"||a=="--quick-search"||a=="--quick-search-settings"){"background"}else{"window"};
+            let kind=if request.args.iter().any(|a|a=="--background"||a=="--quick-search"||a=="--quick-search-settings"){"background"}else{"window"};
             let destination=hwnd.0 as isize;let finished=finished_tx.clone();serial+=1;let id=serial;
             if kind=="window"{queued.push_back(WindowJob{id,args:request.args});continue;}
             let worker=thread::Builder::new().name(format!("aura-{kind}")).spawn(move||{
@@ -305,7 +305,7 @@ pub fn run(profile:PathBuf,args:Vec<OsString>)->Result<()>{
         // COM/TLS finalizers can still need the first STA after component code
         // returns. Keep pumping while the OS thread finishes; never block it.
         if shutting_down{crate::context_menu_process::shutdown_idle_worker();}
-        let retiring_menus=crate::desktop::pending_menu_threads()+aura_windows::shell::file_transfer::pending_operations()+crate::context_menu_process::pending_workers()+aura_windows::shell::pending_packaged_state_workers()
+        let retiring_menus=aura_windows::shell::file_transfer::pending_operations()+crate::context_menu_process::pending_workers()+aura_windows::shell::pending_packaged_state_workers()
             +if shutting_down{crate::fast_search::pending_workers()}else{0};
         unsafe{if workers.iter().any(|worker|worker.ending)||pool.iter().any(|worker|worker.ending)||retiring_menus>0{SetTimer(Some(hwnd),1,25,None);}else{let _=KillTimer(Some(hwnd),1);}}
         status(&profile,&workers,&pool,queued.len(),last_error.as_deref(),&mut previous_status);

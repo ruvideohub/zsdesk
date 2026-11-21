@@ -1,31 +1,32 @@
 # AuraExplorer 使用与开发说明
 
-Windows 原生多标签文件管理器与桌面格子，使用 Rust、Win32/COM、Direct2D 和 DirectWrite。
+AuraExplorer 是 Windows 原生多标签文件管理器。桌面格子和文件夹映射由独立应用
+`Fences.exe` 提供；两者使用 Rust、Win32/COM、Direct2D 和 DirectWrite。
 
-文件浏览和搜索集成在同一个主窗口，采用与桌面格子协调的界面风格。
+文件浏览和搜索集成在 AuraExplorer 主窗口。Fences 是单独进程，有自己的配置与生命周期；
+在完整 AuraUI 安装中，`auraservice.exe` 统一负责组件启动和共享的启动设置。
 窗口、绘图及文件操作复用 Win32、Direct2D 和 Windows Shell；共享图标、菜单及快捷键能力来自
-[ZSUI](https://github.com/qiu7824/zsui)，其源码版本固定记录在发行配置中。
+[ZSUI](https://github.com/qiu7824/zsui)，源码版本固定记录在发行配置中。
 
-[下载](https://github.com/qiu7824/aura/releases) · [更新日志](../CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/aura/issues)
+[下载](https://github.com/ruvideohub/zsdesk/releases) · [更新日志](../CHANGELOG.md) · [问题反馈](https://github.com/ruvideohub/zsdesk/issues)
 
 ## 版本
 
-当前版本为 0.3.21。
+当前工作区版本为 0.3.23。完整 AuraUI 套件包含 AuraExplorer、Fences、AuraDock、
+AuraService 和 AuraArc；桌面格子可另行作为 standalone Fences 安装。
 
 界面支持简体中文和 English；非中文 Windows 系统默认使用英文。“≡ → 语言 / Language”可选择跟随系统或指定语言，选择后立即切换。文件名称与系统 Shell 文本保持原值。
 
-| 版本 | Cargo features | 功能 |
-|---|---|---|
-| 标准版 | 无 | 文件管理器、搜索、预览、界面设置和系统集成 |
-| 网络版 | `network` | 标准版 + FTP、SFTP/SSH 地址、网络驱动器和网络位置 |
-| 桌面版 | `desktop` | 标准版 + 桌面格子与腾讯布局导入 |
-| 全量版 | `network,desktop` | 全部功能，默认构建版本 |
-| 主题版 | `themed` | 全量功能 + 亚克力、Mica、纯色深浅主题，独立安装与配置 |
-| 桌面盒子独立版 | `desktop-box` | 默认启动桌面格子，独立配置与自启，不包含文件管理窗口、全盘搜索和接管 |
+| 构建/包 | 内容 |
+|---|---|
+| 完整 AuraUI 套件 | 文件管理与搜索、独立 Fences、AuraDock、AuraService、AuraArc；由 `scripts/package.ps1` 打包 |
+| Standalone Fences | 桌面格子与文件夹映射，不依赖 AuraExplorer、AuraDock 或 AuraService；由 `scripts/package-fences.ps1` 打包 |
+| `aura-explorer` Cargo feature `network` | 可选网络访问功能；与单独的 Fences 主机无关 |
+| `aura-explorer` Cargo feature `desktop` | 表示对应包会随包提供独立 `Fences.exe`，不会把 Fences host 编进 Explorer |
+| `themed` | AuraExplorer 的主题配置；不改变 Fences 的独立进程边界 |
 
-打包脚本支持为上述六个版本生成 Windows x64 便携 ZIP 和安装器，文件名为
-`AuraExplorer-<版本>-<standard|network|desktop|full|themed|desktop-box>-x64`。
-安装器默认按当前用户安装，保留个人数据，文件夹接管和登录启动均由软件内设置。
+AuraUI 提供完整套件 ZIP 和 Inno Setup 安装器；standalone Fences 有自己的 ZIP 和可选安装器。
+两类安装都按当前 Windows 用户安装，Fences 配置保留在自己的配置目录中。
 
 ## 文件管理
 
@@ -133,15 +134,18 @@ Everything 的快速全盘 NTFS 索引需要兼容服务或管理员权限。未
 搜索结果、库和虚拟视图保留原生表现；“排序 → 文件夹大小概览…”提供独立概览。
 Everything 保留原始程序和许可，位于 `engines/everything/`；发行包不包含 `.ini`、`.db` 或个人搜索数据。
 Everything 后端需要保留完整引擎目录或指定可用程序；自带搜索不依赖 Everything。
-桌面盒子独立版不提供文件名搜索，也不附带 Everything。
+Standalone Fences 只负责桌面格子和文件夹映射，不提供 AuraExplorer 的文件名搜索或 Everything。
 
-“≡ → 系统集成 → 开机启动与全局快捷键…”分别设置主窗口、后台快捷键和桌面格子的登录启动；全局快捷键默认为 `Ctrl+Alt+Space`。
-快捷键打开独立快速搜索窗格并聚焦输入框；关闭后保留内存索引至空闲期限，重新打开可直接复用。
-全局快捷键冲突会显示错误并保留设置入口；安装包默认不启用登录启动，索引服务由用户授权启用。
+“≡ → 系统集成 → 开机启动与全局快捷键…”分别设置 AuraExplorer 主窗口和后台快捷键；
+完整套件的 Fences、AuraDock 等组件在 `auraservice.exe --settings` 的“启动与组件”窗口
+统一切换。Standalone Fences 在没有 AuraService 的安装中提供自己的可选登录启动。
+全局快捷键默认为 `Ctrl+Alt+Space`，冲突会显示错误并保留设置入口；完整 AuraUI 安装
+默认设置服务登录启动，`install.ps1 -NoAutostart` 可关闭。
 
-同一配置的文件窗口、桌面格子、快捷键与搜索请求管理共用一个 AuraExplorer 进程，文件窗口关闭后复用原有 UI 线程。
-桌面图标恢复监护单独运行，桌面线程或主进程异常结束时恢复系统图标；Office 预览宿主仅在预览期间运行。
-文件位置转发辅助组件与 Everything 索引引擎按各自功能运行，关闭搜索不会退出用户原有的 Everything。
+AuraExplorer 文件窗口、快捷键和搜索请求管理共用 AuraExplorer 进程；桌面格子由独立
+`Fences.exe` 进程持有自己的 profile。Fences 的桌面图标恢复监护单独运行；Office 预览
+宿主仅在预览期间运行。文件位置转发辅助组件与 Everything 索引引擎按各自功能运行，
+关闭搜索不会退出用户原有的 Everything。
 
 右侧预览窗格、空格及悬停预览使用独立预览宿主，优先调用系统预览处理器，
 可选择系统默认、Office 优先或 WPS 优先，支持已注册的 32 位及 64 位处理器，并提供文本和图片回退。
@@ -217,8 +221,12 @@ Listary 7.1 可使用随附 `integrations/listary/Prepare-Listary7.ps1` 生成�
 
 ## 桌面格子
 
-桌面版和全量版可从主菜单启动格子，或执行 `AuraExplorer.exe --desktop`。
-桌面盒子独立版直接启动格子，配置保存在 `%APPDATA%\AuraExplorer-DesktopBox`；安装标识和登录启动与其他版本独立。
+桌面格子由独立程序 `Fences.exe` 提供。完整 AuraUI 安装中可从 AuraExplorer 主菜单打开，
+也可从开始菜单的 Fences 快捷方式启动；`auraservice.exe` 根据“启动与组件”设置统一
+管理它。旧的 `AuraExplorer.exe --desktop` 模式已移除，AuraExplorer 会提示直接运行
+同目录的 `Fences.exe`。Standalone Fences 安装不要求 AuraExplorer 或 AuraService。
+Fences 自己保存布局和偏好于 `%APPDATA%\AuraFences`，可迁移旧桌面布局；打开文件或文件夹
+时委托系统 Windows Explorer。
 
 - 文件夹映射、桌面项目分组、手动排序、大小和屏幕位置。
 - 悬停临时展开，移开收起；双击固定展开，支持锁定和拖动。
@@ -235,10 +243,10 @@ Listary 7.1 可使用随附 `integrations/listary/Prepare-Listary7.ps1` 生成�
 
 ```powershell
 # 预览迁移报告；“-”表示自动查找本机腾讯布局。
-AuraExplorer.exe --import-tencent - --import-report "C:\Reports\layout.json"
+Fences.exe --import-tencent - --import-report "C:\Reports\layout.json"
 
-# 退出 AuraExplorer 格子后应用迁移；原配置保留为 desktop-fences.before-tencent.json。
-AuraExplorer.exe --import-tencent - --import-report "C:\Reports\layout.json" --apply-import
+# 退出 Fences 后应用迁移；原配置保留为 desktop-fences.before-tencent.json。
+Fences.exe --import-tencent - --import-report "C:\Reports\layout.json" --apply-import
 ```
 
 ## 文件夹与应用接入
@@ -307,26 +315,24 @@ ZSUI 按需启用原生窗口、虚拟列表、输入和快捷键等功能。其
 `packaging/zsui-revision.txt`，位于本仓库的同级 `zsui/` 目录。
 
 ```powershell
-git clone https://github.com/qiu7824/aura.git
+git clone https://github.com/ruvideohub/zsdesk.git
 git clone https://github.com/qiu7824/zsui.git
-git -C zsui checkout (Get-Content aura/packaging/zsui-revision.txt -Raw).Trim()
-Set-Location aura
+git -C zsdesk checkout (Get-Content zsdesk/packaging/zsui-revision.txt -Raw).Trim()
+Set-Location zsdesk
 
 $env:CARGO_TARGET_DIR = 'C:\Build\AuraExplorer-target'
 $env:CARGO_PROFILE_DEV_DEBUG = '0'
 $env:CARGO_PROFILE_TEST_DEBUG = '0'
 cargo test --workspace --release --locked
 cargo build --release --locked -p aura-explorer
+cargo build --release --locked -p aura-fences --bin Fences --target x86_64-pc-windows-msvc
+cargo build --release --locked -p aura-dock --bins
+cargo build --release --locked -p aura-service --bins
 
-# 可选功能版本
-cargo build --release --locked -p aura-explorer --no-default-features
-cargo build --release --locked -p aura-explorer --no-default-features --features network
-cargo build --release --locked -p aura-explorer --no-default-features --features desktop
-cargo build --release --locked -p aura-explorer --no-default-features --features themed
-cargo build --release --locked -p aura-explorer --no-default-features --features desktop-box
-
-# Набор AuraUI: сборка, manifest.json, проверка, zip (и установщик, если есть Inno Setup)
+# Полный AuraUI комплект: сборка, manifest.json, проверка и ZIP/установщик.
 pwsh -NoProfile -File scripts/package.ps1
+# Отдельный пакет Fences (ZIP и optional Inno installer).
+pwsh -NoProfile -File scripts/package-fences.ps1
 # только проверить готовую папку набора
 pwsh -NoProfile -File scripts/verify-bundle.ps1 -Dir releases/<версия>/AuraUI-<версия>-x64
 ```

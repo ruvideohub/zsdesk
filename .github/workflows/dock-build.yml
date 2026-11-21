@@ -55,14 +55,16 @@ jobs:
           python scripts/check-translations.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Build the host and the dock
+      - name: Build the file manager, Fences and dock
         working-directory: aura
         shell: pwsh
         run: |
-          # `--bins`: each package builds the panel/file window *and* its own component
-          # (fences.exe from aura-explorer, widgets.exe from aura-dock).
+          # Fences is a separate crate/binary; Explorer no longer contains a Fences bin.
           cargo build --locked --release -p aura-explorer --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cargo build --locked --release -p aura-fences --bin Fences
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # AuraDock still builds widgets.exe as its companion.
           cargo build --locked --release -p aura-dock --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # The launch service: one owner for everything that starts at logon.

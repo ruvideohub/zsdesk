@@ -1,12 +1,8 @@
 # Сборка и выпуск AuraUI
 
-Раньше одно и то же знание «что входит в AuraUI» было записано трижды: в CI (список
-`Copy-Item`), в `install.ps1` (список `$needed`/`$components`) и в `aura.iss`. Ещё один список
-жил в `scripts/package.ps1` — от прежнего проекта, с шестью «изданиями» файлового менеджера,
-которых в AuraUI уже нет. Расхождения никто не ловил: CI мог выпустить набор без файла, а
-установщик — с файлом, которого в архиве не было.
-
-Теперь знание одно: **`packaging/bundle.json`**.
+Состав полного AuraUI-набора задаёт **`packaging/bundle.json`**. Упаковщик и проверка читают
+это описание напрямую; установочные сценарии сверяются с теми же обязательными бинарниками,
+чтобы Fences и другие программы не потерялись между сборкой и установкой.
 
 ## Что описывает bundle.json
 
@@ -28,9 +24,10 @@
 | `dir` | папка из репозитория | `licenses/*` |
 | `generated` | файл, который пишет сам упаковщик | `manifest.json` |
 
-Набор AuraUI: шесть программ (`AuraExplorer`, `AuraDock`, `fences`, `widgets`, `auraservice`,
-`AuraArc`), DLL перехвата окон, установка (`install.ps1`, `install.cmd`, `install-readme.txt`),
-лицензии и `manifest.json`.
+Полный набор AuraUI содержит шесть приложений/процессов: `AuraExplorer.exe`, `AuraDock.exe`,
+`Fences.exe`, `widgets.exe`, `auraservice.exe` и `AuraArc.exe`, а также DLL перехвата окон,
+установочные файлы, лицензии и `manifest.json`. `Fences.exe` собирается из самостоятельного
+Cargo-пакета `aura-fences`; виджеты пока остаются дочерним процессом AuraDock.
 
 ## Как выпускается сборка
 
@@ -60,7 +57,8 @@ pwsh -NoProfile -File scripts/package.ps1
 pwsh -NoProfile -File scripts/verify-bundle.ps1 -Dir dist
 ```
 
-1. **Всё обязательное на месте.** Нет `widgets.exe` — красный шаг и имя файла.
+1. **Всё обязательное на месте.** Нет `Fences.exe`, `widgets.exe` или другого файла из bundle —
+   красный шаг с именем отсутствующего файла.
 2. **Лишнего нет.** Любой файл, которого нет в описании, — ошибка: это либо забытая копия,
    либо забытое описание, и в обоих случаях набор надо привести в порядок, а не возить как есть.
 3. **Хеши сходятся с `manifest.json`.** Сборка, собранная из разных версий файлов или
@@ -74,8 +72,8 @@ pwsh -NoProfile -File scripts/verify-bundle.ps1 -Dir dist
 
 ## Что делает CI
 
-`.github/workflows/dock-build.yml` больше не держит свой список файлов. Он собирает пакеты и
-зовёт тот же упаковщик:
+`.github/workflows/dock-build.yml` собирает `aura-explorer`, отдельный `aura-fences`, `aura-dock`
+(включая `widgets.exe`), `aura-service` и `aura-arc`, затем зовёт тот же упаковщик:
 
 ```powershell
 pwsh -NoProfile -File scripts/package.ps1 -SkipBuild -TargetDir target/release -StageDir dist -NoZip
@@ -89,17 +87,19 @@ CI подписывает файлы, грузит артефакт `aura-dock-w
 Изменения в `packaging/**` и `scripts/**` теперь тоже запускают CI: правка упаковки должна
 проверяться, а не проезжать мимо.
 
-## Три способа установки, одна проверка
+## Установка интегрированного набора и отдельного Fences
 
 | Способ | Что делает | Проверка файлов |
 |---|---|---|
-| `install.ps1` / `install.cmd` | копирует программы в профиль, ярлыки, автозапуск службы | сверяет sha256 по `manifest.json` до копирования |
-| `AuraUI-<версия>-x64-setup.exe` | обычный установщик Inno Setup, ставит в `%LOCALAPPDATA%\Programs\AuraUI` | собирается только из проверенного набора |
-| руками из zip | распаковать и запустить `AuraExplorer.exe` | `manifest.json` рядом |
+| `install.ps1` / `install.cmd` | копирует полный набор в профиль, создаёт ярлыки, включает единственный автозапуск службы | сверяет SHA-256 по `manifest.json` до копирования |
+| `AuraUI-<версия>-x64-setup.exe` | интегрированный установщик Inno Setup, ставит набор в `%LOCALAPPDATA%\Programs\AuraUI` | собирается из проверенного bundle |
+| AuraUI ZIP | распаковать и запустить AuraExplorer или выбрать компонент | `manifest.json` рядом |
+| `Fences-<версия>-x64.zip` / `Fences-*-setup.exe` | standalone Fences без AuraExplorer, AuraDock и AuraService | отдельный manifest; упаковщик `scripts/package-fences.ps1` |
 
-Автозапуск во всех трёх случаях один и тот же: одна запись `HKCU\…\Run` →
-`"<папка>\auraservice.exe" --run`. Что именно поднимает служба, решается её переключателями
-(«AuraUI — настройки и запуск» в меню «Пуск»), а не тем, какой файл установщик положил первым.
+В интегрированном AuraUI-наборе автозапуск централизован: одна запись `HKCU\…\Run` →
+`"<папка>\auraservice.exe" --run`. Что запускать, решают переключатели окна службы.
+Standalone Fences отдельно предлагает собственный входной запуск; suite-установщик отключает
+запись Fences для той же установленной копии, чтобы не появлялся второй владелец запуска.
 
 ## Как добавить компонент
 
@@ -107,6 +107,6 @@ CI подписывает файлы, грузит артефакт `aura-dock-w
 2. Если это компонент службы — дописать его в `crates/aura-service/src/launch.rs`
    (`COMPONENTS` или `PROGRAMS`) и в `install.ps1`.
 3. `pwsh -NoProfile -File scripts/verify-bundle.ps1 -Dir <папка набора>` — он скажет, если
-   где-то забыли строку. Затем `scripts/package.ps1`.
+   где-то забыли строку. Для отдельного Fences используй `scripts/package-fences.ps1`.
 
 Забыть нельзя молча: проверка либо проходит, либо называет файл.

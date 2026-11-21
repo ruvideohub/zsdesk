@@ -1,33 +1,32 @@
-# AuraExplorer
+# AuraExplorer / AuraUI
 
-Windows 多标签文件管理器与桌面格子。可以在一个窗口里浏览多个文件夹、使用双栏整理文件，也可以把桌面文件分组收纳。
+AuraExplorer 是 Windows 多标签文件管理器；桌面格子和文件夹映射由独立应用 **Fences** 提供。
+完整 AuraUI 套件通过 `auraservice.exe` 集中管理 Fences、AuraDock 与文件管理器的启动设置。
 
-[下载安装](https://github.com/qiu7824/aura/releases/latest) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/qiu7824/aura/issues)
+[下载安装](https://github.com/ruvideohub/zsdesk/releases/latest) · [使用说明](docs/user-guide.md) · [更新日志](CHANGELOG.md) · [问题反馈](https://github.com/ruvideohub/zsdesk/issues)
 
-适用于 Windows 10 / 11，64 位。当前版本为 **0.3.21**，支持简体中文和英文界面。
+适用于 Windows 10 / 11，64 位。当前工作区版本为 **0.3.23**，支持简体中文和英文界面。
 
-English UI is available. Non-Chinese Windows systems use English by default. Choose **≡ → Language → English** to change the application language immediately. Each package includes `README.en.txt`.
+English UI is available. Non-Chinese Windows systems use English by default. Choose **≡ → Language → English** to change the application language immediately.
 
-## 选哪个版本
+## 选择套件
 
-| 版本 | 适合谁 |
+| 包 | 适合谁 |
 |---|---|
-| **全量版** | 不确定如何选时使用，包含文件管理、网络访问和桌面格子 |
-| 标准版 | 只需要文件管理、搜索和预览 |
-| 网络版 | 标准版加 FTP、SFTP/SSH、网络驱动器 |
-| 桌面版 | 标准版加桌面格子 |
-| 主题版 | 全量功能，增加 Mica、亚克力和深浅色材质，配置独立 |
-| 桌面盒子独立版 | 只整理桌面，不包含文件管理窗口与搜索 |
+| **AuraUI 完整套件** | 文件管理、搜索、Fences 桌面格子、AuraDock、AuraService 和 AuraArc；一般用户使用此包 |
+| **Standalone Fences** | 只需要桌面格子和文件夹映射；不依赖 AuraExplorer、AuraDock 或 AuraService |
 
-每个版本提供安装程序和便携 ZIP。普通用户选择名称含 `setup.exe` 的安装程序；便携版解压后运行 `AuraExplorer.exe`，保留整个程序目录和 `data` 配置目录。
+AuraUI 完整套件提供安装程序和便携 ZIP；Standalone Fences 有独立 ZIP 和可选安装器。
+两种方式均面向当前 Windows 用户，不需要管理员权限。完整套件的共享自动启动由
+`auraservice.exe` 管理；独立 Fences 可以选择自己的登录启动。
 
 ## 开始使用
 
-1. 安装或解压后打开 AuraExplorer，先用普通文件夹熟悉操作。
+1. 安装或解压完整 AuraUI 套件后打开 AuraExplorer，先用普通文件夹熟悉操作。
 2. 按 **Ctrl+T** 新建标签，**Ctrl+L** 输入目录，**Ctrl+F** 搜索。
 3. 在 **≡ → 布局** 开启双栏、调整标签位置和命令栏；两栏分别保留自己的目录与标签。
 4. 需要替代系统文件管理器时，进入 **≡ → 系统集成 → 默认打开文件夹、磁盘和此电脑**；选择“不接管系统资源管理器”可恢复。
-5. 含桌面功能的版本可从 **≡ → 桌面格子** 启动和管理格子。删除格子不会删除磁盘文件。
+5. 从 AuraExplorer 菜单或 Fences 快捷方式启动桌面格子；完整套件的开关位于 **AuraUI — 启动与组件**。删除格子不会删除磁盘文件。
 
 ## 常用操作
 
@@ -50,6 +49,13 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 - **预览**：内置预览与 QuickLook 可选择。Office 文档预览需要相应的已安装组件；图片、音视频格式取决于系统解码器。
 - **右键**：Windows 10 使用经典系统菜单；Windows 11 按系统能力选择已验证的原生呈现或公共 Shell 命令兼容呈现。Shift 右键可直接使用经典菜单。
 - **Listary**：安装和连接方式见[详细使用说明](docs/user-guide.md)及 `integrations/listary`。
+
+## 0.3.23：Fences 独立组件
+
+- `Fences.exe` 现在从 `aura-fences` 单独构建，不再是 AuraExplorer 的桌面模式。
+- 完整 AuraUI 由 `auraservice.exe` 集中管理组件启动；Fences 菜单打开同一个启动设置窗口。
+- Standalone Fences 可单独下载，不需要 AuraExplorer、AuraDock 或 AuraService；文件打开由 Windows Explorer 处理。
+- 打包边界、Cargo 目标、CI、安装脚本和 Inno Setup 已指向独立 Fences 可执行文件。
 
 ## 0.3.21 更新
 
@@ -80,18 +86,17 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 исходниках: `crates/aura-dock` и `crates/laminar-sys`. В ней закреплённые и
 запущенные приложения, стеки, превью окон, трей, поиск и Launchpad.
 
-- **Один набор**: `packaging/bundle.json` — единственное описание того, что входит в
-  AuraUI. Из него раскладывает набор `scripts/package.ps1`, по нему проверяет
-  `scripts/verify-bundle.ps1`, и эту же проверку зовёт CI. Подробности —
-  [docs/packaging.md](docs/packaging.md).
-- **Один запуск**: всё запускает служба `auraservice.exe` — она поднимает включённые
-  компоненты при входе в Windows и держит их. Панель, сетки и виджеты — отдельные
-  программы со своими настройками, и ни одна из них не запускает другую.
+- **Один набор**: `packaging/bundle.json` описывает AuraExplorer, Fences, панель,
+  AuraService и архиватор. `scripts/package.ps1` собирает набор, а
+  `scripts/verify-bundle.ps1` сверяет файлы и manifest. Подробности — [docs/packaging.md](docs/packaging.md).
+- **Один владелец запуска**: `auraservice.exe` хранит общие переключатели и запускает Fences,
+  AuraDock и AuraExplorer. `widgets.exe` пока остаётся дочерним процессом AuraDock.
+  Standalone Fences работает и без этой службы.
 - **Launchpad проще апстрима**: одна тихая панель по центру (~70 % экрана),
   поиск сверху, сетка приложений в середине, счётчик страниц — и ничего больше.
   Колонки виджетов и центр управления из Laminar выключены.
 - Настройки панели: `%APPDATA%\AuraExplorer\Dock\config.json`. Панель не обновляет
-  себя: обновления приходят с установщиком AuraExplorer.
+  себя; в полном AuraUI-наборе обновление панели приходит вместе с suite-установщиком.
 - Интерфейс панели и Launchpad — на русском (`language` в `config.json`: `"ru"`, `"en"`,
   `"auto"`), из апстрима убраны виджеты, коннекторы и «О программе».
 - Иконка AuraExplorer — первая на панели; на рабочем столе — стеклянный виджет часов
@@ -108,14 +113,14 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 ### Установка и автозапуск
 
 ```powershell
-# из папки с AuraExplorer.exe и AuraDock.exe
+# из папки с AuraExplorer.exe, Fences.exe, AuraDock.exe и auraservice.exe
 powershell -ExecutionPolicy Bypass -File install.ps1
 
 # или двойным щелчком: install.cmd
 install.cmd -Remove        # удалить: процессы, автозапуск, ярлыки, папку
 ```
 
-- Ставит в профиль пользователя: `%LOCALAPPDATA%\Programs\AuraExplorer`, администратор не нужен.
+- Ставит полный набор в профиль пользователя (по умолчанию `%LOCALAPPDATA%\Programs\AuraExplorer`), администратор не нужен.
 - Перед копированием сверяет файлы с `manifest.json` (версия и sha256 каждого): подменённый
   или недокачанный архив не установится молча.
 - Автозапуск — одна запись `HKCU\…\Run`: `"<папка>\auraservice.exe" --run`. Что именно она
@@ -135,7 +140,7 @@ pwsh -NoProfile -File scripts/package.ps1
 
 ## 反馈问题
 
-请在 [Issues](https://github.com/qiu7824/aura/issues) 中提供程序版本和版本类型、Windows 版本、触发步骤、预期结果和错误信息。右键问题同时注明菜单样式及相关第三方扩展。
+请在 [Issues](https://github.com/ruvideohub/zsdesk/issues) 中提供程序版本和版本类型、Windows 版本、触发步骤、预期结果和错误信息。右键问题同时注明菜单样式及相关第三方扩展。
 
 修复提交、正式发布与反馈电脑上的复测分别记录；各项进展见[兼容性与反馈状态](docs/feedback-status.md)。
 

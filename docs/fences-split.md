@@ -1,44 +1,47 @@
-# Как `fences.exe` перестанет быть копией `AuraExplorer.exe`
+# Fences — отдельный компонент AuraUI
 
-Замечание по делу: до сих пор `fences.exe` — это тот же самый код (`aura-explorer`),
-собранный вторым бинарником. Совпадает всё: 9 095 строк хоста сеток лежат в
-`crates/aura-explorer/src/desktop/`, общий ключ одного экземпляра, общий файл сессии
-`explorer-session.json`, тот же значок и те же строки версии. Ниже — что уже исправлено и в
-каком порядке код разъезжается по-настоящему.
+Fences больше не является вторым бинарником `aura-explorer` и не запускает desktop-host внутри
+AuraExplorer. Рабочий стол и сетки принадлежат отдельному процессу `Fences.exe` из Cargo-пакета
+`aura-fences`; доменная модель находится в `aura-fences-model`.
 
-## Уже исправлено (0.3.24)
+## Что изменено
 
-* **Режим задаёт программа, а не командная строка.** `fences.exe` подставляет себе `--desktop`
-  (см. `aura_explorer::fences_arguments`). Строка службы `fences.exe --tray` раньше читалась
-  как *файловое окно с файлом «--tray»* — хост сеток не запускался вообще.
-* **Свой ключ одного экземпляра.** `instance::property` хеширует имя программы вместе с
-  профилем: `fences.exe` и `AuraExplorer.exe` — две программы, и запуск сеток больше не
-  пересылается уже открытому файловому окну.
-* **Чужой путь — ошибка, а не окно.** `fences.exe <путь>` отвечает понятным отказом: этот
-  бинарник не открывает файлы.
-* Оба правила закрыты тестами (`fences_arguments`, `property_for`), чтобы вернуться не могли.
+- `crates/aura-explorer/src/desktop/` и прежний `aura-explorer` bin `fences` удалены.
+- `crates/aura-fences/src/desktop/` содержит самостоятельный хост, а отдельные ресурсы описывают
+  продукт как `Fences.exe`.
+- AuraExplorer отвергает старые аргументы запуска desktop-host (`--desktop`, `--desktop-guard`,
+  `--tray`, `--organize` и связанные команды) вместо того, чтобы незаметно открывать окно Explorer.
+  В интерфейсе AuraExplorer те же действия передаются соседнему `Fences.exe` с тем же профилем.
+- Fences использует собственный профиль `%APPDATA%\\AuraFences`, поддерживает миграцию старой
+  раскладки и передаёт открытие файлов/папок системному `explorer.exe`.
+- Fences не запускает AuraExplorer или AuraDock и может работать как отдельный продукт.
 
-## Порядок вырезания
+## Запуск и общие настройки
 
-1. **`aura-shell-menu` — общая подсистема контекстного меню.** `context_menu_process` (1 276
-   строк), `context_menu_common` (266), `context_menu_actions` (143), `context_menu_child`
-   (246), `context_menu_background` (398), `context_preferences` (30) нужны и файловому окну, и
-   сеткам. По правилу «компоненты не зависят друг от друга» они переезжают в отдельный общий
-   крейт (как `aura-windows`), и оба компонента зависят от него, а не друг от друга.
-2. **Мелкие общие помощники — в `aura-core`/`aura-windows`:** `archive` (138 строк, запуск
-   `AuraArc`), `explorer_forwarder::same_path`, `runtime::trace`, `flyout_menu::MenuAnchor`,
-   `edition` (какая сборка), `window::diagnostics::IterationTimer`.
-3. **`crates/aura-fences`:** сюда переезжает `desktop/` (19 файлов, 9 095 строк) и
-   `bin/fences.rs`. Крейт зависит от `aura-core`, `aura-windows`, `aura-shell-menu` — и ни от
-   чего из `aura-explorer`.
-4. **`aura-explorer` теряет `desktop/`.** Режим `AuraExplorer.exe --desktop` остаётся, но
-   становится запуском `fences.exe`, а не вторым хостом сеток внутри себя.
-5. **Свои ресурсы:** `fences.ico` и блок версии с `OriginalFilename=fences.exe` (отдельные
-   resource-цели в `build.rs` — сейчас `embed_resource` даёт один `.rc` на пакет).
-6. **Проверка в CI:** `scripts/check-programs.py` — каждый поставляемый бинарник обязан иметь
-   свою точку входа и свои ресурсы; два бинарника одного крейта с одинаковым размером и
-   одинаковым `.rc` считаются ошибкой, а не «так и надо».
+В полном AuraUI-наборе `auraservice.exe` является владельцем запуска компонентов и общей записи
+автозапуска. Компонент `fences` запускается как `Fences.exe --tray`; при необходимости служба
+передаёт ему `--profile-dir`. Обычный запуск AuraExplorer только обеспечивает запуск
+`auraservice.exe --run`, если он ещё не работает.
 
-Шаги 1–2 механические и проверяются сборкой; шаг 3 — перенос файлов и правка 63 ссылок
-`crate::…` в `desktop/` (по счёту: `context_menu_process` — 21, `storage` — 8,
-`explorer_forwarder` — 5, `edition` — 5, `flyout_menu` — 4, остальное по 1–3).
+При установленной службе меню Fences «Запуск и компоненты…» и соответствующий пункт меню
+AuraExplorer открывают `auraservice.exe --settings`. Они не создают отдельный переключатель
+автозапуска Fences. В standalone Fences-пакете, где соседнего `auraservice.exe` нет, Fences
+сохраняет собственную необязательную запись запуска при входе; установщик этого пакета может
+её включить, а uninstall удаляет запись именно этой копии.
+
+## Сборка и установка
+
+- `packaging/bundle.json` называет `Fences.exe` Cargo-целью `aura-fences` / `Fences`; общий
+  `scripts/package.ps1` собирает и проверяет весь AuraUI-набор.
+- `.github/workflows/dock-build.yml` явно собирает `aura-fences --bin Fences` отдельно от
+  `aura-explorer` и `aura-dock`.
+- `packaging/windows/aura.iss` и `packaging/windows/install.ps1` кладут Fences рядом с
+  AuraService и AuraExplorer; они не включают для Fences отдельный автозапуск.
+- `scripts/package-fences.ps1` создаёт отдельный standalone ZIP и, если передан Inno Setup,
+  installer из `packaging/windows/fences.iss`. В этот пакет не входят AuraExplorer, AuraDock
+  или AuraService.
+- `python scripts/check_fences_boundary.py` проверяет границы крейтов, источник бинарника,
+  общий запуск службы и статические предположения об установщиках.
+
+Граница проверена статически. `cargo test`, Rust-сборки, запуск Windows-программ и компиляция
+Inno Setup должны быть выполнены на Windows с соответствующими инструментами.

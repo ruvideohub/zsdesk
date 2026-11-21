@@ -149,8 +149,7 @@ fn release_window_properties(hwnd:HWND){
 pub(crate) fn shortcut_help_text()->&'static str{
     let text=aura_core::i18n::text(input::SHORTCUTS);
     let desktop=aura_core::i18n::text("桌面格子");
-    if crate::edition::DESKTOP_ONLY{text.find(desktop).map(|at|&text[at..]).unwrap_or(text)}
-    else if crate::edition::DESKTOP{text}else{text.split(desktop).next().unwrap_or(text).trim_end()}
+    if crate::edition::DESKTOP { text } else { text.split(desktop).next().unwrap_or(text).trim_end() }
 }
 
 #[cfg(test)]pub(crate) fn verify_builtin_preview_without_handlers(owner:HWND,path:&std::path::Path)->Result<()>{

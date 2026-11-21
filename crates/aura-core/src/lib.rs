@@ -1,6 +1,8 @@
-//! AuraExplorer 领域模型与公共类型。
+//! Shared and Explorer domain models, localization, and common utilities.
 //!
-//! 分层原则：领域层不依赖 HWND、COM 指针或 ZSUI 控件，便于单元测试。
+//! The Fences desktop-grid model lives in `aura-fences-model`, keeping that
+//! product's domain types out of Explorer's package. Domain code has no HWND,
+//! COM pointer, or ZSUI control dependencies.
 
 #[macro_use]
 pub mod i18n;

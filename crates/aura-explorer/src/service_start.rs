@@ -1,10 +1,7 @@
-//! The AuraUI service, started by the file manager when nobody else has.
+//! Ensure the AuraUI launch service is available for a normal file-manager launch.
 //!
-//! Every piece of the suite is its own executable now (the panel, the fences, the widgets), and
-//! one service starts them: `auraservice.exe`. The file manager does not start any of them —
-//! that is what keeps a single owner of the run settings — but a normal launch makes sure the
-//! service itself is up, so launching AuraExplorer from a folder (not from the Start menu)
-//! still gives a complete desktop.
+//! The service owns the integrated suite's startup settings and starts independent programs
+//! such as `Fences.exe` and `AuraDock.exe`; AuraExplorer only ensures the service is running.
 //!
 //! `auraservice --run` takes a single-instance lock: when a supervisor is already running, the
 //! copy started here exits at once and starts nothing a second time.
@@ -14,9 +11,9 @@ use std::process::Command;
 
 /// Should this launch make sure the service is running?
 ///
-/// Yes for a normal launch of an edition with the desktop, no for the helper modes that only
-/// talk to a running host, and no when the user asked for `--no-dock` (a plain file window, or
-/// a session where the panel is in the way).
+/// Yes for a normal launch of an edition that ships the companion programs; no for helper
+/// modes that only talk to a running host, or when `--no-dock` requests a plain file window
+/// without starting the integrated companion set.
 pub fn wanted(args: &[std::ffi::OsString]) -> bool {
     if !crate::edition::DESKTOP {
         return false;
@@ -26,10 +23,7 @@ pub fn wanted(args: &[std::ffi::OsString]) -> bool {
         || flag("--quick-search")
         || flag("--quick-search-settings")
         || flag("--background");
-    // `--desktop --quit` asks the running fences to go away and starts nothing, so a
-    // request to quit must never bring the desktop up on its way out.
-    let quitting = flag("--quit") && flag("--desktop");
-    !quiet && !quitting
+    !quiet
 }
 
 /// Start `auraservice.exe --run` if it ships next to this executable. Failure is logged and
@@ -45,8 +39,8 @@ pub fn ensure_running() {
     }
 }
 
-/// Open the service's launch settings window — one window holds every start switch, so the
-/// file manager and the fences open it instead of growing switches of their own.
+/// Open the service's launch settings window. The standalone Fences app has a matching
+/// bridge so both applications use the same controls when the service is installed.
 pub fn open_settings() {
     let Some(service) = location() else {
         crate::runtime::trace("service-missing");
@@ -96,9 +90,8 @@ mod tests {
     }
 
     #[test]
-    fn a_plain_launch_brings_the_service() {
-        assert!(wanted(&args(&["--desktop"])));
-        assert!(wanted(&args(&[])));
+    fn a_plain_launch_starts_the_service_only_when_the_companion_is_included() {
+        assert_eq!(wanted(&args(&[])), crate::edition::DESKTOP);
     }
 
     #[test]
@@ -107,10 +100,5 @@ mod tests {
         assert!(!wanted(&args(&["--quick-search"])));
         assert!(!wanted(&args(&["--quick-search-settings"])));
         assert!(!wanted(&args(&["--background"])));
-    }
-
-    #[test]
-    fn closing_the_fences_does_not_start_anything() {
-        assert!(!wanted(&args(&["--desktop", "--quit"])));
     }
 }

@@ -1063,6 +1063,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "aura-fences"
+version = "0.3.23"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "embed-resource",
+ "roxmltree 0.21.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows",
+ "aura-core",
+ "aura-fences-model",
+ "aura-ui",
+ "aura-windows",
+]
+
+[[package]]
+name = "aura-fences-model"
+version = "0.3.23"
+dependencies = [
+ "serde",
+ "aura-core",
+]
+
+[[package]]
 name = "aura-arc"
 version = "0.3.23"
 dependencies = [
