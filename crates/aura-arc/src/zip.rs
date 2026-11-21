@@ -1167,6 +1167,26 @@ mod tests {
     }
 
     #[test]
+    fn extracting_a_selected_folder_keeps_its_tree_and_ignores_siblings() {
+        let temp = Temp::new("extract-folder-only");
+        let chosen = temp.0.join("chosen");
+        let other = temp.0.join("other");
+        fs::create_dir_all(chosen.join("nested")).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        fs::write(chosen.join("nested").join("inside.txt"), "inside").unwrap();
+        fs::write(other.join("outside.txt"), "outside").unwrap();
+        let archive = temp.0.join("folders.zip");
+        add(&archive, &[chosen, other], false, |_, _| {}).unwrap();
+
+        let out = temp.0.join("selected");
+        let summary = extract_only(&archive, &out, &["chosen/".to_string()], |_, _| {}).unwrap();
+        assert_eq!(summary.files, 1);
+        assert_eq!(summary.folders, 2);
+        assert_eq!(fs::read_to_string(out.join("chosen/nested/inside.txt")).unwrap(), "inside");
+        assert!(!out.join("other/outside.txt").exists());
+    }
+
+    #[test]
     fn a_folder_inside_a_folder_of_the_same_name_keeps_its_depth() {
         let folder = Path::new(r"C:\работа\docs");
         let nested = Path::new(r"C:\работа\docs\docs");

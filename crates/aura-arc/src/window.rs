@@ -12,8 +12,11 @@ use std::path::{Path, PathBuf};
 
 use aura_windows::gfx::{Align, Color, Gfx, RectF, Surface, TextStyle};
 use windows::core::{w, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{BeginPaint, BitBlt, EndPaint, InvalidateRect, UpdateWindow, PAINTSTRUCT, SRCCOPY};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, BitBlt, ClientToScreen, EndPaint, InvalidateRect, ScreenToClient, UpdateWindow,
+    PAINTSTRUCT, SRCCOPY,
+};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::Dialogs::{
@@ -23,13 +26,16 @@ use windows::Win32::UI::Controls::Dialogs::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL};
 use windows::Win32::UI::Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
-    GetWindowLongPtrW, KillTimer, LoadCursorW, LoadIconW, PostMessageW, PostQuitMessage, RegisterClassExW, SetTimer,
-    SetWindowLongPtrW, SetWindowTextW, ShowWindow, TranslateMessage, CS_DBLCLKS, CS_HREDRAW,
-    CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCURSOR, IDC_ARROW, MSG, SW_SHOW, WINDOW_EX_STYLE,
-    WM_CHAR, WM_CLOSE, WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
-    WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_PAINT, WM_SIZE, WM_TIMER, WNDCLASSEXW,
-    WS_OVERLAPPEDWINDOW,
+    AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
+    DispatchMessageW, GetClientRect, GetMessageW, GetWindowLongPtrW, KillTimer, LoadCursorW,
+    LoadIconW, MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
+    SetTimer, SetWindowLongPtrW, SetWindowTextW, ShowWindow, TrackPopupMenuEx, TranslateMessage,
+    CS_DBLCLKS, CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, GWLP_USERDATA, HCURSOR, HMENU,
+    IDC_ARROW, MB_ICONINFORMATION, MB_OK, MF_ENABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG,
+    SW_SHOW, TPM_LEFTALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, WINDOW_EX_STYLE,
+    WM_CHAR, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_DROPFILES, WM_KEYDOWN, WM_LBUTTONDBLCLK,
+    WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCDESTROY, WM_NULL, WM_PAINT, WM_SIZE,
+    WM_TIMER, WNDCLASSEXW, WS_OVERLAPPEDWINDOW,
 };
 
 use crate::zip;
@@ -61,6 +67,56 @@ const FILTERS: [(&str, &str); 5] = [
 const WM_APP_WORK: u32 = 0x8000 + 1;
 /// The window's one timer, which keeps the progress bar moving while a worker runs.
 const TIMER: usize = 1;
+
+const ROW_MENU_EXTRACT_SELECTED: u32 = 0x4401;
+const ROW_MENU_DELETE_SELECTED: u32 = 0x4402;
+const ROW_MENU_PROPERTIES: u32 = 0x4403;
+const ROW_MENU_ARCHIVE_LOCATION: u32 = 0x4404;
+
+/// Owns the native menu for the duration of TrackPopupMenuEx.
+struct PopupMenu(HMENU);
+
+impl PopupMenu {
+    fn new() -> Option<Self> {
+        unsafe { CreatePopupMenu() }.ok().map(Self)
+    }
+
+    fn item(&self, id: u32, label: &str, enabled: bool) {
+        let text = crate::wide(label);
+        let flags = MF_STRING | (if enabled { MF_ENABLED } else { MF_GRAYED });
+        let _ = unsafe { AppendMenuW(self.0, flags, id as usize, PCWSTR(text.as_ptr())) };
+    }
+
+    fn separator(&self) {
+        let _ = unsafe { AppendMenuW(self.0, MF_SEPARATOR, 0, None) };
+    }
+
+    fn track(&self, owner: HWND, point: POINT) -> u32 {
+        let flags = TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN;
+        unsafe {
+            let _ = SetForegroundWindow(owner);
+            let command = TrackPopupMenuEx(self.0, flags.0, point.x, point.y, owner, None).0 as u32;
+            let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
+            command
+        }
+    }
+}
+
+impl Drop for PopupMenu {
+    fn drop(&mut self) {
+        let _ = unsafe { DestroyMenu(self.0) };
+    }
+}
+
+/// Right-clicking an already selected row keeps the multi-selection; a different row becomes
+/// the sole selection before its context menu is shown.
+fn selection_after_context_click(selected: &BTreeSet<usize>, row: usize) -> BTreeSet<usize> {
+    if selected.contains(&row) {
+        selected.clone()
+    } else {
+        BTreeSet::from([row])
+    }
+}
 
 const ROW_HEIGHT: f32 = 30.0;
 const TOOLBAR_HEIGHT: f32 = 78.0;
@@ -167,7 +223,7 @@ enum Job {
     Add { archive: PathBuf, files: Vec<PathBuf>, store: bool },
     Extract { archive: PathBuf, destination: PathBuf, open_after: bool },
     Test { archive: PathBuf },
-    Copy { archive: PathBuf, destination: PathBuf, names: Vec<String> },
+    ExtractSelected { archive: PathBuf, destination: PathBuf, names: Vec<String>, open_after: bool, copy_label: bool },
     Remove { archive: PathBuf, names: Vec<String> },
 }
 
@@ -183,7 +239,13 @@ impl Job {
             Job::Add { .. } => String::from("Упаковываю…"),
             Job::Extract { destination, .. } => format!("Распаковываю в {}…", destination.display()),
             Job::Test { .. } => String::from("Проверяю…"),
-            Job::Copy { destination, .. } => format!("Копирую в {}…", destination.display()),
+            Job::ExtractSelected { destination, copy_label, .. } => {
+                if *copy_label {
+                    format!("Копирую в {}…", destination.display())
+                } else {
+                    format!("Извлекаю выбранное в {}…", destination.display())
+                }
+            }
             Job::Remove { .. } => String::from("Убираю из архива…"),
         }
     }
@@ -265,20 +327,61 @@ impl Job {
                     Err(error) => format!("{error}"),
                 }
             }
-            Job::Copy { archive, destination, names } => {
-                let total = names.len();
+            Job::ExtractSelected { archive, destination, names, open_after, copy_label } => {
+                // A selected folder expands to several entries; count those too, so the progress
+                // indicator reaches 100% at the end rather than after the folder record.
+                let total = zip::entries(&archive)
+                    .map(|entries| {
+                        entries
+                            .iter()
+                            .filter(|entry| {
+                                names.iter().any(|name| {
+                                    entry.name == *name
+                                        || (name.ends_with('/') && entry.name.starts_with(name.as_str()))
+                                })
+                            })
+                            .count()
+                    })
+                    .unwrap_or(names.len());
                 let mut done = 0usize;
                 let outcome = zip::extract_only(&archive, &destination, &names, |_, _| {
                     done += 1;
                     let _ = tell.send(Done::Progress { done, total });
                 });
                 match outcome {
-                    Ok(summary) if summary.files + summary.folders > 0 => format!(
-                        "Скопировано: {} в {}",
-                        crate::items(summary),
-                        destination.display()
-                    ),
-                    Ok(_) => String::from("Копировать нечего: выбранные записи пусты."),
+                    Ok(summary) => {
+                        let extracted = summary.files + summary.folders;
+                        if open_after && extracted > 0 {
+                            open_folder(&destination);
+                        }
+                        if extracted > 0 {
+                            let count = if summary.files == 0 {
+                                crate::plural(summary.folders, "папка", "папки", "папок")
+                            } else {
+                                crate::items(summary)
+                            };
+                            let completed = if copy_label { "Скопировано" } else { "Извлечено" };
+                            let mut text = format!(
+                                "{completed}: {} в {}",
+                                count,
+                                destination.display()
+                            );
+                            if summary.failed > 0 {
+                                text.push_str(&format!(
+                                    "; не удалось: {}",
+                                    crate::plural(summary.failed, "запись", "записи", "записей")
+                                ));
+                            }
+                            text
+                        } else if summary.failed > 0 {
+                            format!(
+                                "Не удалось извлечь: {}",
+                                crate::plural(summary.failed, "запись", "записи", "записей")
+                            )
+                        } else {
+                            String::from("Выбранные записи не найдены.")
+                        }
+                    }
                     Err(error) => format!("{error}"),
                 }
             }
@@ -551,8 +654,17 @@ impl App {
         }
     }
 
-    /// «Копировать»: the picked rows, unpacked beside the archive.
+    /// Unpack the picked rows beside the archive, without touching the other entries.
+    fn extract_selected(&mut self) {
+        self.start_selected_unpack(false);
+    }
+
+    /// Keep the panel's «Копировать» action and its existing status wording.
     fn copy_selected(&mut self) {
+        self.start_selected_unpack(true);
+    }
+
+    fn start_selected_unpack(&mut self, copy_label: bool) {
         let Some(archive) = self.archive.clone() else { return };
         let names = self.selected_names();
         if names.is_empty() {
@@ -561,7 +673,13 @@ impl App {
             return;
         }
         let destination = crate::beside(&archive);
-        self.start(Job::Copy { archive, destination, names });
+        self.start(Job::ExtractSelected {
+            archive,
+            destination,
+            names,
+            open_after: self.settings.open_after && !copy_label,
+            copy_label,
+        });
     }
 
     /// «Удалить»: the picked rows go, everything else is copied over untouched.
@@ -595,6 +713,185 @@ impl App {
             bytes += entry.size;
         }
         bytes
+    }
+
+    /// A right-click on a row keeps an existing group selection, or selects the row under the
+    /// pointer. Shift+F10 and the Context Menu key anchor the menu to the selected row.
+    fn context_menu(&mut self, mut screen_point: POINT) {
+        if self.settings_open {
+            return;
+        }
+        let keyboard = screen_point.x == -1 && screen_point.y == -1;
+        let position = if keyboard {
+            let Some(position) = self.selected.iter().copied().find(|position| *position < self.visible.len()) else {
+                return;
+            };
+            let l = layout(self.width, self.height);
+            let top = position as f32 * ROW_HEIGHT;
+            let max_scroll = (self.visible.len() as f32 * ROW_HEIGHT - l.rows.h).max(0.0);
+            if top < self.scroll || top + ROW_HEIGHT > self.scroll + l.rows.h {
+                self.scroll = top.clamp(0.0, max_scroll);
+                self.invalidate();
+            }
+            let l = layout(self.width, self.height);
+            let mut point = POINT {
+                x: (l.rows.x + 24.0) as i32,
+                y: (l.rows.y + top - self.scroll + ROW_HEIGHT / 2.0) as i32,
+            };
+            if !unsafe { ClientToScreen(self.hwnd, &mut point) }.as_bool() {
+                return;
+            }
+            screen_point = point;
+            position
+        } else {
+            let mut client = screen_point;
+            if !unsafe { ScreenToClient(self.hwnd, &mut client) }.as_bool() {
+                return;
+            }
+            let Some(Hit::Row(position)) = self.hit(client.x as f32, client.y as f32) else {
+                return;
+            };
+            position
+        };
+
+        self.selected = selection_after_context_click(&self.selected, position);
+        self.anchor = Some(position);
+        self.status.clear();
+        self.invalidate();
+
+        let Some(menu) = PopupMenu::new() else { return };
+        menu.item(ROW_MENU_EXTRACT_SELECTED, "Извлечь выбранное", !self.busy);
+        menu.item(ROW_MENU_DELETE_SELECTED, "Удалить из архива", !self.busy);
+        menu.separator();
+        menu.item(ROW_MENU_PROPERTIES, "Свойства", true);
+        menu.item(ROW_MENU_ARCHIVE_LOCATION, "Открыть расположение архива", self.archive.is_some());
+        let command = menu.track(self.hwnd, screen_point);
+        drop(menu);
+
+        match command {
+            ROW_MENU_EXTRACT_SELECTED if !self.busy => self.extract_selected(),
+            ROW_MENU_DELETE_SELECTED if !self.busy => self.delete_selected(),
+            ROW_MENU_PROPERTIES => self.show_selected_properties(),
+            ROW_MENU_ARCHIVE_LOCATION => self.open_archive_location(),
+            _ => {}
+        }
+    }
+
+    fn show_selected_properties(&self) {
+        let selected: Vec<&zip::Entry> = self
+            .selected
+            .iter()
+            .filter_map(|position| self.visible.get(*position))
+            .filter_map(|index| self.entries.get(*index))
+            .collect();
+        if selected.is_empty() {
+            return;
+        }
+
+        let text = if selected.len() == 1 {
+            let entry = selected[0];
+            if entry.is_folder() {
+                let mut contents = zip::Summary::default();
+                for child in self.entries.iter().filter(|child| {
+                    child.name != entry.name && child.name.starts_with(entry.name.as_str())
+                }) {
+                    if child.is_folder() {
+                        contents.folders += 1;
+                    } else {
+                        contents.files += 1;
+                        contents.bytes = contents.bytes.saturating_add(child.size);
+                        contents.packed = contents.packed.saturating_add(child.packed);
+                    }
+                }
+                let count = if contents.files == 0 {
+                    if contents.folders == 0 {
+                        String::from("нет вложенных записей")
+                    } else {
+                        crate::plural(contents.folders, "папка", "папки", "папок")
+                    }
+                } else {
+                    crate::items(contents)
+                };
+                format!(
+                    "Имя: {}\nТип: папка\nСодержит: {}\nРазмер без сжатия: {}\nРазмер в архиве: {}\nИзменена: {}",
+                    entry.name.trim_end_matches('/'),
+                    count,
+                    crate::size(contents.bytes),
+                    crate::size(contents.packed),
+                    when(entry),
+                )
+            } else {
+                let method = match entry.method {
+                    zip::STORED => "Без сжатия".to_string(),
+                    8 => "Deflate".to_string(),
+                    other => format!("Метод {other}"),
+                };
+                format!(
+                    "Имя: {}\nТип: файл\nРазмер: {}\nСжатый размер: {}\nМетод: {}\nСтепень сжатия: {}\nИзменён: {}\nCRC-32: {:08X}",
+                    entry.name,
+                    crate::size(entry.size),
+                    crate::size(entry.packed),
+                    method,
+                    ratio(entry),
+                    when(entry),
+                    entry.crc,
+                )
+            }
+        } else {
+            let mut summary = zip::Summary::default();
+            for entry in &selected {
+                if entry.is_folder() {
+                    summary.folders += 1;
+                } else {
+                    summary.files += 1;
+                    summary.bytes = summary.bytes.saturating_add(entry.size);
+                    summary.packed = summary.packed.saturating_add(entry.packed);
+                }
+            }
+            let count = if summary.files == 0 {
+                crate::plural(summary.folders, "папка", "папки", "папок")
+            } else {
+                crate::items(summary)
+            };
+            let mut text = format!(
+                "Выбрано: {}\nРазмер без сжатия: {}\nРазмер в архиве: {}\n\n",
+                count,
+                crate::size(summary.bytes),
+                crate::size(summary.packed),
+            );
+            let shown = selected.len().min(12);
+            for entry in selected.iter().take(shown) {
+                text.push_str(&format!(
+                    "{} — {}{}\n",
+                    entry.name,
+                    crate::size(entry.size),
+                    if entry.is_folder() { " (папка)" } else { "" },
+                ));
+            }
+            if selected.len() > shown {
+                text.push_str(&format!("… и ещё {}", selected.len() - shown));
+            }
+            text
+        };
+        let title = crate::wide("Свойства записи архива");
+        let message = crate::wide(&text);
+        unsafe {
+            let _ = MessageBoxW(
+                Some(self.hwnd),
+                PCWSTR(message.as_ptr()),
+                PCWSTR(title.as_ptr()),
+                MB_OK | MB_ICONINFORMATION,
+            );
+        }
+    }
+
+    fn open_archive_location(&self) {
+        let Some(archive) = self.archive.as_deref() else { return };
+        let folder = archive
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        open_folder(folder);
     }
 
     // ---- the worker ----------------------------------------------------------
@@ -1226,6 +1523,14 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
             }
             LRESULT(0)
         }
+        WM_CONTEXTMENU => {
+            let packed = lp.0 as u32;
+            app.context_menu(POINT {
+                x: (packed as u16 as i16) as i32,
+                y: ((packed >> 16) as u16 as i16) as i32,
+            });
+            LRESULT(0)
+        }
         WM_LBUTTONDOWN => {
             let x = (lp.0 & 0xffff) as i16 as f32;
             let y = ((lp.0 >> 16) & 0xffff) as i16 as f32;
@@ -1249,9 +1554,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
         WM_LBUTTONDBLCLK => {
             let x = (lp.0 & 0xffff) as i16 as f32;
             let y = ((lp.0 >> 16) & 0xffff) as i16 as f32;
-            if let Some(Hit::Row(_)) = app.hit(x, y) {
+            if let Some(Hit::Row(position)) = app.hit(x, y) {
                 if !app.busy {
-                    app.extract();
+                    // Double-click means the row under the pointer, not an accidental extraction
+                    // of every entry in the archive.
+                    app.selected.clear();
+                    app.selected.insert(position);
+                    app.anchor = Some(position);
+                    app.status.clear();
+                    app.invalidate();
+                    app.extract_selected();
                 }
             }
             LRESULT(0)
@@ -1262,8 +1574,16 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, wp: WPARAM, lp: 
             LRESULT(0)
         }
         WM_KEYDOWN => {
+            let code = wp.0 & 0xffff;
             let control = (GetKeyState(VK_CONTROL.0 as i32) as u16 & 0x8000) != 0;
-            app.key(wp.0 & 0xffff, control);
+            let shift = (GetKeyState(0x10) as u16 & 0x8000) != 0;
+            // This window handles WM_KEYDOWN itself, so it must synthesize the standard context
+            // menu gesture instead of relying on DefWindowProc to turn these keys into one.
+            if code == 0x5d || (code == 0x79 && shift) {
+                app.context_menu(POINT { x: -1, y: -1 });
+            } else {
+                app.key(code, control);
+            }
             LRESULT(0)
         }
         WM_CHAR => {
@@ -1430,5 +1750,17 @@ mod tests {
         assert_eq!(kind_for("заметка.md"), 2);
         assert_eq!(kind_for("архив.zip"), 4);
         assert_eq!(kind_for("программа.exe"), 0);
+    }
+
+    #[test]
+    fn right_click_inside_a_group_keeps_the_whole_selection() {
+        let selected = BTreeSet::from([2, 4, 6]);
+        assert_eq!(selection_after_context_click(&selected, 4), selected);
+    }
+
+    #[test]
+    fn right_clicking_another_row_selects_only_that_row() {
+        let selected = BTreeSet::from([2, 4, 6]);
+        assert_eq!(selection_after_context_click(&selected, 5), BTreeSet::from([5]));
     }
 }
