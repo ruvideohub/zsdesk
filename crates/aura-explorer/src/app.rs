@@ -135,12 +135,11 @@ fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
     } else if opts.import_report.is_some() || opts.apply_import {
         bail!("--import-report 和 --apply-import 必须与 --import-tencent 配合使用");
     }
-    // `fences.exe` is the desktop host: started bare (by hand, or from a shortcut) it shows
-    // the fences rather than a file window, which is not part of that program's job.
-    if crate::fences_component() && opts.mode == Mode::Explorer && opts.target.is_none() && !opts.select && !opts.win_e
-        && opts.diagnostics_main.is_none() && !opts.integration_enable && !opts.integration_refresh && !opts.uninstall_integration
-        && !opts.routing_apply && opts.import_source.is_none() {
-        opts.mode = Mode::Desktop(DesktopCommand::Show);
+    // `fences.exe` is the desktop host and nothing else: the mode is already a desktop one
+    // (see `fences_arguments`), so a leftover target path is a caller's mistake, not a file
+    // to open. Saying so beats opening a window nobody asked for.
+    if crate::fences_component() && opts.target.is_some() {
+        bail!("{}", aura_core::i18n::text("fences.exe 只负责桌面格子，不能打开文件和文件夹"));
     }
     Ok(opts)
 }
@@ -264,6 +263,8 @@ pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
             "network":crate::edition::NETWORK, "desktop":crate::edition::DESKTOP, "themed":crate::edition::THEMED,"desktop_only":crate::edition::DESKTOP_ONLY,"platform":"windows-x64"}));
         return Ok(());
     }
+    // `fences.exe` is the desktop host, not a file window: its mode comes from the program.
+    let args = if crate::fences_component() { crate::fences_arguments(args) } else { args };
     let args=edition_arguments(args)?;
     let app_id = crate::edition::application_id();
     let app_id: Vec<u16> = app_id.encode_utf16().chain(Some(0)).collect();

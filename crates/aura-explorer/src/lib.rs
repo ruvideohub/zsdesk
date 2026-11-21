@@ -46,6 +46,28 @@ mod icon_worker_tests{
     fn native_icon_worker_entry(){aura_windows::shell::icons::run_icon_test_worker().unwrap();}
 }
 
+#[cfg(test)]
+mod fences_arguments_tests{
+    use std::ffi::OsString;
+    fn of(words:&[&str])->Vec<OsString>{words.iter().map(OsString::from).collect()}
+    #[test]
+    fn the_grid_host_always_starts_in_desktop_mode(){
+        // Ровно та строка, которой служба запускает сетки: без режима она читалась как
+        // файловое окно с файлом «--tray», и сетки не показывались.
+        assert_eq!(crate::fences_arguments(of(&["--tray"])),of(&["--desktop","--tray"]));
+        assert_eq!(crate::fences_arguments(of(&[])),of(&["--desktop"]));
+        assert_eq!(crate::fences_arguments(of(&["--quit"])),of(&["--desktop","--quit"]));
+        assert_eq!(crate::fences_arguments(of(&["--organize","--profile-dir",r"C:\p"])),
+            of(&["--desktop","--organize","--profile-dir",r"C:\p"]));
+    }
+    #[test]
+    fn an_explicit_desktop_mode_is_left_alone(){
+        assert_eq!(crate::fences_arguments(of(&["--desktop","--tray"])),of(&["--desktop","--tray"]));
+        assert_eq!(crate::fences_arguments(of(&["--desktop-guard","42"])),of(&["--desktop-guard","42"]));
+        assert_eq!(crate::fences_arguments(of(&["--guard-thread","7"])),of(&["--guard-thread","7"]));
+    }
+}
+
 /// Lets the installer wait for all application windows and desktop guards to
 /// finish before replacing or uninstalling their files.
 struct ApplicationLifetime(Option<windows::Win32::Foundation::HANDLE>);
@@ -109,4 +131,22 @@ pub fn run() {
 pub fn run_fences() {
     FENCES.store(true, std::sync::atomic::Ordering::Relaxed);
     run();
+}
+
+/// The command line `fences.exe` really runs.
+///
+/// The host of the desktop grids has one job, so its mode is decided by the program, not by
+/// the caller: `--desktop` is put in front unless the line already asks for a desktop mode.
+/// Without this, the line the service launches (`fences.exe --tray`) was read as *a file
+/// window with a file called `--tray`*: the grid host never started, and the copy that did
+/// start took the file window's single-instance lock and its session file, so it fought the
+/// real window instead of drawing the desktop.
+pub(crate) fn fences_arguments(args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let desktop = args.iter().any(|argument| {
+        matches!(argument.to_str(), Some("--desktop") | Some("--desktop-guard") | Some("--guard-thread"))
+    });
+    if desktop {
+        return args;
+    }
+    std::iter::once(std::ffi::OsString::from("--desktop")).chain(args).collect()
 }

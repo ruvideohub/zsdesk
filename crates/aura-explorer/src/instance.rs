@@ -95,8 +95,22 @@ pub fn diagnose(profile:&Path,output:&Path)->Result<()>{
     }
     bail!("诊断报告尚未生成")
 }
-pub fn property(path:&Path)->Vec<u16>{
-    let mut h=DefaultHasher::new();path.to_string_lossy().to_lowercase().hash(&mut h);
+/// The named object behind "one program per profile".
+///
+/// The key is the profile **and the program's own file name**: `fences.exe` and
+/// `AuraExplorer.exe` are two programs, and while the key was the profile alone, starting the
+/// grid host was answered by an already running file window — the request was forwarded and
+/// the grids never appeared.
+pub fn property(path:&Path)->Vec<u16>{property_for(path,&program())}
+
+/// This program's file name in lower case, as the key's stable half.
+fn program()->String{
+    std::env::current_exe().ok().and_then(|exe|exe.file_name().map(|name|name.to_string_lossy().to_lowercase())).unwrap_or_default()
+}
+
+pub(crate) fn property_for(path:&Path,program:&str)->Vec<u16>{
+    let mut h=DefaultHasher::new();
+    program.hash(&mut h);path.to_string_lossy().to_lowercase().hash(&mut h);
     format!("Local\\AuraExplorer.Profile.{:016x}",h.finish()).encode_utf16().chain(Some(0)).collect()
 }
 pub fn enter(path:&Path,target:Option<&ShellLocation>,selection:Option<&std::ffi::OsStr>)->Result<Option<Instance>>{
@@ -131,6 +145,18 @@ pub struct OpenRequest{pub location:ShellLocation,pub selection:Option<std::ffi:
 
 #[cfg(test)]mod tests{
     use super::*;
+    #[test]fn the_grid_host_and_the_file_window_never_share_one_instance(){
+        // Один профиль, две разные программы — два разных замка: иначе запуск сеток уходил в
+        // уже открытое файловое окно и сетки не появлялись.
+        let profile=Path::new(r"C:\Users\Test\AppData\Roaming\AuraUI\explorer-session.json");
+        assert_ne!(property_for(profile,"fences.exe"),property_for(profile,"auraexplorer.exe"));
+        assert_eq!(property_for(profile,"fences.exe"),property_for(profile,"FENCES.EXE"),
+            "case must not matter: the same program has one lock");
+        assert_ne!(property_for(Path::new(r"C:\a\explorer-session.json"),"fences.exe"),
+            property_for(Path::new(r"C:\b\explorer-session.json"),"fences.exe"),
+            "two profiles are two locks");
+    }
+
     #[test]fn real_request_restores_hidden_and_saved_maximized_windows(){
         assert_eq!(show_command(false,false,1),SW_SHOWNORMAL);
         assert_eq!(show_command(false,false,3),SW_SHOWMAXIMIZED);
