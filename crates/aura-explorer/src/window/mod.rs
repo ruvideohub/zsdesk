@@ -146,11 +146,7 @@ fn release_window_properties(hwnd:HWND){
 
 #[cfg(test)]pub(crate) fn shortcut_block()->&'static str{aura_core::i18n::text(input::SHORTCUTS)}
 
-pub(crate) fn shortcut_help_text()->&'static str{
-    let text=aura_core::i18n::text(input::SHORTCUTS);
-    let desktop=aura_core::i18n::text("桌面格子");
-    if crate::edition::DESKTOP { text } else { text.split(desktop).next().unwrap_or(text).trim_end() }
-}
+pub(crate) fn shortcut_help_text()->&'static str{aura_core::i18n::text(input::SHORTCUTS)}
 
 #[cfg(test)]pub(crate) fn verify_builtin_preview_without_handlers(owner:HWND,path:&std::path::Path)->Result<()>{
     let mut preview=quick_preview::QuickPreview::open_hidden_fallback(owner,path)?;

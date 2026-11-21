@@ -110,7 +110,7 @@ fn program()->String{
 
 pub(crate) fn property_for(path:&Path,program:&str)->Vec<u16>{
     let mut h=DefaultHasher::new();
-    program.hash(&mut h);path.to_string_lossy().to_lowercase().hash(&mut h);
+    program.to_lowercase().hash(&mut h);path.to_string_lossy().to_lowercase().hash(&mut h);
     format!("Local\\AuraExplorer.Profile.{:016x}",h.finish()).encode_utf16().chain(Some(0)).collect()
 }
 pub fn enter(path:&Path,target:Option<&ShellLocation>,selection:Option<&std::ffi::OsStr>)->Result<Option<Instance>>{

@@ -377,8 +377,6 @@ pub fn apply_context_menu_setting(options: &mut ContextMenuPreferences, choice: 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct AppMenuState {
     pub forward_unhandled_windows: bool,
-    /// `None` when this edition has no desktop fences.
-    pub desktop_running: Option<bool>,
     /// 0 = 不接管, 1 = 右键菜单, 2 = 默认打开.
     pub integration: u8,
     /// The Windows 11 menu presenter cannot run on this system.
@@ -408,16 +406,6 @@ pub fn app_menu_with_capabilities(state: AppMenuState, ui: &ExplorerUi, themed: 
     items.push(group(aura_core::i18n::text("右键菜单"), "settings-context-menu",
         context_menu_settings_menu_for(&ui.context_menu, !state.modern_menu_unavailable).items));
     if themed { items.push(group(aura_core::i18n::text("主题与材质"), "settings-appearance", appearance_menu(&ui.appearance).items)); }
-    if let Some(running) = state.desktop_running {
-        items.push(group(aura_core::i18n::text("桌面格子"), "settings-desktop", vec![
-            item(if running { aura_core::i18n::text("显示桌面格子") } else { aura_core::i18n::text("启动桌面格子") }, "desktop-start"),
-            item(aura_core::i18n::text("一键整理桌面"), "desktop-organize"),
-            item(aura_core::i18n::text("将当前文件夹映射为格子"), "desktop-map"),
-            MenuItemSpec::Separator,
-            entry(aura_core::i18n::text("显示托盘图标"), "desktop-tray", running, false),
-            entry(aura_core::i18n::text("退出桌面格子"), "desktop-quit", running, false),
-        ]));
-    }
     items.push(group(aura_core::i18n::text("系统集成"), "settings-integration", vec![
         entry(aura_core::i18n::text("不接管系统资源管理器"), "integration-off", true, state.integration == 0),
         entry(aura_core::i18n::text("右键菜单“使用 AuraExplorer 打开”"), "integration-context", true, state.integration == 1),
@@ -565,6 +553,7 @@ mod tests {
         for id in ["command-bar-visible", "command-bar-defaults", "interface-bookmarks", "context-menu-own", "context-menu-defaults", "folder-options"] {
             assert!(app.contains(&id.to_string()), "{id} must stay reachable from ≡");
         }
+        assert!(!app.iter().any(|id| id.starts_with("desktop-")), "Fences commands belong to the standalone component");
         for id in nested_ids(&interface_settings_menu(&ui)) {
             assert!(apply_interface_setting(&mut ui.clone(), &id)||interface_action(&id), "unhandled setting {id}");
         }
@@ -587,7 +576,7 @@ mod tests {
     #[test]
     fn app_menu_groups_settings_without_duplicates() {
         let ui = ExplorerUi::default();
-        let spec = app_menu_with_capabilities(AppMenuState { desktop_running: Some(false), ..Default::default() }, &ui, true);
+        let spec = app_menu_with_capabilities(AppMenuState::default(), &ui, true);
         let all = nested_ids(&spec);
         let mut unique = all.clone();
         unique.sort(); unique.dedup();
@@ -599,7 +588,7 @@ mod tests {
         let groups: Vec<_> = spec.items.iter().filter_map(|item| match item {
             MenuItemSpec::Submenu { id: Some(id), .. } => Some(id.as_str()), _ => None }).collect();
         assert_eq!(groups, ["settings-layout", "settings-tabs", "settings-preview", "settings-search", "settings-context-menu",
-            "settings-appearance", "settings-desktop", "settings-integration"]);
+            "settings-appearance", "settings-integration"]);
         assert!(spec.items.len() <= 20, "the top level stays short");
     }
 

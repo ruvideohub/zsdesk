@@ -141,6 +141,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
     language::initialize_environment();
+    if let Some(result) = aura_windows::shell::icons::maybe_handle_icon_worker(&args) {
+        if let Err(error) = result {
+            eprintln!("icon worker failed: {error}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if let Some(result) = context_menu_process::run_worker_if_requested() { return result; }
     let options = parse(args)?;
     if options.help { show_help(); return Ok(()); }

@@ -255,11 +255,11 @@ mod tests {
 
     #[test]
     fn outcomes_stay_inside_the_host_contract() {
-        for id in ["open", "cut", "copy", "copypath", "paste", "newfolder", "refresh", "rename", "delete"] {
+        for id in ["open", "cut", "copy", "copypath", "paste", "newfolder", "refresh", "rename", "delete", "compress", "extract"] {
             assert!(outcome(id).is_some(), "{id}");
         }
-        // These are executed by the worker itself, exactly like "more".
-        for id in ["shortcut", "compress", "terminal", "properties", "more", "openwith"] {
+        // These are executed inside the worker instead of returning to the host.
+        for id in ["shortcut", "terminal", "properties", "more", "openwith"] {
             assert!(outcome(id).is_none(), "{id}");
         }
     }

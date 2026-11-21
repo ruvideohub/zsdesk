@@ -198,7 +198,7 @@ mod tests{
         assert!(authorized(profile,profile,exe,exe,true));assert!(!authorized(profile,profile,exe,exe,false));
         assert!(!authorized(Path::new(r"C:\Other\explorer-session.json"),profile,exe,exe,true));
         assert!(!authorized(profile,profile,exe,Path::new(r"C:\Old\AuraExplorer.exe"),true));
-        assert!(authorized(profile,profile,exe,Path::new(r"c:/apps/aura/AuraExplorer.exe"),true));
+        assert!(authorized(profile,profile,exe,Path::new(r"c:/apps/auraexplorer/auraexplorer.exe"),true));
     }
     #[test]fn folder_dde_non_default_profile_never_registers()->Result<()>{
         let other=crate::storage::config_path().with_file_name("dde-private-profile.json");

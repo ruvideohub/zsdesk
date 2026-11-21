@@ -4,7 +4,7 @@ pub(super) struct InfoRow{pub section:bool,pub key:String,pub description:String
 pub(super) fn shortcut_rows(body:&str)->Vec<InfoRow>{
     let mut rows=Vec::new();
     for line in body.lines().map(str::trim).filter(|line|!line.is_empty()){
-        if ["文件管理器","桌面格子","全局搜索"].iter().any(|title|line==*title||line==aura_core::i18n::text(title)){
+        if ["文件管理器","全局搜索"].iter().any(|title|line==*title||line==aura_core::i18n::text(title)){
             rows.push(InfoRow{section:true,key:String::new(),description:line.into()});continue;
         }
         for part in line.split('　').map(str::trim).filter(|part|!part.is_empty()){
@@ -99,16 +99,15 @@ impl Panel{
         // wording of any particular language, but the columns must survive.
         let all=shortcut_rows(crate::window::shortcut_block());
         let rows=shortcut_rows(crate::window::shortcut_help_text());
-        assert_eq!(rows.iter().filter(|row|row.section).count(),if crate::edition::DESKTOP{2}else{1});
+        assert_eq!(rows.iter().filter(|row|row.section).count(),1,"Explorer help covers only Explorer shortcuts");
         // Every shown row comes from the full block with the same two columns.
         assert!(rows.iter().all(|row|all.iter().any(|other|other.key==row.key&&other.description==row.description)));
         assert!(rows.iter().any(|row|row.key=="Ctrl+W / Ctrl+F4"&&!row.description.is_empty()));
-        if crate::edition::DESKTOP{let desktop=rows.iter().filter(|row|!row.section&&!row.key.is_empty()).count();assert!(desktop>=4,"desktop section lost its key column: {desktop}");}
     }
     #[test]fn shortcut_aliases_and_groups_keep_their_meaning(){
-        let rows=shortcut_rows("文件管理器\nCtrl+W / Ctrl+F4 关闭标签　Ctrl+F1 展开或收起命令栏\n\n桌面格子\n鼠标悬停 展开格子");
+        let rows=shortcut_rows("文件管理器\nCtrl+W / Ctrl+F4 关闭标签　Ctrl+F1 展开或收起命令栏\n\n全局搜索\nCtrl+Alt+Space 打开全局搜索");
         assert_eq!(rows.len(),5);assert!(rows[0].section&&rows[3].section);
         assert_eq!(rows[1].key,"Ctrl+W / Ctrl+F4");assert_eq!(rows[1].description,"关闭标签");
-        assert_eq!(rows[4].key,"鼠标悬停");assert_eq!(rows[4].description,"展开格子");
+        assert_eq!(rows[4].key,"Ctrl+Alt+Space");assert_eq!(rows[4].description,"打开全局搜索");
     }
 }

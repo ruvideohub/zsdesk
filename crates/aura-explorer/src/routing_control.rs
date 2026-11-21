@@ -1098,7 +1098,7 @@ mod tests {
     fn refresh_resumes_only_an_enabled_owned_missing_watcher() {
         let current = Path::new("C:/Apps/AuraExplorer.exe");
         let mut settings = Settings { enabled: true, target_exe: Some(current.into()), ..Default::default() };
-        let mut ini = BTreeMap::from([("TargetExe".into(), "c:\\apps\\aura.exe".into())]);
+        let mut ini = BTreeMap::from([("TargetExe".into(), "c:\\apps\\auraexplorer.exe".into())]);
         assert!(resume_owned_watcher(&settings, &ini, current, false));
         assert!(!resume_owned_watcher(&settings, &ini, current, true));
         settings.start_with_windows = true;
