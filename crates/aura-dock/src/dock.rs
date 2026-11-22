@@ -1355,9 +1355,16 @@ impl Dock {
                 let tile = c.CreateContainerVisual()?;
                 tile.SetSize(v2(geo.b, geo.b))?;
                 let dot = (3.0 * self.scale).round().max(2.0);
+                let (r, g, b, a) = crate::ui::theme::text_2();
+                let dot_color = crate::ui::rgba(
+                    (r * 255.0).round() as u8,
+                    (g * 255.0).round() as u8,
+                    (b * 255.0).round() as u8,
+                    a,
+                );
                 let center = geo.b / 2.0;
                 for dx in [-1.0f32, 0.0, 1.0] {
-                    let (shape, _, _) = crate::ui::rounded(&c, dot, dot, dot / 2.0, crate::ui::theme::text_2())?;
+                    let (shape, _, _) = crate::ui::rounded(&c, dot, dot, dot / 2.0, dot_color)?;
                     shape.SetOffset(v3(center + dx * dot * 2.1 - dot / 2.0, center - dot / 2.0, 0.0))?;
                     tile.Children()?.InsertAtTop(&shape)?;
                 }
