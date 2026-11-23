@@ -106,7 +106,7 @@ function Stop-AuraExplorer {
     if (Test-Path -LiteralPath $Exe) {
         try { Start-Process -FilePath $Exe -ArgumentList @('--shutdown-for-update', ('"{0}"' -f $Exe)) -Wait -ErrorAction Stop | Out-Null } catch { }
     }
-    Get-Process -Name 'AuraExplorer', 'aura-dock', 'Fences', 'widgets', 'AuraArc' -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-Process -Name 'AuraExplorer', 'aura-dock', 'Fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
     }
 }
@@ -196,7 +196,7 @@ Write-Head 'Установка AuraExplorer'
 
 # AuraService owns the suite startup. Every required executable in bundle.json must be
 # present before install, so an incomplete desktop bundle is rejected rather than half-installed.
-$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'Fences.exe', 'widgets.exe', 'auraservice.exe', 'AuraArc.exe')
+$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'Fences.exe', 'widgets.exe', 'auraservice.exe')
 $components = @()
 $missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
 if ($missing.Count -gt 0) {

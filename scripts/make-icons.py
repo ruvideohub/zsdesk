@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Draw the suite's icons and write them next to their crates.
 
-Writes `crates/aura-dock/resources/aura-dock.ico`,
-`crates/aura-arc/resources/aura-arc.ico` and
+Writes `crates/aura-dock/resources/aura-dock.ico` and
 `crates/aura-service/resources/auraservice.ico`.
 
 The file manager's own icon (`crates/aura-explorer/resources/aura.ico`) is a golden
@@ -10,10 +9,9 @@ macOS-style folder; the panel's icon is the same gold, drawn as the panel itself
 a rounded bar with three app tiles on it — so the two read as one product in Explorer
 and in the Start menu.
 
-The archiver is the same gold drawn as a box with a zipper down the middle, and the
-service is the same gold drawn as a gear: three programs, one family. `AuraArc.exe` and
-`auraservice.exe` had no icon at all before this — they showed up as blank generic
-programs in Explorer, in the Start menu and in the uninstall list.
+The service is the same gold drawn as a gear, so the programs read as one family.
+`auraservice.exe` had no icon at all before this — it showed up as a blank generic
+program in Explorer, in the Start menu and in the uninstall list.
 
 Every size is drawn from scratch at 4x and downsampled, which keeps the 16 px and
 20 px variants legible instead of mush. Run it from the repository root:
@@ -112,56 +110,6 @@ def draw_icon(units=BOX, scale=SUPERSAMPLE):
     return canvas
 
 
-def draw_arc_icon(units=BOX, scale=SUPERSAMPLE):
-    """The archiver: a gold box with a zipper, the same gold as the folder and the bar."""
-    size = units * scale
-    k = size / BOX
-    canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-
-    box = (26 * k, 44 * k, 230 * k, 212 * k)
-    radius = 26 * k
-    shadow = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ImageDraw.Draw(shadow).rounded_rectangle(
-        (box[0], box[1] + 7 * k, box[2], box[3] + 9 * k), radius=radius, fill=SHADOW + (110,)
-    )
-    canvas.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(7 * k)))
-
-    body = gradient(size, GOLD_TOP, GOLD_BOTTOM).convert("RGBA")
-    body.putalpha(rounded_mask(size, box, radius))
-    canvas.alpha_composite(body)
-
-    # Lid line: a cream band across the top, so the box reads as a box at 16 px.
-    lid = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ImageDraw.Draw(lid).rounded_rectangle(
-        (box[0] + 9 * k, box[1] + 10 * k, box[2] - 9 * k, box[1] + 34 * k),
-        radius=10 * k, fill=TILE + (170,),
-    )
-    canvas.alpha_composite(Image.composite(lid, Image.new("RGBA", (size, size), (0, 0, 0, 0)), rounded_mask(size, box, radius)))
-
-    # Zipper: a cream strip with the teeth as darker notches, top to bottom.
-    zip_w = 26 * k
-    zip_x = (size - zip_w) / 2
-    strip = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(strip)
-    draw.rounded_rectangle((zip_x, box[1] + 20 * k, zip_x + zip_w, box[3] - 14 * k), radius=8 * k, fill=TILE + (255,))
-    tooth = 0
-    y = box[1] + 26 * k
-    while y + 8 * k < box[3] - 18 * k:
-        draw.rectangle((zip_x + 3 * k, y, zip_x + zip_w - 3 * k, y + 4 * k), fill=SHADOW + (200,))
-        tooth += 1
-        y += 12 * k
-    canvas.alpha_composite(Image.composite(strip, Image.new("RGBA", (size, size), (0, 0, 0, 0)), rounded_mask(size, box, radius)))
-
-    # Pull tab: a small cream handle sitting on the zipper.
-    handle = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    ImageDraw.Draw(handle).rounded_rectangle(
-        (zip_x - 12 * k, box[1] + 30 * k, zip_x + zip_w + 12 * k, box[1] + 56 * k),
-        radius=12 * k, fill=TILE_EDGE + (255,),
-    )
-    canvas.alpha_composite(handle)
-    return canvas
-
-
 def draw_service_icon(units=BOX, scale=SUPERSAMPLE):
     """The service: a gold gear. No text, no letters — it has to read at 16 px."""
     import math
@@ -201,7 +149,6 @@ def draw_service_icon(units=BOX, scale=SUPERSAMPLE):
 
 def main():
     write("crates/aura-dock/resources/aura-dock.ico", draw_icon)
-    write("crates/aura-arc/resources/aura-arc.ico", draw_arc_icon)
     write("crates/aura-service/resources/auraservice.ico", draw_service_icon)
 
 

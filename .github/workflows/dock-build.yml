@@ -44,7 +44,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.99.0
       # Two cheap checks that no compiler can make: every shipped program carries an icon and
       # a version block, and every string the interface shows has a translation. Both kinds of
-      # defect shipped green before — a blank AuraArc in the Start menu, a Chinese row in the
+      # defect shipped green before — a program with no icon in the Start menu, a Chinese row in the
       # fence settings — so they are checked before the long build.
       - name: Strings and icons
         shell: pwsh
@@ -70,8 +70,6 @@ jobs:
           # The launch service: one owner for everything that starts at logon.
           cargo build --locked --release -p aura-service --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # The archiver: an exe of its own, so it ships in the bundle and alone.
-          cargo build --locked --release -p aura-arc --bins
           exit $LASTEXITCODE
       - name: Lay out the bundle and verify it
         working-directory: aura

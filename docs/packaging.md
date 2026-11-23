@@ -25,7 +25,7 @@
 | `generated` | файл, который пишет сам упаковщик | `manifest.json` |
 
 Полный набор AuraUI содержит шесть приложений/процессов: `AuraExplorer.exe`, `AuraDock.exe`,
-`Fences.exe`, `widgets.exe`, `auraservice.exe` и `AuraArc.exe`, а также DLL перехвата окон,
+`Fences.exe`, `widgets.exe` и `auraservice.exe`, а также DLL перехвата окон,
 установочные файлы, лицензии и `manifest.json`. `Fences.exe` собирается из самостоятельного
 Cargo-пакета `aura-fences`; виджеты пока остаются дочерним процессом AuraDock.
 

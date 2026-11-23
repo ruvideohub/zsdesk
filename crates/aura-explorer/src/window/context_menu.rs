@@ -306,29 +306,6 @@ pub(super) fn poll(owner:HWND){
             };
             super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(message));
         },
-        Some(Ok(MenuOutcome::Compress)) if valid=>{
-            let message=match file_transfer::paths_from_pidls(&session.pidls){
-                Ok(paths) if !paths.is_empty()=>match crate::archive::pack(&paths,session.folder.as_deref()){
-                    Ok(archive)=>aura_core::tr_format!("正在压缩：{}", archive.display()),
-                    Err(message)=>message,
-                },
-                _=>aura_core::i18n::text("无法读取所选项目的路径").into(),
-            };
-            super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(message));
-        },
-        Some(Ok(MenuOutcome::Extract)) if valid=>{
-            let message=match file_transfer::paths_from_pidls(&session.pidls){
-                Ok(paths)=>match crate::archive::archive_among(&paths){
-                    Some(archive)=>match crate::archive::unpack(&archive){
-                        Ok(folder)=>aura_core::tr_format!("正在解压：{}", folder.display()),
-                        Err(message)=>message,
-                    },
-                    None=>aura_core::i18n::text("无法读取所选项目的路径").into(),
-                },
-                Err(_)=>aura_core::i18n::text("无法读取所选项目的路径").into(),
-            };
-            super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(message));
-        },
         Some(Ok(MenuOutcome::NewFolder)) if valid=>{
             super::pane_input::post(owner,identity,super::pane_input::Intent::Action(Command::NewFolder.id()as usize));
         },

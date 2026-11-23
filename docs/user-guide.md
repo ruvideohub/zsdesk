@@ -12,14 +12,14 @@ AuraExplorer 是 Windows 原生多标签文件管理器。桌面格子和文件�
 
 ## 版本
 
-当前工作区版本为 0.3.23。完整 AuraUI 套件包含 AuraExplorer、Fences、AuraDock、
-AuraService 和 AuraArc；桌面格子可另行作为 standalone Fences 安装。
+当前工作区版本为 0.3.23。完整 AuraUI 套件包含 AuraExplorer、Fences、AuraDock 和
+AuraService；桌面格子可另行作为 standalone Fences 安装。
 
 界面支持简体中文和 English；非中文 Windows 系统默认使用英文。“≡ → 语言 / Language”可选择跟随系统或指定语言，选择后立即切换。文件名称与系统 Shell 文本保持原值。
 
 | 构建/包 | 内容 |
 |---|---|
-| 完整 AuraUI 套件 | 文件管理与搜索、独立 Fences、AuraDock、AuraService、AuraArc；由 `scripts/package.ps1` 打包 |
+| 完整 AuraUI 套件 | 文件管理与搜索、独立 Fences、AuraDock、AuraService；由 `scripts/package.ps1` 打包 |
 | Standalone Fences | 桌面格子与文件夹映射，不依赖 AuraExplorer、AuraDock 或 AuraService；由 `scripts/package-fences.ps1` 打包 |
 | `aura-explorer` Cargo feature `network` | 可选网络访问功能；与单独的 Fences 主机无关 |
 | `aura-explorer` Cargo feature `desktop` | 表示对应包会随包提供独立 `Fences.exe`，不会把 Fences host 编进 Explorer |

@@ -45,14 +45,6 @@
       "required": true
     },
     {
-      "name": "AuraArc.exe",
-      "role": "arc",
-      "title": "Архиватор",
-      "note": "Окно и командная строка: .zip. Работает и без остальных файлов.",
-      "source": { "kind": "cargo", "package": "aura-arc", "bin": "AuraArc" },
-      "required": true
-    },
-    {
       "name": "AuraExplorerWindowHook-*.dll",
       "role": "hook",
       "title": "Перехват окон проводника",

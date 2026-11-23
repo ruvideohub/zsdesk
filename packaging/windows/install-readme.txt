@@ -1,4 +1,4 @@
-﻿AuraUI — комплект приложений Windows: AuraExplorer, AuraDock, Fences и AuraArc.
+﻿AuraUI — комплект приложений Windows: AuraExplorer, AuraDock и Fences.
 
 Что в архиве
   AuraExplorer.exe файловый менеджер и поиск
@@ -6,7 +6,6 @@
   AuraDock.exe     панель внизу экрана и Launchpad
   widgets.exe      виджеты рабочего стола, запускаемые панелью
   auraservice.exe служба запуска и единое окно «Запуск и компоненты»
-  AuraArc.exe      архиватор .zip
   install.ps1      установка для текущего пользователя
   install.cmd      установка двойным щелчком
 

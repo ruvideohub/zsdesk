@@ -159,8 +159,9 @@ const CMIC_MASK_UNICODE: u32 = 0x4000;
 pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, ShellInvoked, NativeHandled, Copy, Cut, Paste, Delete{permanent:bool},
     /// Short-page commands that never need a Shell extension.
     CopyPath, NewFolder, Refresh,
-    /// The suite's own archiver: `AuraArc.exe a` and `AuraArc.exe x`.
-    Compress, Extract }
+    /// The built-in ZIP writer in `aura-core`. There is no archiver program: packing is
+    /// the one direction a menu row needs, and it is a library call, not a second process.
+    Compress }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MenuInterceptions { pub rename: bool, pub open: bool, pub file_actions:bool }

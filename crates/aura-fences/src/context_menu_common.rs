@@ -34,8 +34,6 @@ pub(super) struct Target {
     /// The host reports whether the target takes file commands; behind a background the
     /// same flag means "this folder is a real file-system folder".
     files: bool,
-    /// Exactly one `.zip` is selected, so "解压到当前文件夹" has something to do.
-    archive: bool,
     folder: bool,
     /// The single selection resolved to a path, which "Open with" and "Create shortcut"
     /// both need to name an item.
@@ -45,14 +43,9 @@ pub(super) struct Target {
 impl Target {
     pub(super) fn of(request: &Request) -> Self {
         let background = request.mode == Mode::Background;
-        let archive = !background
-            && request.file_actions
-            && request.pidls.len() == 1
-            && file_transfer::paths_from_pidls(&request.pidls)
-                .is_ok_and(|paths| crate::archive::archive_among(&paths).is_some());
         let addressed = request.pidls.len() == 1
             && file_transfer::paths_from_pidls(&request.pidls).is_ok_and(|paths| !paths.is_empty());
-        Self { background, count: request.pidls.len(), files: request.file_actions, archive, folder: request.folder.is_some(), addressed }
+        Self { background, count: request.pidls.len(), files: request.file_actions, folder: request.folder.is_some(), addressed }
     }
 }
 
@@ -64,7 +57,6 @@ enum Action {
     CopyPath,
     Compress,
     Shortcut,
-    Extract,
     Terminal,
 }
 
@@ -74,7 +66,6 @@ impl Action {
             Self::CopyPath => "copypath",
             Self::Compress => "compress",
             Self::Shortcut => "shortcut",
-            Self::Extract => "extract",
             Self::Terminal => "terminal",
         }
     }
@@ -83,7 +74,6 @@ impl Action {
             Self::CopyPath => "复制路径",
             Self::Compress => "压缩为 ZIP 文件",
             Self::Shortcut => "创建快捷方式",
-            Self::Extract => "解压到当前文件夹",
             Self::Terminal => "在此处打开终端",
         }
     }
@@ -146,7 +136,6 @@ fn rows_for<'a>(options: &aura_windows::shell::menu::ContextMenuOptions, target:
     // The Shell builds shortcuts through "Send to" only; a direct row keeps the command
     // where Windows Explorer puts it.
     push(&mut rows, &mut identities, addressable, Action::Shortcut);
-    push(&mut rows, &mut identities, target.archive, Action::Extract);
     push(&mut rows, &mut identities, target.background && target.folder, Action::Terminal);
     (rows, identities)
 }
@@ -160,7 +149,6 @@ pub(super) fn outcome(id: &str) -> Option<MenuOutcome> {
     Some(match id {
         "copypath" => MenuOutcome::CopyPath,
         "compress" => MenuOutcome::Compress,
-        "extract" => MenuOutcome::Extract,
         _ => return None,
     })
 }
@@ -171,8 +159,8 @@ mod tests {
 
     /// The target is the whole input of the plan, so the tests state it directly instead
     /// of going through a Shell: nothing here needs an item to resolve.
-    fn target(background: bool, count: usize, files: bool, addressed: bool, archive: bool, folder: bool) -> Target {
-        Target { background, count, files, archive, folder, addressed }
+    fn target(background: bool, count: usize, files: bool, addressed: bool, folder: bool) -> Target {
+        Target { background, count, files, folder, addressed }
     }
 
     fn commands<'a>(rows: &'a [MenuRow<'a>]) -> Vec<&'a str> {
@@ -202,14 +190,14 @@ mod tests {
     fn the_group_offers_only_what_the_shell_does_not() {
         // Cut, copy, rename, delete, "Send to" and properties are the Shell's own rows on
         // this page; repeating them here would be two answers to one click.
-        let (labels, identities) = plan(&target(false, 1, true, true, false, true), &[]);
+        let (labels, identities) = plan(&target(false, 1, true, true, true), &[]);
         assert_eq!(identities, ["copypath", "openwith", "compress", "shortcut"]);
         assert_eq!(labels, ["复制路径", "打开方式", "压缩为 ZIP 文件", "创建快捷方式"]);
     }
 
     #[test]
     fn a_selection_without_file_commands_gets_no_file_rows() {
-        let (labels, identities) = plan(&target(false, 3, false, false, false, true), &[]);
+        let (labels, identities) = plan(&target(false, 3, false, false, true), &[]);
         assert!(labels.is_empty() && identities.is_empty());
     }
 
@@ -218,7 +206,7 @@ mod tests {
         let handlers = vec!["Блокнот".to_string(), "Visual Studio Code".to_string()];
         let (rows, identities) = rows_for(
             &aura_windows::shell::menu::ContextMenuOptions::default(),
-            &target(false, 1, true, true, false, true),
+            &target(false, 1, true, true, true),
             &handlers,
         );
         assert_eq!(identities, ["copypath", "openwith:0", "openwith:1", "openwith", "compress", "shortcut"]);
@@ -231,7 +219,7 @@ mod tests {
     fn an_empty_enumeration_leaves_the_picker_alone() {
         let (rows, identities) = rows_for(
             &aura_windows::shell::menu::ContextMenuOptions::default(),
-            &target(false, 1, true, true, false, true),
+            &target(false, 1, true, true, true),
             &[],
         );
         let MenuRow::Submenu { items, .. } = &rows[1] else { panic!("expected the Open with submenu") };
@@ -243,54 +231,46 @@ mod tests {
     #[test]
     fn an_item_that_names_no_path_loses_open_with_and_the_shortcut() {
         // Both rows name the item, so both go when the selection resolves to no path.
-        let (labels, identities) = plan(&target(false, 1, true, false, false, true), &[]);
+        let (labels, identities) = plan(&target(false, 1, true, false, true), &[]);
         assert_eq!(identities, ["copypath", "compress"]);
         assert_eq!(labels, ["复制路径", "压缩为 ZIP 文件"]);
     }
 
     #[test]
     fn a_folder_background_gets_a_terminal_and_no_file_commands() {
-        let (labels, identities) = plan(&target(true, 0, true, false, false, true), &[]);
+        let (labels, identities) = plan(&target(true, 0, true, false, true), &[]);
         assert_eq!(identities, ["terminal"]);
         assert_eq!(labels, ["在此处打开终端"], "the terminal runs inside the worker, it never returns to the host");
     }
 
     #[test]
     fn a_background_without_a_folder_gets_nothing() {
-        let (labels, identities) = plan(&target(true, 0, true, false, false, false), &[]);
+        let (labels, identities) = plan(&target(true, 0, true, false, false), &[]);
         assert!(labels.is_empty() && identities.is_empty());
     }
 
     #[test]
     fn a_shortcut_needs_exactly_one_item() {
-        let (_, one) = plan(&target(false, 1, true, true, false, true), &[]);
+        let (_, one) = plan(&target(false, 1, true, true, true), &[]);
         assert!(one.iter().any(|id| id == "shortcut"));
-        let (_, several) = plan(&target(false, 3, true, true, false, true), &[]);
+        let (_, several) = plan(&target(false, 3, true, true, true), &[]);
         assert!(!several.iter().any(|id| id == "shortcut"), "a shortcut names one item");
         // Open with is a single-item row for the same reason.
         assert!(!several.iter().any(|id| id == "openwith"));
     }
 
     #[test]
-    fn extraction_is_offered_only_for_a_selected_archive() {
-        let (_, archive) = plan(&target(false, 1, true, true, true, true), &[]);
-        assert_eq!(archive.last().map(String::as_str), Some("extract"));
-        let (_, plain) = plan(&target(false, 1, true, true, false, true), &[]);
-        assert!(!plain.iter().any(|id| id == "extract"));
-    }
-
-    #[test]
     fn hidden_commands_stay_hidden_but_keep_their_shortcuts() {
         let mut options = aura_windows::shell::menu::ContextMenuOptions::default();
         options.hidden_verbs.push("copypath".into());
-        let (_, identities) = rows_for(&options, &target(false, 1, true, true, false, true), &[]);
+        let (_, identities) = rows_for(&options, &target(false, 1, true, true, true), &[]);
         assert!(!identities.iter().any(|id| id == "copypath"), "the row goes, the shortcut does not");
         assert!(identities.iter().any(|id| id == "openwith"), "one hidden row does not hide the rest");
     }
 
     #[test]
     fn outcomes_stay_inside_the_host_contract() {
-        for id in ["copypath", "compress", "extract"] {
+        for id in ["copypath", "compress"] {
             assert!(outcome(id).is_some(), "{id}");
         }
         // Rows the worker executes on its own: a shortcut, a terminal, and either half of

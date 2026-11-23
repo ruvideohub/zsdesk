@@ -8,7 +8,6 @@ mod system_shell;
 #[cfg(windows)]
 mod context_menu_process;
 #[cfg(windows)]
-mod archive;
 #[cfg(windows)]
 mod context_preferences;
 #[cfg(windows)]

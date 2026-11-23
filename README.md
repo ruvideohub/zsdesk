@@ -13,7 +13,7 @@ English UI is available. Non-Chinese Windows systems use English by default. Cho
 
 | 包 | 适合谁 |
 |---|---|
-| **AuraUI 完整套件** | 文件管理、搜索、Fences 桌面格子、AuraDock、AuraService 和 AuraArc；一般用户使用此包 |
+| **AuraUI 完整套件** | 文件管理、搜索、Fences 桌面格子、AuraDock 和 AuraService；一般用户使用此包 |
 | **Standalone Fences** | 只需要桌面格子和文件夹映射；不依赖 AuraExplorer、AuraDock 或 AuraService |
 
 AuraUI 完整套件提供安装程序和便携 ZIP；Standalone Fences 有独立 ZIP 和可选安装器。

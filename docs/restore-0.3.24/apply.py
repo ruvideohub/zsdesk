@@ -177,6 +177,147 @@ for p in PROC:
     if dead in s:
         write(p, s.replace(dead, "", 1))
 
+# ---- 11. the archiver is gone -------------------------------------------------------
+# `AuraArc.exe` packed and unpacked through a command line. Packing never needed it —
+# `aura-core::archive` writes the ZIP itself — so only unpacking depended on it, and the
+# row that offered it went with the program.
+(ROOT / "crates/aura-explorer/src/archive.rs").unlink(missing_ok=True)
+(ROOT / "crates/aura-fences/src/archive.rs").unlink(missing_ok=True)
+shutil.rmtree(ROOT / "crates/aura-arc", ignore_errors=True)
+sub("Cargo.toml", '    "crates/aura-service",\n    "crates/aura-arc",\n', '    "crates/aura-service",\n')
+for entry in ["crates/aura-explorer/src/lib.rs", "crates/aura-fences/src/main.rs"]:
+    s = read(entry)
+    s = s.replace("pub(crate) mod archive;\n", "").replace("mod archive;\n", "")
+    write(entry, s)
+# The ZIP writer lives in `aura_core::archive`; these two arms only ever ran for a row the
+# worker now handles itself, so they point at nothing.
+fences_desktop = FENC + "desktop/mod.rs"
+s = read(fences_desktop)
+if "crate::archive::" in s:
+    write(fences_desktop, s.replace(
+        """        MenuOutcome::Compress=>match crate::archive::pack(&paths,match &request.target{
+            menu_worker::Target::Background{folder:Some(folder)}=>Some(folder.as_path()),
+            _=>paths.first().and_then(|path|path.parent()),
+        }){
+            Ok(_)=>Ok(()),
+            Err(message)=>Err(windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32),message)),
+        },
+""", ""))
+# The `Extract` arm itself: the row that reached it was ours, and it is gone.
+s = read(fences_desktop)
+if "MenuOutcome::Extract=>{" in s:
+    # The arm and the catch-all share a line at e159c18: `        },_=>Ok(()),`
+    start = s.index("        MenuOutcome::Extract=>{")
+    end = s.index("        },_=>Ok(()),", start) + len("        },")
+    # The catch-all keeps its own indentation; the line it shared with the arm did not.
+    write(fences_desktop, s[:start] + "        " + s[end:].lstrip())
+
+explorer_menu = EXPL + "window/context_menu.rs"
+s = read(explorer_menu)
+if "MenuOutcome::Compress" in s:
+    start = s.index("        Some(Ok(MenuOutcome::Compress)) if valid=>{")
+    end = s.index("        Some(Ok(MenuOutcome::NewFolder)) if valid=>{")
+    write(explorer_menu, s[:start] + s[end:])
+
+# The worker that hosts a third-party extension must not panic. `chain` always has an
+# element, but an unwrap inside that process is the one place it must not be — CI builds
+# on Windows, so this was the only way to find it here.
+packaged = "crates/aura-windows/src/shell/packaged_state_worker.rs"
+s = read(packaged)
+if "chain.last().unwrap()" in s:
+    s = s.replace("""        let enumeration = unsafe { chain.last().unwrap().value.EnumSubCommands() }?;""",
+"""        // `chain` starts with the root and only grows, so there is always a last one.
+        // Written as a let-else anyway: an unwrap here is a panic inside the worker that
+        // hosts a third-party extension, which is the one place it must not happen.
+        let Some(current) = chain.last() else { return Err(fail(0x80004003, "no command in chain")) };
+        let enumeration = unsafe { current.value.EnumSubCommands() }?;""")
+    s = s.replace("""        let result = unsafe { chain.last().unwrap().value.GetState(items.as_ref(), true) };""",
+"""        let Some(current) = chain.last() else { return Err(fail(0x80004003, "no command in chain")) };
+        let result = unsafe { current.value.GetState(items.as_ref(), true) };""")
+    write(packaged, s)
+
+# The settings window's «Программы» tab held exactly one row: the archiver.
+launch = "crates/aura-service/src/launch.rs"
+s = read(launch)
+if 'id: "arc"' in s:
+    start = s.index("pub const PROGRAMS: &[Program] = &[Program {")
+    end = s.index("}];", start) + 3
+    write(launch, s[:start] + """/// Programs the suite ships that are opened by hand rather than kept running.
+///
+/// Empty since the archiver was removed: packing is a library call inside the menu now, so
+/// there is no program of our own left to list. The list stays because the settings window
+/// reads it — a second program belongs here, not in a second branch of the drawing code.
+pub const PROGRAMS: &[Program] = &[];""" + s[end:])
+
+window = "crates/aura-service/src/window.rs"
+s = read(window)
+if 'const TABS: [&str; 3]' in s:
+    s = s.replace(
+        '''const TABS: [&str; 3] = ["Компоненты", "Программы", "Запуск"];
+const TAB_COMPONENTS: usize = 0;
+const TAB_PROGRAMS: usize = 1;
+const TAB_START: usize = 2;''',
+        '''const TABS: [&str; 2] = ["Компоненты", "Запуск"];
+const TAB_COMPONENTS: usize = 0;
+const TAB_START: usize = 1;
+/// Where the program list would sit, kept for the day it has an entry again.
+const _TAB_PROGRAMS: usize = 1;''')
+    # The three-section comment described the tab that went.
+    s = s.replace(
+        """/// The three sections, in the order the dock's settings put theirs.
+const TABS""",
+        """/// The sections, in the order the dock's settings put theirs.
+///
+/// «Программы» listed the archiver. With it gone the list is empty, and a section that can
+/// only ever be empty is not a section: it comes back with the first program that belongs
+/// there, and nothing else in this file has to change.
+const TABS""")
+    s = s.replace(
+        """        TAB_COMPONENTS => launch::COMPONENTS.len(),
+        TAB_PROGRAMS => launch::PROGRAMS.len(),
+        _ => 3,""",
+        """        TAB_COMPONENTS => launch::COMPONENTS.len(),
+        TAB_START => 3,
+        _ => launch::PROGRAMS.len(),""")
+    write(window, s)
+
+# The layout and drawing branches still named a tab index that no longer exists.
+s = read(window)
+s = s.replace(
+    """            (TAB_PROGRAMS, _) => (""",
+    """            // No tab reaches this branch while PROGRAMS is empty; it stays so a program
+            // added later gets its two buttons without touching the layout.
+            (_, _) if !launch::PROGRAMS.is_empty() && tab == _TAB_PROGRAMS => (""")
+s = s.replace(
+    """        match self.tab {
+            TAB_COMPONENTS => self.draw_components(cv, look, &l),
+            TAB_PROGRAMS => self.draw_programs(cv, look, &l),
+            _ => self.draw_start(cv, look, &l),
+        }""",
+    """        match self.tab {
+            TAB_COMPONENTS => self.draw_components(cv, look, &l),
+            // The program page exists only while there is a program to list; with the list
+            // empty its tab is not drawn either.
+            _ => self.draw_start(cv, look, &l),
+        }""")
+if "fn draw_programs(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {" in s \
+        and "#[allow(dead_code)]\n    fn draw_programs" not in s:
+    s = s.replace(
+        """    fn draw_programs(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {""",
+        """    /// Draws the program list. Reachable again as soon as `launch::PROGRAMS` has an entry;
+    /// until then the tab is not drawn, so nothing calls this and the compiler would warn.
+    #[allow(dead_code)]
+    fn draw_programs(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {""")
+write(window, s)
+
+# The two `matches!` lists still named a variant that no longer exists.
+s = read(fences_desktop)
+s = s.replace("|MenuOutcome::CopyPath|MenuOutcome::Compress|MenuOutcome::Extract));",
+              "|MenuOutcome::CopyPath|MenuOutcome::Compress));")
+s = s.replace("|MenuOutcome::CopyPath|MenuOutcome::Compress|MenuOutcome::Extract))=outcome{",
+              "|MenuOutcome::CopyPath|MenuOutcome::Compress))=outcome{")
+write(fences_desktop, s)
+
 # ---- 9. the quick page itself is gone --------------------------------------------
 (ROOT / "crates/aura-windows/src/shell/quick_menu.rs").unlink(missing_ok=True)
 

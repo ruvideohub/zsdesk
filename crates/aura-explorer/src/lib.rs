@@ -2,7 +2,6 @@
 //! The desktop-grid host is the independent `Fences.exe` application in `aura-fences`.
 
 mod app;
-pub(crate) mod archive;
 mod language;
 mod commands;
 mod edition;

@@ -11,7 +11,6 @@ members = [
     "crates/aura-dock",
     "crates/laminar-sys",
     "crates/aura-service",
-    "crates/aura-arc",
 ]
 
 [workspace.package]

@@ -2,8 +2,8 @@
 """Check that every program of the suite carries an icon and a version block.
 
 A missing `.rc` is invisible until somebody sees a blank generic program in Explorer,
-in the Start menu or in the uninstall list — which is exactly how `AuraArc.exe` and
-`auraservice.exe` shipped without one. And a version block that nobody refreshes says
+in the Start menu or in the uninstall list — which is exactly how `auraservice.exe`
+shipped without one. And a version block that nobody refreshes says
 0.3.18 for two releases, so the file properties lie about the build.
 
 Run from the repository root:

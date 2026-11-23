@@ -835,12 +835,12 @@ fn finish_menu_work(){
             let owner=HWND(request.owner as*mut _);
             // Shell commands already ran against their captured PIDLs. Only
             // application actions require the current selection to still match.
-            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress|MenuOutcome::Extract));
+            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress));
             // A superseded construction can fail after another menu was
             // requested. Its error must not interrupt the newer interaction.
             if outcome.is_err()&&!menu_request_current(request.generation){continue;}
             if actionable&&(!menu_request_current(request.generation)||!menu_target_current(&request)){continue;}
-            if let Ok(action @ (MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress|MenuOutcome::Extract))=outcome{
+            if let Ok(action @ (MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress))=outcome{
                 if let Err(error)=dispatch_menu_file_action(&request,action){file_action_error(owner,&error);}continue;
             }
             if menu_request_current(request.generation)&&menu_target_current(&request){
@@ -880,20 +880,7 @@ fn dispatch_menu_file_action(request:&menu_worker::Request,action:MenuOutcome)->
             if file_transfer::has_filesystem_clipboard(){if let Some(destination)=destination{return file_transfer::paste(owner,&destination);}}
             let mut delegated=request.clone();delegated.mode=crate::context_menu_process::Mode::Paste;delegated.layout=None;queue_menu(delegated);Ok(())
         }
-        MenuOutcome::Compress=>match crate::archive::pack(&paths,match &request.target{
-            menu_worker::Target::Background{folder:Some(folder)}=>Some(folder.as_path()),
-            _=>paths.first().and_then(|path|path.parent()),
-        }){
-            Ok(_)=>Ok(()),
-            Err(message)=>Err(windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32),message)),
-        },
-        MenuOutcome::Extract=>{
-            let archive=crate::archive::archive_among(&paths).ok_or_else(||windows::core::Error::new(windows::core::HRESULT(0x80070057u32 as i32),aura_core::i18n::text("无法读取所选项目的路径")))?;
-            match crate::archive::unpack(&archive){
-                Ok(_)=>Ok(()),
-                Err(message)=>Err(windows::core::Error::new(windows::core::HRESULT(0x80004005u32 as i32),message)),
-            }
-        },_=>Ok(()),
+        _=>Ok(()),
     }
 }
 

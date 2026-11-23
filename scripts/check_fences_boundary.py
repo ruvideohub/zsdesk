@@ -31,7 +31,7 @@ if manifest["package"]["name"] != "aura-fences":
 if not any(binary.get("name") == "Fences" for binary in manifest.get("bin", [])):
     fail("standalone binary target Fences is missing")
 
-app_crates = {"aura-explorer", "aura-dock", "aura-service", "aura-arc"}
+app_crates = {"aura-explorer", "aura-dock", "aura-service"}
 allowed_internal = {"aura-core", "aura-fences-model", "aura-ui", "aura-windows"}
 direct = set()
 internal_paths = set()

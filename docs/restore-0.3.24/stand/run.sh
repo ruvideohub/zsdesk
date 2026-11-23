@@ -17,12 +17,10 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 # The module's own imports, pointed at the bench's stand-ins.
-s = s.replace("use super::{Mode, Request};", "use crate::{archive_among, request::{Mode, Request}};")
+s = s.replace("use super::{Mode, Request};", "use crate::request::{Mode, Request};")
 s = s.replace("use aura_windows::{", "use crate::aura_windows::{")
 s = s.replace("aura_core::i18n::text", "crate::aura_core::i18n::text")
 s = s.replace("aura_windows::shell::menu::", "crate::aura_windows::shell::menu::")
-# The archive helper lives at this crate's root in the app; here it is a stand-in.
-s = s.replace("crate::archive::archive_among", "archive_among")
 # Tests read identities out of a plan they own, so the slice's lifetime is named.
 s = s.replace("fn commands(rows: &[MenuRow<'_>]) -> Vec<&str> {", "fn commands<'a>(rows: &'a [MenuRow<'a>]) -> Vec<&'a str> {")
 open(p, "w").write(s)

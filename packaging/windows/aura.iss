@@ -22,8 +22,8 @@
 #define ProductDirectory "AuraUI"
 #define ProductAppId "{{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}"
 
-#if !FileExists(SourceDir + "\AuraExplorer.exe") || !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\auraservice.exe") || !FileExists(SourceDir + "\AuraArc.exe") || !FileExists(SourceDir + "\manifest.json")
-#error The verified AuraUI payload is incomplete: AuraExplorer.exe, AuraDock.exe, Fences.exe, widgets.exe, auraservice.exe, AuraArc.exe and manifest.json are required
+#if !FileExists(SourceDir + "\AuraExplorer.exe") || !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\auraservice.exe") || !FileExists(SourceDir + "\manifest.json")
+#error The verified AuraUI payload is incomplete: AuraExplorer.exe, AuraDock.exe, Fences.exe, widgets.exeand auraservice.exe and manifest.json are required
 #endif
 
 [Setup]
@@ -56,7 +56,7 @@ VersionInfoDescription={#ProductName} {#MyAppVersion} Setup
 ; Программы закрываются перед установкой штатным механизмом Windows (Restart Manager),
 ; а не «поверх запущенных»: иначе exe занят и файл не заменится.
 CloseApplications=yes
-CloseApplicationsFilter=AuraExplorer.exe,AuraDock.exe,Fences.exe,widgets.exe,auraservice.exe,AuraArc.exe
+CloseApplicationsFilter=AuraExplorer.exe,AuraDock.exe,Fences.exe,widgets.exe,auraservice.exe
 RestartApplications=no
 
 [Languages]
@@ -75,7 +75,6 @@ Source: "{#SourceDir}\AuraDock.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Fences.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\widgets.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\auraservice.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\AuraArc.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Перехват окон проводника: имя с хешем, грузится по имени из папки программы.
 Source: "{#SourceDir}\AuraExplorerWindowHook-*.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Опечатка сборки и установка без установщика: ими проверяются и, при желании, копируются
@@ -93,7 +92,6 @@ Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversi
 Name: "{group}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"
 Name: "{group}\Fences — desktop grids"; Filename: "{app}\Fences.exe"
 Name: "{group}\AuraUI — настройки и запуск"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Comment: "Что запускать: компоненты, автозапуск, журнал"
-Name: "{group}\AuraArc — архиватор"; Filename: "{app}\AuraArc.exe"
 Name: "{group}\Удалить AuraUI"; Filename: "{uninstallexe}"; Comment: "Убирает программу, автозапуск, ярлыки и следы в реестре"
 Name: "{autodesktop}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"; Tasks: desktopicon
 
@@ -130,7 +128,7 @@ Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Description: "От�
 Filename: "{app}\AuraExplorer.exe"; Parameters: "--shutdown-for-update ""{app}\AuraExplorer.exe"""; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIStopCooperative"
 Filename: "{app}\AuraExplorer.exe"; Parameters: "--uninstall-integration"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIRemoveIntegration"
 ; Служба останавливается последней: пока она жива, она поднимет то, что убрали.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM Fences.exe /IM widgets.exe /IM AuraArc.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM Fences.exe /IM widgets.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AuraExplorer.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStopFiles"
 
 [Code]

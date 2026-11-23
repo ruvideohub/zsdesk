@@ -730,7 +730,11 @@ fn evaluate(request: &Request, response: &mut Response, deadline: Instant) -> Re
     for step in &request.children {
         response.phase = "subcommand".into();
         checkpoint(deadline)?;
-        let enumeration = unsafe { chain.last().unwrap().value.EnumSubCommands() }?;
+        // `chain` starts with the root and only grows, so there is always a last one.
+        // Written as a let-else anyway: an unwrap here is a panic inside the worker that
+        // hosts a third-party extension, which is the one place it must not happen.
+        let Some(current) = chain.last() else { return Err(fail(0x80004003, "no command in chain")) };
+        let enumeration = unsafe { current.value.EnumSubCommands() }?;
         let mut selected = None;
         for index in 0..=step.ordinal {
             let mut items = [None];
@@ -759,7 +763,8 @@ fn evaluate(request: &Request, response: &mut Response, deadline: Instant) -> Re
     for attempt in 1..=3 {
         checkpoint(deadline)?;
         response.attempts = attempt;
-        let result = unsafe { chain.last().unwrap().value.GetState(items.as_ref(), true) };
+        let Some(current) = chain.last() else { return Err(fail(0x80004003, "no command in chain")) };
+        let result = unsafe { current.value.GetState(items.as_ref(), true) };
         match result {
             Err(error) if error.code() == PENDING && attempt < 3 => {
                 pump();

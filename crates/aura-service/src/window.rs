@@ -49,11 +49,16 @@ const PAGE: (f32, f32) = (720.0, 520.0);
 /// `WM_DPICHANGED`: the window moved to a display with another scale.
 const WM_DPICHANGED: u32 = 0x02E0;
 
-/// The three sections, in the order the dock's settings put theirs.
-const TABS: [&str; 3] = ["Компоненты", "Программы", "Запуск"];
+/// The sections, in the order the dock's settings put theirs.
+///
+/// «Программы» listed the archiver. With it gone the list is empty, and a section that can
+/// only ever be empty is not a section: it comes back with the first program that belongs
+/// there, and nothing else in this file has to change.
+const TABS: [&str; 2] = ["Компоненты", "Запуск"];
 const TAB_COMPONENTS: usize = 0;
-const TAB_PROGRAMS: usize = 1;
-const TAB_START: usize = 2;
+const TAB_START: usize = 1;
+/// Where the program list would sit, kept for the day it has an entry again.
+const _TAB_PROGRAMS: usize = 1;
 
 /// What the pointer is over, and therefore what a click does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -127,8 +132,8 @@ fn has_settings(index: usize) -> bool {
 fn row_count(tab: usize) -> usize {
     match tab {
         TAB_COMPONENTS => launch::COMPONENTS.len(),
-        TAB_PROGRAMS => launch::PROGRAMS.len(),
-        _ => 3,
+        TAB_START => 3,
+        _ => launch::PROGRAMS.len(),
     }
 }
 
@@ -157,7 +162,9 @@ fn layout(look: &Look, width: f32, height: f32, tab: usize) -> Layout {
                 Vec::new(),
                 Side::Toggle,
             ),
-            (TAB_PROGRAMS, _) => (
+            // No tab reaches this branch while PROGRAMS is empty; it stays so a program
+            // added later gets its two buttons without touching the layout.
+            (_, _) if !launch::PROGRAMS.is_empty() && tab == _TAB_PROGRAMS => (
                 None,
                 vec![
                     (page::button_rect(look, rect, 1, 2), Act::OpenProgram(index)),
@@ -430,7 +437,8 @@ impl App {
 
         match self.tab {
             TAB_COMPONENTS => self.draw_components(cv, look, &l),
-            TAB_PROGRAMS => self.draw_programs(cv, look, &l),
+            // The program page exists only while there is a program to list; with the list
+            // empty its tab is not drawn either.
             _ => self.draw_start(cv, look, &l),
         }
 
@@ -484,6 +492,9 @@ impl App {
         }
     }
 
+    /// Draws the program list. Reachable again as soon as `launch::PROGRAMS` has an entry;
+    /// until then the tab is not drawn, so nothing calls this and the compiler would warn.
+    #[allow(dead_code)]
     fn draw_programs(&self, cv: &aura_windows::gfx::Canvas, look: &Look, l: &Layout) {
         for (index, program) in launch::PROGRAMS.iter().enumerate() {
             let Some(row) = l.rows.get(index) else { break };

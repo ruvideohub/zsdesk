@@ -118,14 +118,12 @@ pub struct Program {
     pub settings: &'static [&'static str],
 }
 
-pub const PROGRAMS: &[Program] = &[Program {
-    id: "arc",
-    name: "Архиватор",
-    hint: "AuraArc: окно архиватора — .zip, дальше 7z и tar",
-    exe: "AuraArc.exe",
-    args: &[],
-    settings: &["--settings"],
-}];
+/// Programs the suite ships that are opened by hand rather than kept running.
+///
+/// Empty since the archiver was removed: packing is a library call inside the menu now, so
+/// there is no program of our own left to list. The list stays because the settings window
+/// reads it — a second program belongs here, not in a second branch of the drawing code.
+pub const PROGRAMS: &[Program] = &[];
 
 /// The settings file.
 #[derive(Clone, Debug, Serialize, Deserialize)]
