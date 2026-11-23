@@ -881,7 +881,6 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             state.allow(false)?;state.allow(true)?;
             return Ok(MenuOutcome::NativeHandled);
         }
-        let mut properties=request.mode==Mode::Properties;
         // A properties request runs one verb instead of showing a menu.
         if request.mode==Mode::Properties{
             state.allow(true)?;

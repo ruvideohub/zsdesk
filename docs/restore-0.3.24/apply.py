@@ -140,8 +140,9 @@ sub(reg, """    if msg==WM_INITMENUPOPUP{
     }
 """, "")
 
+# The import at the top of this file stays as e159c18 has it: `window_message_regression`
+# builds a menu spec of its own and reads MenuItemSpec and UiCommand through `super::*`.
 fmod = FENC + "desktop/mod.rs"
-sub(fmod, 'use aura_ui::menus::{MenuItemSpec, MenuSpec, UiCommand};', 'use aura_ui::menus::MenuSpec;')
 s = read(fmod)
 rule = '/// Inserts application items (ZSUI spec) at the top of a Shell menu.'
 if rule in s:
@@ -156,6 +157,25 @@ sub(worker, "    let worker=quick_first.then_some(timing.extension_process).flat
     // is open; `foreground_is_menu_worker` still checks its class and owner, not just the
     // process, so this only widens which process may hold it.
     let worker=timing.extension_process;""")
+
+# ---- 10. the fixes CI found on Windows ---------------------------------------------
+# Only a Windows build could catch these; each is recorded with what it cost.
+worker = FENC + "desktop/menu_worker.rs"
+sub(worker, """        *ids=super::insert_top(menu.hmenu(),&request.items);
+""", """        // This probe searches the native menu for a Shell verb by number, so it only
+        // works on the Shell's own rows: our rows are not inserted here, and the probe
+        // reports none. Production builds never take this path.
+""")
+
+# `window_message_regression` reads these through `super::*`, and it builds a menu spec
+# of its own, so both names have to be in scope in the parent module.
+# Dead since e159c18: `properties` is computed and never read — the branch below tests the
+# mode again. It only showed up as a warning until the Windows build listed it.
+dead = "        let mut properties=request.mode==Mode::Properties;\n"
+for p in PROC:
+    s = read(p)
+    if dead in s:
+        write(p, s.replace(dead, "", 1))
 
 # ---- 9. the quick page itself is gone --------------------------------------------
 (ROOT / "crates/aura-windows/src/shell/quick_menu.rs").unlink(missing_ok=True)

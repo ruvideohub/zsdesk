@@ -175,7 +175,7 @@ mod tests {
         Target { background, count, files, archive, folder, addressed }
     }
 
-    fn commands(rows: &[MenuRow<'_>]) -> Vec<&str> {
+    fn commands<'a>(rows: &'a [MenuRow<'a>]) -> Vec<&'a str> {
         rows.iter()
             .filter_map(|row| match row {
                 MenuRow::Command { identity, .. } => Some(identity.as_ref()),

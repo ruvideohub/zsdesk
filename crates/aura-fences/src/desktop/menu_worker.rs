@@ -227,7 +227,9 @@ fn legacy_probe(shared:&Shared,state:&WindowState,owner:HWND,request:&Request,ti
             let count=unsafe{GetMenuItemCount(Some(menu.hmenu()))};let copy=(0..count).map(|index|unsafe{GetMenuItemID(menu.hmenu(),index)}).find(|id|menu.verb(*id).is_some_and(|verb|verb.eq_ignore_ascii_case("copy"))).ok_or_else(error_abort)?;
             for index in (0..count).rev(){if unsafe{GetMenuItemID(menu.hmenu(),index)}!=copy{unsafe{DeleteMenu(menu.hmenu(),index as u32,MF_BYPOSITION)?;}}}
         }
-        *ids=super::insert_top(menu.hmenu(),&request.items);
+        // This probe searches the native menu for a Shell verb by number, so it only
+        // works on the Shell's own rows: our rows are not inserted here, and the probe
+        // reports none. Production builds never take this path.
     }
     validate(shared,request,false)?;
     let source=HWND(request.owner as*mut _);

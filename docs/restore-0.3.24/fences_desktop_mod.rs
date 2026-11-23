@@ -138,7 +138,7 @@ use windows::{
         },
     },
 };
-use aura_ui::menus::MenuSpec;
+use aura_ui::menus::{MenuItemSpec, MenuSpec, UiCommand};
 #[allow(unused_imports)]
 use aura_windows::{desktop::{self, DesktopHit}, gfx::Gfx, ole::DropHandler, shell::{menu::{forward_menu_message, HistoryAction, MenuInterceptions, MenuOutcome, ShellMenu, APP_FIRST}, notify::read_change}};
 
