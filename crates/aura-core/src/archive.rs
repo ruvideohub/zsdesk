@@ -75,9 +75,16 @@ pub fn unique_destination(folder: &Path, name: &str) -> PathBuf {
 
 /// Collects `sources` (files or folders, folders recursively) into entries.
 ///
-/// Symbolic links and junctions are archived as links, never followed, so a
-/// loop cannot make the walk unbounded. Depth and total count are bounded by
-/// the caller's budget through [`Limits`].
+/// Redirects of every kind — symbolic links, junctions, volume mount points —
+/// are skipped rather than followed or stored. Following one would let a folder
+/// beside a junction pull the target's whole tree into the archive, and storing
+/// one would put an entry in the ZIP that Windows extracts as a plain empty file
+/// anyway. Skipping is the only behaviour that is both bounded and honest about
+/// what the archive contains.
+///
+/// Depth and total count are bounded by the caller's budget through [`Limits`].
+/// Running into either bound is an error, never a short archive: a right click
+/// that silently left files out would hand back a ZIP that looks complete.
 pub fn collect(sources: &[PathBuf], limits: Limits) -> io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for source in sources {
@@ -100,11 +107,26 @@ impl Default for Limits {
 }
 
 fn walk(source: &Path, name: &str, depth: usize, limits: Limits, entries: &mut Vec<Entry>) -> io::Result<()> {
-    if entries.len() >= limits.max_entries { return Ok(()); }
     let metadata = fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        return Ok(());
+    }
+    if entries.len() >= limits.max_entries {
+        return Err(too_large(format!(
+            "{}: {}",
+            crate::tr_format!("压缩的项目超过 {limit} 个，未创建压缩包", limit = limits.max_entries),
+            source.display(),
+        )));
+    }
     if metadata.is_dir() {
         entries.push(Entry::directory(name, source));
-        if depth >= limits.max_depth { return Ok(()); }
+        if depth >= limits.max_depth {
+            return Err(too_large(format!(
+                "{}: {}",
+                crate::tr_format!("文件夹层级超过 {limit} 层，未创建压缩包", limit = limits.max_depth),
+                source.display(),
+            )));
+        }
         let mut children: Vec<PathBuf> = fs::read_dir(source)?.filter_map(|item| item.ok().map(|item| item.path())).collect();
         children.sort_by_key(|path| path.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default());
         for child in children {
@@ -126,7 +148,21 @@ fn sanitize(name: &str) -> String {
 }
 
 /// Writes a stored-only archive. Returns the number of entries written.
+///
+/// A file that is created here and not finished is removed again: a half-written
+/// ZIP beside the originals is worse than no ZIP, because it looks like the real
+/// thing until someone opens it.
 pub fn write_zip(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
+    match write_zip_inner(destination, entries) {
+        Ok(written) => Ok(written),
+        Err(error) => {
+            let _ = fs::remove_file(destination);
+            Err(error)
+        }
+    }
+}
+
+fn write_zip_inner(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
     let mut file = File::create(destination)?;
     let stamp = dos_timestamp(SystemTime::now());
     let mut central = Vec::with_capacity(entries.len() * 64);
@@ -204,6 +240,10 @@ pub fn write_zip(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
 }
 
 fn invalid(message: &str) -> io::Error { io::Error::new(io::ErrorKind::InvalidInput, message.to_string()) }
+
+/// The selection is bigger or deeper than the walk budget allows. Its own kind
+/// so the caller can tell "too much to pack" apart from "the disk refused".
+fn too_large(message: String) -> io::Error { io::Error::new(io::ErrorKind::FileTooLarge, message) }
 
 fn copy_into(source: &Path, output: &mut File) -> io::Result<u64> {
     let mut input = File::open(source)?;
@@ -351,8 +391,56 @@ mod tests {
         let deep = root.join("one").join("two").join("three");
         fs::create_dir_all(&deep).unwrap();
         fs::write(deep.join("f.txt"), b"x").unwrap();
-        let collected = collect(&[root.join("one")], Limits { max_entries: 100, max_depth: 1 }).unwrap();
-        assert_eq!(collected.iter().filter(|entry| entry.name.ends_with("f.txt")).count(), 0);
+        // A depth limit is a refusal now, not a silent short archive: `one/two/f.txt`
+        // is past the bound, so nothing is written at all.
+        let refusal = collect(&[root.join("one")], Limits { max_entries: 100, max_depth: 1 }).unwrap_err();
+        assert_eq!(refusal.kind(), io::ErrorKind::FileTooLarge);
+        let collected = collect(&[root.join("one")], Limits { max_entries: 100, max_depth: 4 }).unwrap();
+        assert_eq!(collected.iter().filter(|entry| entry.name.ends_with("f.txt")).count(), 1);
+        // The count bound refuses too, at the exact entry that would exceed it.
+        let too_many = collect(&[root.join("one")], Limits { max_entries: 2, max_depth: 4 }).unwrap_err();
+        assert_eq!(too_many.kind(), io::ErrorKind::FileTooLarge);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_neither_followed_nor_stored() {
+        use std::os::windows::fs::symlink_dir;
+        let root = scratch("junction");
+        let outside = root.join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.txt"), b"private").unwrap();
+        let selection = root.join("selection");
+        fs::create_dir_all(&selection).unwrap();
+        fs::write(selection.join("kept.txt"), b"kept").unwrap();
+        // Creating a junction needs no privilege, unlike a symbolic link.
+        let link = selection.join("link");
+        if symlink_dir(&outside, &link).is_err() {
+            // A symbolic link is the fallback; the rule is the same for both.
+            if std::os::windows::fs::symlink_file(&outside.join("secret.txt"), &link).is_err() {
+                fs::remove_dir_all(&root).unwrap();
+                return;
+            }
+        }
+        let entries = collect(&[selection], Limits::default()).unwrap();
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(names.iter().any(|name| name.ends_with("kept.txt")), "{names:?}");
+        assert!(!names.iter().any(|name| name.contains("link")), "{names:?}");
+        assert!(!names.iter().any(|name| name.contains("secret")), "{names:?}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_failed_write_leaves_no_archive_behind() {
+        let root = scratch("cleanup");
+        let missing = root.join("gone.txt");
+        // The entry points at a file that does not exist, so the copy pass fails after
+        // the header of the archive has already been written.
+        let destination = root.join("broken.zip");
+        let entries = vec![Entry::file("gone.txt", missing)];
+        assert!(write_zip(&destination, &entries).is_err());
+        assert!(!destination.exists(), "a half-written archive must not survive the error");
         fs::remove_dir_all(&root).unwrap();
     }
 }

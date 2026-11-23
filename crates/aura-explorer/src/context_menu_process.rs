@@ -849,7 +849,14 @@ fn application_choice(state:&mut Worker,window:HWND,id:&str,action:Option<&MenuO
             let folder=request.folder.clone()
                 .or_else(||selected.first().and_then(|path|path.parent().map(Path::to_path_buf)))
                 .context("压缩目标目录缺失")?;
-            let created=actions::compress(selected,&folder)?;
+            // A failed archive has to say why. Compressing is the one action here whose
+            // failure is silent otherwise: the menu closes, the file is not there, and the
+            // step that stopped (too many items, a file that changed) is invisible.
+            let created=actions::compress(selected,&folder).map_err(|error|{
+                state.status.error_phase=Some("compress".into());
+                state.status.error=Some(format!("{error:#}"));
+                error
+            })?;
             state.status.created.push(aura_windows::shell::new_menu::CreatedItem{path:created,rename:false});
             Ok(MenuOutcome::ShellInvoked)
         }
