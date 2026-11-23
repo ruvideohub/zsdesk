@@ -719,6 +719,7 @@ struct Dock {
     appbar_edge: Option<bool>,
     tray_original: Option<u32>,
     taskbar_hidden: bool,
+    taskbar_watchdog: Option<std::process::Child>,
     // measurement
     measure_step: u32,
     m_cpu0: f64,
@@ -5181,6 +5182,43 @@ impl Dock {
         (self.geo.shelf_h + 2.0 * self.geo.margin).ceil() as i32
     }
 
+    /// Give control back before stopping the guard. A crash before the guard is
+    /// stopped still leaves the independent guard able to restore the taskbar.
+    fn release_taskbar(&mut self) {
+        taskbar::restore(self.tray_original.take());
+        self.taskbar_hidden = false;
+        if let Some(mut guard) = self.taskbar_watchdog.take() {
+            let _ = guard.kill();
+            let _ = guard.wait();
+        }
+    }
+
+    fn fail_taskbar_takeover(&mut self, reason: &str) {
+        self.release_taskbar();
+        self.cfg.hide_windows_taskbar = false;
+        if let Err(error) = self.cfg.save() { trace!("cannot save taskbar fallback: {error}"); }
+        trace!("taskbar takeover disabled: {reason}");
+        let message = if crate::strings::russian() {
+            format!("Не удалось обеспечить безопасное восстановление панели задач Windows. Панель Windows оставлена включённой.\n\n{reason}")
+        } else {
+            format!("The Windows taskbar cannot be restored safely. It has been left enabled.\n\n{reason}")
+        };
+        // Do not enter a modal message loop while the Dock's RefCell is borrowed.
+        std::thread::spawn(move || {
+            let message: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+            unsafe { let _ = MessageBoxW(None, windows::core::PCWSTR(message.as_ptr()), w!("AuraDock"), MB_OK | MB_ICONERROR); }
+        });
+    }
+
+    fn check_taskbar_guard(&mut self) {
+        if !self.taskbar_hidden { return; }
+        let healthy = self.taskbar_watchdog.as_mut().is_some_and(|guard| matches!(guard.try_wait(), Ok(None)));
+        if !healthy {
+            self.fail_taskbar_takeover("watchdog exited or could not be checked");
+            self.apply_system();
+        }
+    }
+
     fn apply_system(&mut self) {
         if !self.integrate {
             return;
@@ -5191,12 +5229,18 @@ impl Dock {
         // reservation behind — the empty strip at the top the user saw afterwards.
         if !self.helper {
             if self.cfg.hide_windows_taskbar && !self.taskbar_hidden {
-                self.tray_original = taskbar::take_over();
-                taskbar::spawn_watchdog(self.tray_original);
-                self.taskbar_hidden = true;
+                let state = taskbar::tray_state();
+                let original = taskbar::original_state(state);
+                match taskbar::spawn_watchdog(original) {
+                    Ok(guard) => {
+                        self.taskbar_watchdog = Some(guard);
+                        self.tray_original = taskbar::take_over(state);
+                        self.taskbar_hidden = true;
+                    }
+                    Err(error) => self.fail_taskbar_takeover(&error.to_string()),
+                }
             } else if !self.cfg.hide_windows_taskbar && self.taskbar_hidden {
-                taskbar::restore(self.tray_original.take());
-                self.taskbar_hidden = false;
+                self.release_taskbar();
             }
         }
         // The edge follows the checkbox and nothing else: the panel must never sniff
@@ -5454,10 +5498,7 @@ impl Dock {
         crate::tray::stop();
         if self.integrate {
             taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar_edge);
-            if self.taskbar_hidden {
-                taskbar::restore(self.tray_original.take());
-                self.taskbar_hidden = false;
-            }
+            if self.taskbar_hidden { self.release_taskbar(); }
         }
     }
 
@@ -5796,6 +5837,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 }
                 T_WIDGETS => {
+                    d.check_taskbar_guard();
                     if d.retheme_pending {
                         d.retheme_pending = false;
                         d.retheme();
@@ -5979,7 +6021,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
     if tc != 0 && msg == tc {
         // Explorer restarted: its new taskbar needs hiding and our AppBar re-registering.
         with_dock(|d| {
-            d.taskbar_hidden = false;
+            if d.taskbar_hidden { taskbar::set_visible(false); }
             d.appbar_edge = None;
             d.apply_system();
         });
@@ -6568,6 +6610,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             appbar_edge: None,
             tray_original: None,
             taskbar_hidden: false,
+            taskbar_watchdog: None,
             measure_step: 0,
             m_cpu0: 0.0,
             m_t0: Instant::now(),

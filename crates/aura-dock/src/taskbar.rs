@@ -70,9 +70,9 @@ pub fn set_tray_state(state: u32) {
     }
 }
 
-/// Hide the taskbar. Returns the original state if we had to switch on auto-hide.
-pub fn take_over() -> Option<u32> {
-    let state = tray_state();
+/// Hide the taskbar after the watchdog has acknowledged that it can observe us.
+/// Returns the state to restore, if we changed auto-hide ourselves.
+pub fn take_over(state: u32) -> Option<u32> {
     let changed = if state & ABS_AUTOHIDE == 0 {
         set_tray_state(state | ABS_AUTOHIDE);
         Some(state)
@@ -84,35 +84,39 @@ pub fn take_over() -> Option<u32> {
 }
 
 pub fn restore(original_state: Option<u32>) {
-    if let Some(s) = original_state {
-        set_tray_state(s);
-    }
+    if let Some(s) = original_state { set_tray_state(s); }
     set_visible(true);
 }
 
-/// Start `laminar.exe --watchdog <pid> [state]`, a tiny process that restores the taskbar when we exit.
-pub fn spawn_watchdog(original_state: Option<u32>) {
+/// The caller must not hide the taskbar until the guard has acknowledged startup.
+pub fn spawn_watchdog(original_state: Option<u32>) -> std::io::Result<std::process::Child> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    if let Ok(exe) = std::env::current_exe() {
-        let mut cmd = std::process::Command::new(exe);
-        cmd.arg("--watchdog").arg(std::process::id().to_string());
-        if let Some(s) = original_state {
-            cmd.arg(s.to_string());
-        }
-        let _ = cmd.creation_flags(CREATE_NO_WINDOW).spawn();
-    }
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.arg("--watchdog").arg(std::process::id().to_string());
+    if let Some(s) = original_state { cmd.arg(s.to_string()); }
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    crate::taskbar_guard::spawn_ready(&mut cmd, std::time::Duration::from_secs(5))
 }
 
-/// Body of the watchdog process.
+/// The guard signals readiness only after it has a valid handle to the dock.
 pub fn run_watchdog(pid: u32, original_state: Option<u32>) {
+    use std::io::Write;
     unsafe {
-        if let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) {
-            WaitForSingleObject(h, INFINITE);
+        let Ok(h) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else { return };
+        if writeln!(std::io::stdout(), "{}", crate::taskbar_guard::READY).and_then(|_| std::io::stdout().flush()).is_err() {
             let _ = CloseHandle(h);
+            return;
         }
+        WaitForSingleObject(h, INFINITE);
+        let _ = CloseHandle(h);
     }
     restore(original_state);
+}
+
+/// Preserve only the setting we actually change.
+pub fn original_state(state: u32) -> Option<u32> {
+    (state & ABS_AUTOHIDE == 0).then_some(state)
 }
 
 /// Reserve (or release) a strip of the monitor for the dock, on the bottom edge or — when

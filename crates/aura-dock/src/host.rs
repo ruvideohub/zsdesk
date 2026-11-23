@@ -61,6 +61,12 @@ fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) ->
         if !got.as_bool() {
             break;
         }
+        // Timer-only traffic is the normal idle case; check before the timer's
+        // early continue so a dead parent cannot leave an orphaned card behind.
+        if seen.elapsed() >= PARENT_CHECK {
+            seen = Instant::now();
+            if !unsafe { IsWindow(Some(dock)) }.as_bool() { break; }
+        }
         if msg.message == WM_TIMER && msg.hwnd == window {
             let _ = card.tick(compositor, gfx);
             continue;
@@ -68,13 +74,6 @@ fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) ->
         unsafe {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
-        }
-        if seen.elapsed() >= PARENT_CHECK {
-            seen = Instant::now();
-            if !unsafe { IsWindow(Some(dock)) }.as_bool() {
-                // The panel is gone: so is the reason to draw its card.
-                break;
-            }
         }
     }
     Ok(())

@@ -133,6 +133,16 @@ jobs:
       # So each package is run on its own: one broken binary cannot hide the others, and the
       # summary says which ones failed. On failure the step also prints what a test binary could
       # not load, because "STATUS_ENTRYPOINT_NOT_FOUND" on its own says nothing.
+      # Dock's full test binary is excluded below; exercise the watchdog startup and
+      # timeout protocol independently on every Windows build without GUI fixtures.
+      - name: Dock watchdog protocol tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/taskbar_guard.rs -o target/dock-watchdog-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-watchdog-tests.exe
+          exit $LASTEXITCODE
       - name: Tests
         if: always()
         shell: pwsh

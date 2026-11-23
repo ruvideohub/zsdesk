@@ -32,6 +32,7 @@ mod services;
 mod stack;
 mod strings;
 mod taskbar;
+mod taskbar_guard;
 mod tracker;
 mod tray;
 mod tray_strip;
