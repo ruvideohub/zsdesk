@@ -143,6 +143,34 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-watchdog-tests.exe
           exit $LASTEXITCODE
+      - name: Dock watchdog executable smoke test
+        shell: pwsh
+        working-directory: aura
+        run: |
+          # Test the actual GUI-subsystem executable and its stdout readiness pipe.
+          # The owner is this PowerShell process; we kill the guard ourselves so
+          # the smoke test never changes the runner's taskbar.
+          $info = [System.Diagnostics.ProcessStartInfo]::new()
+          $info.FileName = Join-Path (Get-Location) 'target/release/aura-dock.exe'
+          $info.Arguments = "--watchdog $PID"
+          $info.UseShellExecute = $false
+          $info.RedirectStandardOutput = $true
+          $info.RedirectStandardError = $true
+          $info.CreateNoWindow = $true
+          $guard = [System.Diagnostics.Process]::new()
+          $guard.StartInfo = $info
+          $started = $false
+          try {
+            if (-not $guard.Start()) { throw 'Could not start watchdog' }
+            $started = $true
+            $line = $guard.StandardOutput.ReadLineAsync()
+            if (-not $line.Wait(10000)) { throw 'Watchdog did not become ready in 10 seconds' }
+            if ($line.Result -ne 'AURA_DOCK_WATCHDOG_READY') { throw "Unexpected watchdog response: $($line.Result)" }
+            if ($guard.HasExited) { throw 'Watchdog exited after acknowledging startup' }
+          } finally {
+            if ($started -and -not $guard.HasExited) { $guard.Kill(); $guard.WaitForExit() }
+            $guard.Dispose()
+          }
       - name: Tests
         if: always()
         shell: pwsh
