@@ -138,7 +138,7 @@ use windows::{
         },
     },
 };
-use aura_ui::menus::{MenuItemSpec, MenuSpec, UiCommand};
+use aura_ui::menus::MenuSpec;
 #[allow(unused_imports)]
 use aura_windows::{desktop::{self, DesktopHit}, gfx::Gfx, ole::DropHandler, shell::{menu::{forward_menu_message, HistoryAction, MenuInterceptions, MenuOutcome, ShellMenu, APP_FIRST}, notify::read_change}};
 
@@ -1117,44 +1117,6 @@ fn run_verb(fence: u64, verb: &'static str, background: bool) {
     })();
     if let Err(error) = result { file_action_error(hwnd, &error); }
     refresh_fence(fence);
-}
-
-/// Inserts application items (ZSUI spec) at the top of a Shell menu.
-#[allow(dead_code)]
-fn insert_top(hmenu: HMENU, items: &[MenuItemSpec]) -> Vec<String> {
-    let mut ids = Vec::new();
-    let mut position = 0u32;
-    for item in items { insert_item(hmenu, &mut position, item, &mut ids); }
-    if !items.is_empty() { unsafe { let _ = InsertMenuW(hmenu, position, MF_BYPOSITION | MF_SEPARATOR, 0, None); } }
-    ids
-}
-
-#[allow(dead_code)]
-fn insert_item(hmenu: HMENU, position: &mut u32, item: &MenuItemSpec, ids: &mut Vec<String>) {
-    match item {
-        MenuItemSpec::Command { label, command: UiCommand::Custom { id, .. }, checked, enabled, .. } => {
-            let command = APP_FIRST as usize + ids.len();
-            ids.push(id.clone());
-            let flags = MF_BYPOSITION | MF_STRING | if *checked { MF_CHECKED } else { MF_UNCHECKED } | if *enabled { MF_ENABLED } else { MF_GRAYED };
-            unsafe { let _ = InsertMenuW(hmenu, *position, flags, command, PCWSTR(wide(label).as_ptr())); }
-            *position += 1;
-        }
-        MenuItemSpec::Submenu { label, menu, enabled, .. } => {
-            let Ok(sub) = (unsafe { CreatePopupMenu() }) else { return };
-            let mut inner = 0u32;
-            for child in &menu.items { insert_item(sub, &mut inner, child, ids); }
-            let flags = MF_BYPOSITION | MF_POPUP | if *enabled { MF_ENABLED } else { MF_GRAYED };
-            if unsafe { InsertMenuW(hmenu, *position, flags, sub.0 as usize, PCWSTR(wide(label).as_ptr())) }.is_err() {
-                let _ = unsafe { DestroyMenu(sub) };
-            }
-            *position += 1;
-        }
-        MenuItemSpec::Separator => {
-            unsafe { let _ = InsertMenuW(hmenu, *position, MF_BYPOSITION | MF_SEPARATOR, 0, None); }
-            *position += 1;
-        }
-        _ => {}
-    }
 }
 
 /// Fence, tab and tray menus as Windows 11 style flyouts at `point`.

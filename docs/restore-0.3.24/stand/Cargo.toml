@@ -1,0 +1,10 @@
+[package]
+name = "stand"
+version = "0.0.0"
+edition = "2021"
+
+# Its own workspace, so cargo does not try to read this bench as a member of the app's.
+[workspace]
+
+[lib]
+path = "src/lib.rs"

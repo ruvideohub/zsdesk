@@ -355,7 +355,9 @@ pub fn context_menu_settings_menu_for(options: &ContextMenuPreferences, _modern_
         entry(aura_core::i18n::text("Aura 自绘菜单"), "context-menu-own", true, options.mode == ContextMenuMode::Own),
         entry(aura_core::i18n::text("Windows 经典菜单"), "context-menu-classic", true, options.mode == ContextMenuMode::Classic),
         MenuItemSpec::Separator,
-        entry(aura_core::i18n::text("优先显示完整菜单"), "context-menu-full-first", true, options.full_menu_first),
+        // Every right click shows the file's own commands now: the Shell's rows and this
+        // application's group under them. There is no shorter page left for a switch to
+        // choose between, so this submenu only manages what the rows contain.
         item(aura_core::i18n::text("管理此处的完整右键菜单…"),"manage-context-commands"),
         MenuItemSpec::Separator,
         item(aura_core::i18n::text("恢复默认"), "context-menu-defaults"),
@@ -366,7 +368,6 @@ pub fn apply_context_menu_setting(options: &mut ContextMenuPreferences, choice: 
     match choice {
         "context-menu-own" => options.mode = ContextMenuMode::Own,
         "context-menu-classic" => options.mode = ContextMenuMode::Classic,
-        "context-menu-full-first" => options.full_menu_first = !options.full_menu_first,
         "context-menu-defaults" => *options = ContextMenuPreferences::default(),
         _ => return false,
     }
@@ -678,13 +679,23 @@ mod tests {
         let available = nested_ids(&spec);
         for style in ["context-menu-own", "context-menu-classic"] { assert!(available.contains(&style.to_string())); }
         let styles = available.iter().filter(|id| id.starts_with("context-menu-")
-            && !matches!(id.as_str(), "context-menu-full-first" | "context-menu-defaults")).count();
+            && id.as_str() != "context-menu-defaults").count();
         assert_eq!(styles, 2, "no third style: {available:?}");
         let mut customized=options.clone();customized.hidden_commands.push("keep-this-rule".into());
         for (action,mode) in [("context-menu-classic",ContextMenuMode::Classic),("context-menu-own",ContextMenuMode::Own)]{
             assert!(apply_context_menu_setting(&mut customized,action));assert_eq!(customized.mode,mode);assert_eq!(customized.hidden_commands,["keep-this-rule"]);
         }
         assert!(nested_ids(&spec).contains(&"manage-context-commands".to_string()), "registered command visibility stays editable");
+    }
+
+    #[test]
+    fn the_first_page_is_not_optional_so_the_switch_is_gone() {
+        // "优先显示完整菜单" chose between a shorter page and the real one. There is one
+        // page now, so a switch that only reordered the same rows would be a setting
+        // without a difference.
+        let available = nested_ids(&context_menu_settings_menu(&ContextMenuPreferences::default()));
+        assert!(!available.contains(&"context-menu-full-first".to_string()), "{available:?}");
+        assert!(!apply_context_menu_setting(&mut ContextMenuPreferences::default(), "context-menu-full-first"));
     }
 
     #[test]

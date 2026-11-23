@@ -263,9 +263,10 @@ pub enum ContextMenuMode {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ContextMenuPreferences {
-    /// Ask for the full Shell menu (with every registered extension) at the
-    /// first click. AuraExplorer's own short page is the default: it never loads a
-    /// shell extension, so it opens immediately.
+    /// Formerly "ask for the full Shell menu at the first click". Every right click now
+    /// shows that menu, so nothing reads this. It stays readable so existing profiles
+    /// migrate without data loss.
+    #[serde(default)]
     pub full_menu_first:bool,
     /// Commands the user hid from the full menu (the "manage this menu" catalog).
     pub hidden_commands:Vec<String>,

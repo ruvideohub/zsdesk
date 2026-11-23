@@ -65,9 +65,6 @@ pub fn same_item_identities(expected:&[Vec<u8>],current:&[Vec<u8>])->bool{
     a.iter().zip(&b).all(|((name,a),(other,b))|name==other&&unsafe{a.Compare(b,SICHINT_CANONICAL.0 as u32)}.is_ok_and(|order|order==0))
 }
 
-#[path="quick_menu.rs"]
-mod quick_menu;
-pub use quick_menu::{QuickAction,QuickMenu};
 #[path="menu_catalog.rs"]
 mod menu_catalog;
 pub use menu_catalog::{MenuCatalogItem,catalog_item_hidden};
@@ -283,8 +280,6 @@ pub(crate) fn public_menu_timings()->(u64,u64){(PUBLIC_BIND_MICROS.with(Cell::ge
 /// retain Shell command identities while hiding the selected functions.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContextMenuOptions {
-    #[serde(default)]
-    pub quick_first:bool,
     pub modern: bool,
     #[serde(default)]
     pub drawn:bool,
@@ -297,7 +292,7 @@ pub struct ContextMenuOptions {
     pub scheme: aura_core::model::explorer::ColorScheme,
 }
 impl Default for ContextMenuOptions {
-    fn default() -> Self { Self { quick_first:false,modern: false,drawn:true, hidden_verbs: Vec::new(), shown_verbs:Vec::new(), scheme: aura_core::model::explorer::ColorScheme::System } }
+    fn default() -> Self { Self { modern: false,drawn:true, hidden_verbs: Vec::new(), shown_verbs:Vec::new(), scheme: aura_core::model::explorer::ColorScheme::System } }
 }
 /// SHA-256 of the only `Windows.UI.FileExplorer.dll` build whose private
 /// presenter ABI `native/shell_menu.cpp` supports (`kExpectedMenuSha256`).
@@ -642,6 +637,17 @@ impl ShellMenu {
             intercept:MenuInterceptions,before:&mut dyn FnMut()->Result<()>)->Result<MenuOutcome>{
         self.track_standalone(owner,point,pidls,None,false,Some(browser),0,intercept,before)
     }
+    /// The same selection with a live view, plus `application_count` rows of this
+    /// application's own inserted below the Shell's by the caller.
+    pub fn track_selected_in_view_at(&self,owner:HWND,point:POINT,pidls:&[Vec<u8>],application_count:usize,
+            browser:&IExplorerBrowser,intercept:MenuInterceptions,before:&mut dyn FnMut()->Result<()>)->Result<MenuOutcome>{
+        self.track_standalone(owner,point,pidls,None,false,Some(browser),application_count,intercept,before)
+    }
+    /// A selection menu with no live view to host it, plus this application's own rows.
+    pub fn track_selected_at(&self,owner:HWND,point:POINT,pidls:&[Vec<u8>],application_count:usize,
+            intercept:MenuInterceptions,before:&mut dyn FnMut()->Result<()>)->Result<MenuOutcome>{
+        self.track_standalone(owner,point,pidls,None,false,None,application_count,intercept,before)
+    }
 
     pub fn track_folder_background(&self, owner: HWND, point: POINT, path: &std::path::Path, application_count: usize,
             before: &mut dyn FnMut() -> Result<()>) -> Result<MenuOutcome> {
@@ -666,11 +672,25 @@ impl ShellMenu {
             intercept:MenuInterceptions,before:&mut dyn FnMut()->Result<()>)->Result<MenuOutcome>{
         self.track_standalone(owner,point,&[],Some(folder),true,Some(browser),0,intercept,before)
     }
+    /// A folder's own menu hosted by its view, with `application_count` rows of this
+    /// application's inserted below the Shell's by the caller.
+    ///
+    /// The count must travel: without it the popup is tracked as the Shell's alone, the
+    /// rows above are never recognised as commands, and a click on one does nothing.
+    pub fn track_background_view_at(&self,owner:HWND,point:POINT,folder:&IShellItem,browser:&IExplorerBrowser,
+            application_count:usize,intercept:MenuInterceptions,before:&mut dyn FnMut()->Result<()>)->Result<MenuOutcome>{
+        self.track_standalone(owner,point,&[],Some(folder),true,Some(browser),application_count,intercept,before)
+    }
 
     fn track_standalone(&self, owner: HWND, point: POINT, pidls: &[Vec<u8>], folder: Option<&IShellItem>, background: bool, browser:Option<&IExplorerBrowser>,
             application_count: usize, intercept: MenuInterceptions, before: &mut dyn FnMut() -> Result<()>) -> Result<MenuOutcome> {
         let applications = application_ids(application_count)?;
-        let options=context_menu_options();
+        let mut options=context_menu_options();
+        // Both windowless presenters own the popup: the native Windows 11 one rebuilds the
+        // menu from the Shell, and the drawn one addresses rows by their Shell identity.
+        // Neither can show a row of ours, so a menu that has any is tracked as the classic
+        // menu — the Shell's own rows and ours in one popup, which is the whole point.
+        if application_count>0{options.modern=false;options.drawn=false;}
         #[cfg(all(target_arch="x86_64",target_env="msvc"))]
         if !options.drawn&&uses_modern_presenter(options.modern,self.extended.get()&&self.input_flags.get()&2==0,application_count,background,folder.is_some()){
             let count=u32::try_from(pidls.len()).map_err(|_|windows::core::Error::from_hresult(windows::core::HRESULT(0x80070057u32 as i32)))?;

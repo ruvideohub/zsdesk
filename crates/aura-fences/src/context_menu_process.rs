@@ -16,9 +16,10 @@ use aura_core::model::explorer::ShellViewState;
 #[path="context_menu_actions.rs"]mod actions;
 use child::OwnedChild as Child;
 
-/// Raises the Shell's own "Open with" picker for one file. The light page never
-/// enumerates extensions, so this is the only path that asks the Shell to open
-/// a chooser, and it does so on demand.
+/// Raises the Shell's own "Open with" picker for one file.
+///
+/// The page lists the applications the Shell already knows for the type; this is the
+/// other half of the same row, and it asks the Shell for a chooser only when chosen.
 fn open_with(owner:HWND,path:&Path)->Result<()>{
     use windows::core::w;
     use windows::Win32::UI::Shell::{ShellExecuteExW,SHELLEXECUTEINFOW,SEE_MASK_FLAG_NO_UI,SEE_MASK_INVOKEIDLIST};
@@ -737,8 +738,7 @@ fn classic_menu_visible()->bool{
 impl Watch{
     fn observe_open(&self,hwnd:HWND){
         if self.menu_open.get(){return;}
-        let observation=if aura_windows::flyout::is_open(){Some("common-command-flyout")}
-            else if aura_windows::shell::menu::drawn_menu_window().is_some_and(|window|unsafe{IsWindowVisible(window)}.as_bool()){Some("drawn-win11-menu")}
+        let observation=if aura_windows::shell::menu::drawn_menu_window().is_some_and(|window|unsafe{IsWindowVisible(window)}.as_bool()){Some("drawn-win11-menu")}
             else if self.request.options.modern&&unsafe{zs_menu_is_open(hwnd)}!=0{Some("native-presenter-open")}
             else if classic_menu_visible(){Some("visible-classic-menu")}else{None};
         #[cfg(test)]let observation=observation.or_else(||(self.classic_loop.get()&&self.request.probe.as_deref()==Some("modern-owner-copy")).then_some("classic-menu-entered"));
@@ -764,7 +764,7 @@ unsafe extern "system" fn procedure(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRES
         }
         #[cfg(test)]if msg==WM_TIMER&&wp.0==2{let _=unsafe{KillTimer(Some(hwnd),2)};let _=aura_windows::shell::menu::dismiss_active_menu(hwnd);let _=unsafe{EndMenu()};return LRESULT(0);}
         if msg==WM_TIMER{
-            if !owner_alive(&state.request)||EventSet::signaled(state.cancel_event){aura_windows::flyout::cancel();let _=aura_windows::shell::menu::dismiss_active_menu(hwnd);let _=unsafe{EndMenu()};}
+            if !owner_alive(&state.request)||EventSet::signaled(state.cancel_event){let _=aura_windows::shell::menu::dismiss_active_menu(hwnd);let _=unsafe{EndMenu()};}
             state.observe_open(hwnd);
             #[cfg(test)]if matches!(state.request.probe.as_deref(),Some("modern-expand"|"modern-expand-copy"))&&state.menu_open.get()&&!state.expanded_requested.replace(true){
                 unsafe{SetTimer(Some(hwnd),2,2000,None);}
@@ -792,6 +792,62 @@ unsafe extern "system" fn procedure(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRES
     if let Some(result)=forward_menu_message(msg,wp,lp){return result;}
     unsafe{DefWindowProcW(hwnd,msg,wp,lp)}
 }
+/// Runs a chosen row of the application group.
+///
+/// These rows exist because the Shell has no verb for them; everything the Shell does own
+/// is picked straight out of the native menu by the Shell itself, so a Shell row never
+/// arrives here.
+fn application_choice(state:&mut Worker,window:HWND,id:&str,action:Option<&MenuOutcome>,
+        handlers:&[(String,windows::Win32::UI::Shell::IAssocHandler)],selected:&[PathBuf],request:&Request)->Result<MenuOutcome>{
+    if let Some(index)=id.strip_prefix("openwith:") {
+        state.allow(true)?;
+        if let Some((_,handler))=index.parse::<usize>().ok().and_then(|index|handlers.get(index)){
+            let data=aura_windows::desktop::data_object(window,&request.pidls)?;
+            actions::invoke_handler(handler,&data)?;
+        }
+        // The row names one application; there is nothing left for the host to do.
+        return Ok(MenuOutcome::NativeHandled);
+    }
+    match (id,action){
+        // "Choose another application" raises the Shell's own picker.
+        ("openwith",_)=>{
+            state.allow(true)?;
+            if let Some(path)=selected.first(){open_with(window,path)?;}
+            Ok(MenuOutcome::NativeHandled)
+        }
+        ("shortcut",_)=>{
+            state.allow(true)?;
+            // A shortcut is named after the item it points at, so there is exactly one.
+            if let Some(item)=selected.first(){
+                let created=actions::create_shortcut(item)?;
+                state.status.created.push(aura_windows::shell::new_menu::CreatedItem{path:created,rename:false});
+            }
+            Ok(MenuOutcome::ShellInvoked)
+        }
+        ("terminal",_)=>{
+            state.allow(true)?;
+            if let Some(folder)=request.folder.as_deref(){actions::open_terminal(folder)?;}
+            Ok(MenuOutcome::NativeHandled)
+        }
+        (_,Some(MenuOutcome::Compress))=>{
+            state.allow(true)?;
+            let folder=request.folder.clone()
+                .or_else(||selected.first().and_then(|path|path.parent().map(Path::to_path_buf)))
+                .context("压缩目标目录缺失")?;
+            let created=actions::compress(selected,&folder)?;
+            state.status.created.push(aura_windows::shell::new_menu::CreatedItem{path:created,rename:false});
+            Ok(MenuOutcome::ShellInvoked)
+        }
+        // Copying a path and unpacking an archive are the host's: it owns the clipboard and
+        // the archive writer, and the status it returns is displayed there.
+        (_,Some(action))=>{
+            state.allow(true)?;
+            Ok(*action)
+        }
+        _=>Ok(MenuOutcome::Dismissed),
+    }
+}
+
 fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_report_available:bool)->Result<bool>{
     let _language=request.english.map(aura_core::i18n::Scope::english);
     let setup=Instant::now();let worker_started=monotonic_us();
@@ -826,77 +882,24 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             return Ok(MenuOutcome::NativeHandled);
         }
         let mut properties=request.mode==Mode::Properties;
-        if common::enabled(&request){
-            // The selection is resolved once: the page needs it for "Open with"
-            // and the same paths serve the actions that follow the choice.
-            let selected=aura_windows::shell::file_transfer::paths_from_pidls(&request.pidls).unwrap_or_default();
-            let handlers=if selected.len()==1&&request.file_actions{actions::open_with_handlers(&selected[0])}else{Vec::new()};
-            let names:Vec<String>=handlers.iter().map(|(name,_)|name.clone()).collect();
-            let first=common::specification(&request,&names);
-            state.allow(false)?;
-            unsafe{let _=ShowWindow(window,SW_SHOWNOACTIVATE);let _=SetForegroundWindow(window);}
-            if unsafe{GetForegroundWindow()}!=window{return Ok(MenuOutcome::Dismissed);}
-            watch.tracking_started.set(monotonic_us());
-            let anchor=crate::flyout_menu::MenuAnchor::Point{x:request.point[0],y:request.point[1]};
-            let choice=crate::flyout_menu::show(window,&first,anchor,aura_windows::theme::menus_dark());
-            match choice.as_deref(){
-                Some("more")=>{},
-                Some("properties")=>properties=true,
-                // A listed application is invoked through its own handler; no
-                // extension enumeration happens anywhere on this page.
-                Some(id) if id.starts_with("openwith:")=>{
-                    state.allow(true)?;
-                    let index=id["openwith:".len()..].parse::<usize>().ok();
-                    if let Some((_,handler))=index.and_then(|index|handlers.get(index)){
-                        let data=aura_windows::desktop::data_object(window,&state.request.pidls)?;
-                        actions::invoke_handler(handler,&data)?;
-                    }
-                    return Ok(MenuOutcome::NativeHandled);
-                }
-                // "Choose another app" raises the Shell's own picker.
-                Some("openwith")=>{
-                    state.allow(true)?;
-                    if let Some(path)=selected.first(){open_with(window,path)?;}
-                    return Ok(MenuOutcome::NativeHandled);
-                }
-                Some("shortcut")=>{
-                    state.allow(true)?;
-                    let Some(item)=selected.first()else{return Ok(MenuOutcome::Dismissed)};
-                    let created=actions::create_shortcut(item)?;
-                    state.status.created.push(aura_windows::shell::new_menu::CreatedItem{path:created,rename:false});
-                    return Ok(MenuOutcome::ShellInvoked);
-                }
-                Some("compress")=>{
-                    state.allow(true)?;
-                    let folder=state.request.folder.clone()
-                        .or_else(||selected.first().and_then(|path|path.parent().map(Path::to_path_buf)))
-                        .context("压缩目标目录缺失")?;
-                    let created=actions::compress(&selected,&folder)?;
-                    state.status.created.push(aura_windows::shell::new_menu::CreatedItem{path:created,rename:false});
-                    return Ok(MenuOutcome::ShellInvoked);
-                }
-                Some("terminal")=>{
-                    state.allow(true)?;
-                    if let Some(folder)=state.request.folder.as_deref(){actions::open_terminal(folder)?;}
-                    return Ok(MenuOutcome::NativeHandled);
-                }
-                Some(id)=>{
-                    if let Some(action)=common::outcome(id){
-                        state.allow(true)?;
-                        return Ok(action);
-                    }
-                    return Ok(MenuOutcome::Dismissed);
-                },
-                None=>return Ok(MenuOutcome::Dismissed),
-            }
-        }
-        if properties{
+        // A properties request runs one verb instead of showing a menu.
+        if request.mode==Mode::Properties{
             state.allow(true)?;
             let pidls=if request.pidls.is_empty(){vec![aura_windows::shell::pidl::location_pidl(&aura_core::model::explorer::ShellLocation::Path(request.folder.clone().context("目录缺失")?)).context("目录标识无效")?]}else{request.pidls.clone()};
             let data=aura_windows::desktop::data_object(window,&pidls)?;
             unsafe{windows::Win32::UI::Shell::SHMultiFileProperties(&data,0)}?;
             return Ok(MenuOutcome::ShellInvoked);
         }
+        // Our own rows sit under the Shell's on the same popup, so this request needs the
+        // Shell menu itself: every command the file has, then what the Shell does not do.
+        let application_group=common::enabled(&request);
+        // What our own rows act on is resolved once: "Open with" lists the applications of
+        // a single selected file, and the same paths serve whatever a choice turns into.
+        let selected=if application_group&&request.pidls.len()==1{
+            aura_windows::shell::file_transfer::paths_from_pidls(&request.pidls).unwrap_or_default()
+        }else{Vec::new()};
+        let handlers=if !selected.is_empty()&&request.file_actions{actions::open_with_handlers(&selected[0])}else{Vec::new()};
+        let names:Vec<String>=handlers.iter().map(|(name,_)|name.clone()).collect();
         state.state("binding")?;let started=Instant::now();
         let is_background=matches!(request.mode,Mode::Background|Mode::New|Mode::CatalogBackground|Mode::PasteBackground)||(request.mode==Mode::Paste&&request.pidls.is_empty());
         let background=if is_background{
@@ -943,9 +946,28 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             let verb=if matches!(request.mode,Mode::Paste|Mode::PasteBackground){"paste"}else{"open"};
             state.allow(true)?;menu.invoke_verb(window,verb,false)?;return Ok(MenuOutcome::ShellInvoked);
         }
-        if effective_options.modern&&!effective_options.drawn&&matches!(request.mode,Mode::More|Mode::Background){
+        // The compact build asks extensions to list only what they can invoke, for the
+        // windowless Windows 11 presenter that rebuilds the popup itself. A page with our
+        // own rows is shown as the classic menu, so it gets the complete build the user is
+        // meant to read — every verb the file has, not only the invokable ones.
+        if effective_options.modern&&!effective_options.drawn&&!application_group&&matches!(request.mode,Mode::More|Mode::Background){
             menu.populate_compact(request.rename,request.extended)?;
         }else{menu.populate(request.rename,request.extended)?;}
+        // The Shell's rows come first, in the Shell's own order; the application group
+        // follows them and keeps ordinary string identities, so a chosen row is decoded
+        // before any native command number is looked at.
+        let application_rows=if application_group{
+            let (rows,identities)=common::application_rows(&request,&names);
+            // Every inserted row is numbered, including the children of "Open with", and the
+            // numbers follow insertion order. A row the menu refused never made it in, so it
+            // must not take a number either.
+            let inserted=aura_windows::desktop::insert_menu_items(menu.hmenu(),&rows);
+            // The menu is the authority on what it now contains: a row it refused is not a
+            // row the user can choose, so the returned list is what a number is decoded by.
+            // It is a prefix of the intended order, which is what the number mapping needs.
+            debug_assert!(inserted.iter().zip(&identities).all(|(inserted,expected)|inserted==expected));
+            inserted
+        }else{Vec::new()};
         #[cfg(test)]watch.menu.set(menu.hmenu());
         state.status.populate_microseconds=started.elapsed().as_micros()as u64;
         if matches!(request.mode,Mode::CatalogSelection|Mode::CatalogBackground){
@@ -1000,13 +1022,32 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
         watch.tracking_started.set(monotonic_us());
         let file_actions=request.file_actions&&(is_background||
             aura_windows::shell::file_transfer::paths_from_pidls(&request.pidls).is_ok());
+        // The group's rows are counted as the menu's own commands: the native Windows 11
+        // presenter rebuilds the popup from the Shell and cannot host them, so a request
+        // with any of them is tracked as the classic menu and each comes back as a number.
+        // Rows come back empty when the group is off, so the count is already the honest
+        // number, and a menu with no rows of ours keeps whatever presenter it had.
+        let application_count=application_rows.len();
         let outcome=if let Some(outcome)=probe_outcome{outcome}
             else if request.mode==Mode::New{menu.track_new(window,point,&mut||state.allow(true))?}
-            else if let (Some(item),Some(host))=(&background,&background_view){menu.track_background_view_with_interceptions(window,point,item,&host.browser,MenuInterceptions{file_actions,..Default::default()},&mut||state.allow(true))?}
-            else if request.pidls.is_empty(){menu.track_folder_background_with_interceptions(window,point,request.folder.as_deref().unwrap(),0,MenuInterceptions{file_actions,..Default::default()},&mut||state.allow(true))?}
+            else if let (Some(item),Some(host))=(&background,&background_view){menu.track_background_view_at(window,point,item,&host.browser,application_count,MenuInterceptions{file_actions,..Default::default()},&mut||state.allow(true))?}
+            // A background menu tracked as "ours" but holding no row of ours would lose the
+            // Windows 11 presenter for nothing, so the count travels only with the rows.
+            else if request.pidls.is_empty(){menu.track_folder_background_with_interceptions(window,point,request.folder.as_deref().unwrap(),application_count,MenuInterceptions{file_actions,..Default::default()},&mut||state.allow(true))?}
+            else if let (Some(host),true)=(&background_view,application_group){menu.track_selected_in_view_at(window,point,&request.pidls,application_count,&host.browser,
+                MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?}
             else if let Some(host)=&background_view{menu.track_selected_in_view_before(window,point,&request.pidls,&host.browser,
                 MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?}
-            else{menu.track_selected_before(window,point,&request.pidls,0,MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?};
+            else{menu.track_selected_at(window,point,&request.pidls,application_count,MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?};
+        let outcome=if let MenuOutcome::Application(command)=outcome{
+            let index=command.checked_sub(aura_windows::shell::menu::APP_FIRST).map(|offset|offset as usize);
+            match index.and_then(|index|application_rows.get(index)){
+                Some(id)=>application_choice(&mut state,window,id,common::outcome(id).as_ref(),&handlers,&selected,&request)?,
+                // A number in the application range that this page did not insert is not
+                // ours to guess at: report it instead of acting on a wrong row.
+                None=>return Err(anyhow::anyhow!(aura_core::i18n::text("菜单命令未完成"))),
+            }
+        }else{outcome};
         if matches!(outcome,MenuOutcome::ShellInvoked|MenuOutcome::NativeHandled){
             pump(150);
             // ShellNew can open a modeless shortcut/template wizard. Its site

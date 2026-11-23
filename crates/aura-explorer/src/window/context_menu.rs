@@ -13,7 +13,7 @@ impl WindowState{
         Ok((results,crate::context_preferences::native(&self.session.ui.context_menu)))
     }
 }
-struct Session{generation:u64,identity:super::pane_input::Identity,view_window:HWND,foreground:HWND,view:IShellView,pidls:Vec<Vec<u8>>,folder:Option<PathBuf>,background:Option<Vec<u8>>,client:Client,quick_first:bool,catalog:bool,input:Option<super::global_search::InputWatch>,visual:Option<VisualSelection>,invocation_authorized:bool,point:POINT,started:std::time::Instant,loading_notified:bool,mode:WorkerMode,extended:bool}
+struct Session{generation:u64,identity:super::pane_input::Identity,view_window:HWND,foreground:HWND,view:IShellView,pidls:Vec<Vec<u8>>,folder:Option<PathBuf>,background:Option<Vec<u8>>,client:Client,catalog:bool,input:Option<super::global_search::InputWatch>,visual:Option<VisualSelection>,invocation_authorized:bool,point:POINT,mode:WorkerMode,extended:bool}
 thread_local!{static ACTIVE:RefCell<HashMap<isize,Session>>=RefCell::new(HashMap::new());}
 thread_local!{static GENERATIONS:RefCell<HashMap<isize,u64>>=RefCell::new(HashMap::new());static NEXT:Cell<u64>=const{Cell::new(1)};}
 fn generation(owner:HWND)->Option<u64>{GENERATIONS.with(|generations|generations.borrow().get(&(owner.0 as isize)).copied())}
@@ -184,11 +184,12 @@ fn start(owner:HWND,window:HWND,view:&IShellView,identity:super::pane_input::Ide
     let view_context=crate::context_menu_process::MenuViewContext{folder:Some(source_folder),results,keyboard,
         f10:keyboard&&unsafe{GetKeyState(VK_F10.0 as i32)}<0};
     let file_actions=!new&&!catalog&&if pidls.is_empty(){file_transfer::filesystem_folder_path(view).ok().flatten().is_some()}else{true};
-    let quick_first=options.quick_first;
+    // Rename and open come back to the window's own commands; every other Shell verb runs
+    // in the Shell itself, with its dialogs, recycle bin and undo.
     let client=Client::spawn_with_context(owner,point,targets,folder.clone(),options,MenuInterceptions{rename:true,open:true,file_actions},mode,unsafe{GetKeyState(VK_SHIFT.0 as i32)}<0,layout,Some(view_context))
         .map_err(|error|failure(&aura_core::tr_format!("无法启动系统菜单：{error:#}", error=error)))?;
     if !current(owner,generation){return Ok(());}
-    ACTIVE.with(|active|{active.borrow_mut().insert(owner.0 as isize,Session{generation,identity,view_window:window,foreground,view:view.clone(),pidls,folder,background,client,quick_first,catalog,input,visual,invocation_authorized:false,point,started:std::time::Instant::now(),loading_notified:false,mode,extended});});
+    ACTIVE.with(|active|{active.borrow_mut().insert(owner.0 as isize,Session{generation,identity,view_window:window,foreground,view:view.clone(),pidls,folder,background,client,catalog,input,visual,invocation_authorized:false,point,mode,extended});});
     unsafe{SetTimer(Some(owner),TIMER,50,None)};Ok(())
 }
 
@@ -228,7 +229,7 @@ pub(super) fn poll(owner:HWND){
         current(owner,generation)&&live_source(owner,window,identity)&&input.as_ref().is_some_and(|watch|!watch.changed())
     }));
     if !*invocation_authorized&&!preserve(){return;}
-    let worker=session.quick_first.then(||session.client.pid()).flatten();
+    let worker=session.client.pid();
     let result=session.client.poll(&mut|before_invoke|{
         let source_valid=current(owner,generation)&&live_source(owner,window,identity);
         let focus_valid=before_invoke||unsafe{GetForegroundWindow()}==foreground
@@ -242,9 +243,6 @@ pub(super) fn poll(owner:HWND){
         if permit&&before_invoke{*invocation_authorized=true;}permit
     });
     if !current(owner,generation)||!live_source(owner,window,identity){return;}
-    if session.loading_notified&&(result.is_some()||!session.client.preparing()){
-        session.loading_notified=false;super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(String::new()));
-    }
     // Full PIDL enumeration belongs to validation barriers, not every 50 ms
     // while the user reads a menu. Native callbacks can be costly for multi-select.
     let layout=session.client.take_layout();
@@ -262,9 +260,9 @@ pub(super) fn poll(owner:HWND){
     match result{
         Some(Ok(_)) if session.catalog=>{super::pane_input::post(owner,identity,super::pane_input::Intent::ContextCatalog(catalog));},
         None=>{
-            if !session.loading_notified&&session.client.preparing()&&session.started.elapsed()>=std::time::Duration::from_millis(250){
-                session.loading_notified=true;super::pane_input::post(owner,identity,super::pane_input::Intent::TransferMessage(aura_core::i18n::text("正在加载右键菜单…").into()));
-            }
+            // Nothing is posted while the menu is being prepared. The first page is the
+            // file's own menu, so a notice here would be drawn over the window and read as
+            // part of the menu; the click simply waits for the Shell and its extensions.
             ACTIVE.with(|active|{active.borrow_mut().insert(owner.0 as isize,session);});
         },
         Some(Ok(action @ (MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}))) if valid=>{

@@ -1,156 +1,166 @@
-//! Common actions use the host's validated target. Shell extension discovery
-//! starts only when the full menu is requested.
+//! The application group of the right-click menu: what the Shell does not offer.
 //!
-//! This page is the first thing a right click shows. It is built from AuraExplorer's
-//! own command set and never instantiates `IContextMenu`, so no third-party
-//! shell extension (7-Zip, WPS, Git, …) is loaded and nothing can block. The
-//! full Shell menu stays one deliberate step away: "显示更多选项" here, or a
-//! Shift right click, which skips this page entirely.
+//! The first page of a right click is the file's own menu, built by the Shell — 7-Zip,
+//! Git, "Send to", "Open with", "Give access to", everything the file type and the folder
+//! register. This module only adds the rows the Shell has no verb for: a path on the
+//! clipboard, a packer of our own, a terminal, and the applications behind "Open with".
 //!
-//! Everything the page offers is done by AuraExplorer itself: shortcut creation,
-//! ZIP compression, "Open with" handler enumeration and a terminal all call the
-//! narrow Shell API they need instead of enumerating every registered verb.
+//! This page used to be made only of AuraExplorer's own rows. That is what read as an
+//! empty, wrong menu: none of the commands the file actually has were on it, and reaching
+//! them took a second click. The Shell's rows now come first and these follow them in the
+//! same popup.
+//!
+//! Hidden-command preferences apply to both halves, and every row here keeps an ordinary
+//! string identity, so a chosen row is decoded before any Shell command number is.
 use super::{Mode, Request};
-use aura_ui::menus::{self, MenuItemSpec, MenuSpec, ZsAccelerator, ZsAcceleratorKey};
-use aura_windows::shell::{file_transfer, menu::{ContextMenuOptions, MenuOutcome}};
+use aura_windows::{
+    desktop::MenuRow,
+    shell::{file_transfer, menu::MenuOutcome},
+};
 
+/// Whether this request shows the page at all.
+///
+/// Only the two pages that display a menu get the group: a request opened to run a single
+/// verb, a properties request or the catalog probe never shows it, and a Shift right click
+/// asks for the Shell's extended verbs only.
 pub(super) fn enabled(request: &Request) -> bool {
-    request.options.quick_first && !request.extended && matches!(request.mode, Mode::More | Mode::Background)
+    !request.extended && matches!(request.mode, Mode::More | Mode::Background)
 }
 
-/// What the page may offer for this request.
+/// What this request may offer.
 pub(super) struct Target {
     background: bool,
     count: usize,
+    /// The host reports whether the target takes file commands; behind a background the
+    /// same flag means "this folder is a real file-system folder".
     files: bool,
-    open: bool,
-    rename: bool,
-    paste: bool,
+    /// Exactly one `.zip` is selected, so "解压到当前文件夹" has something to do.
+    archive: bool,
     folder: bool,
+    /// The single selection resolved to a path, which "Open with" and "Create shortcut"
+    /// both need to name an item.
+    addressed: bool,
 }
 
 impl Target {
     pub(super) fn of(request: &Request) -> Self {
         let background = request.mode == Mode::Background;
-        let files = request.file_actions && (background || file_transfer::paths_from_pidls(&request.pidls).is_ok());
-        // A selected folder is a paste target, exactly like the Shell menu treats it.
-        let single_folder = !background && request.pidls.len() == 1 && is_folder(&request.pidls[0]);
-        Self {
-            background,
-            count: request.pidls.len(),
-            files,
-            open: request.open && !background && request.pidls.len() == 1,
-            rename: request.rename && !background && request.pidls.len() == 1,
-            paste: file_transfer::has_paste_content() && (background || single_folder),
-            folder: request.folder.is_some(),
-        }
+        let archive = !background
+            && request.file_actions
+            && request.pidls.len() == 1
+            && file_transfer::paths_from_pidls(&request.pidls)
+                .is_ok_and(|paths| crate::archive::archive_among(&paths).is_some());
+        let addressed = request.pidls.len() == 1
+            && file_transfer::paths_from_pidls(&request.pidls).is_ok_and(|paths| !paths.is_empty());
+        Self { background, count: request.pidls.len(), files: request.file_actions, archive, folder: request.folder.is_some(), addressed }
     }
 }
 
-pub(super) fn specification(request: &Request, handlers: &[String]) -> MenuSpec {
-    command_page(&request.options, &Target::of(request), handlers)
-}
-
-fn is_folder(pidl: &[u8]) -> bool {
-    let Ok(item) = aura_windows::shell::pidl::item_from_pidl(pidl) else { return false; };
-    unsafe { item.GetAttributes(windows::Win32::System::SystemServices::SFGAO_FOLDER) }
-        .is_ok_and(|value| value.0 & windows::Win32::System::SystemServices::SFGAO_FOLDER.0 != 0)
-}
-
-fn command_page(options: &ContextMenuOptions, target: &Target, handlers: &[String]) -> MenuSpec {
-    let mut rows: Vec<MenuItemSpec> = Vec::new();
-    // A hidden command stays usable by its keyboard shortcut; only the row goes.
-    let push = |rows: &mut Vec<MenuItemSpec>, available: bool, action: Action| {
-        let label = aura_core::i18n::text(action.caption());
-        if !available || !aura_windows::shell::menu::common_command_visible(options, action.id(), label) { return; }
-        rows.push(match action.accelerator() {
-            Some(accelerator) => menus::keyboard(label, action.id(), accelerator),
-            None => menus::item(label, action.id()),
-        });
-    };
-    let files = target.files && !target.background;
-    push(&mut rows, target.open && target.count == 1, Action::Open);
-    if files && target.count == 1 {
-        // The applications the Shell would list, plus the picker. Without a
-        // usable enumeration only the picker remains, so the row still works.
-        let mut entries: Vec<MenuItemSpec> = handlers.iter().enumerate()
-            .map(|(index, name)| menus::item(name, &format!("openwith:{index}"))).collect();
-        if !entries.is_empty() { entries.push(MenuItemSpec::Separator); }
-        entries.push(menus::item(aura_core::i18n::text("选择其他应用…"), "openwith"));
-        rows.push(menus::submenu(aura_core::i18n::text("打开方式"), entries));
-    }
-    if !rows.is_empty() { rows.push(MenuItemSpec::Separator); }
-    push(&mut rows, files, Action::Cut);
-    push(&mut rows, files, Action::Copy);
-    push(&mut rows, files, Action::CopyPath);
-    push(&mut rows, target.paste, Action::Paste);
-    push(&mut rows, target.background && target.files, Action::NewFolder);
-    push(&mut rows, target.background, Action::Refresh);
-    push(&mut rows, target.rename && target.count == 1, Action::Rename);
-    push(&mut rows, files, Action::Delete);
-    push(&mut rows, files, Action::Shortcut);
-    push(&mut rows, files, Action::Compress);
-    push(&mut rows, target.background && target.folder, Action::Terminal);
-    push(&mut rows, true, Action::Properties);
-    rows.push(MenuItemSpec::Separator);
-    push(&mut rows, true, Action::More);
-    menus::menu(rows)
-}
-
-/// One row of the page: its identifier, its catalogue caption and its shortcut.
+/// One row of the group: the identity a chosen row is decoded by, plus the caption the
+/// text catalogue translates. The identity is what the host and the worker agree on; the
+/// caption is only ever shown.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Action {
-    Open, Cut, Copy, CopyPath, Paste, NewFolder, Refresh, Rename, Delete, Shortcut, Compress, Terminal, Properties, More,
+    CopyPath,
+    Compress,
+    Shortcut,
+    Extract,
+    Terminal,
 }
 
 impl Action {
     fn id(self) -> &'static str {
         match self {
-            Self::Open => "open", Self::Cut => "cut", Self::Copy => "copy", Self::CopyPath => "copypath",
-            Self::Paste => "paste", Self::NewFolder => "newfolder", Self::Refresh => "refresh",
-            Self::Rename => "rename", Self::Delete => "delete", Self::Shortcut => "shortcut",
-            Self::Compress => "compress", Self::Terminal => "terminal", Self::Properties => "properties",
-            Self::More => "more",
+            Self::CopyPath => "copypath",
+            Self::Compress => "compress",
+            Self::Shortcut => "shortcut",
+            Self::Extract => "extract",
+            Self::Terminal => "terminal",
         }
     }
     fn caption(self) -> &'static str {
         match self {
-            Self::Open => "打开", Self::Cut => "剪切", Self::Copy => "复制", Self::CopyPath => "复制路径",
-            Self::Paste => "粘贴", Self::NewFolder => "新建文件夹", Self::Refresh => "刷新",
-            Self::Rename => "重命名", Self::Delete => "删除", Self::Shortcut => "创建快捷方式",
-            Self::Compress => "压缩为 ZIP 文件", Self::Terminal => "在此处打开终端",
-            Self::Properties => "属性", Self::More => "显示更多选项",
+            Self::CopyPath => "复制路径",
+            Self::Compress => "压缩为 ZIP 文件",
+            Self::Shortcut => "创建快捷方式",
+            Self::Extract => "解压到当前文件夹",
+            Self::Terminal => "在此处打开终端",
         }
-    }
-    fn accelerator(self) -> Option<ZsAccelerator> {
-        let enter = ZsAccelerator::new(ZsAcceleratorKey::Enter);
-        Some(match self {
-            Self::Open => enter,
-            Self::Cut => ZsAccelerator::primary_character('X'),
-            Self::Copy => ZsAccelerator::primary_character('C'),
-            Self::CopyPath => ZsAccelerator::primary_character('C').shifted(),
-            Self::Paste => ZsAccelerator::primary_character('V'),
-            Self::NewFolder => ZsAccelerator::primary_character('N').shifted(),
-            Self::Refresh => ZsAccelerator::new(ZsAcceleratorKey::Function(5)),
-            Self::Rename => ZsAccelerator::new(ZsAcceleratorKey::Function(2)),
-            Self::Delete => ZsAccelerator::new(ZsAcceleratorKey::Delete),
-            Self::Properties => enter.with_alt(),
-            Self::Shortcut | Self::Compress | Self::Terminal | Self::More => return None,
-        })
     }
 }
 
+/// The group, ready to insert under the Shell's rows.
+///
+/// Rows and identities come back together and in the same order: the menu numbers its
+/// commands by position, so a chosen number is decoded through exactly this list instead
+/// of through a second traversal that could drift from the first. Labels borrow from
+/// `handlers` — the applications the Shell named — and from the text catalogue.
+pub(super) fn application_rows<'a>(request: &Request, handlers: &'a [String])
+        -> (Vec<MenuRow<'a>>, Vec<String>) {
+    rows_for(&request.options, &Target::of(request), handlers)
+}
+
+/// The rows themselves, decided only by the target and the preferences.
+///
+/// Kept apart from [`application_rows`] so the plan can be reasoned about — and tested —
+/// without resolving a single item: nothing here asks the Shell anything.
+fn rows_for<'a>(options: &aura_windows::shell::menu::ContextMenuOptions, target: &Target, handlers: &'a [String])
+        -> (Vec<MenuRow<'a>>, Vec<String>) {
+    let mut rows: Vec<MenuRow<'a>> = Vec::new();
+    let mut identities: Vec<String> = Vec::new();
+    let push = |rows: &mut Vec<MenuRow<'a>>, identities: &mut Vec<String>, available: bool, action: Action| {
+        let label = aura_core::i18n::text(action.caption());
+        // A hidden command stays usable by its keyboard shortcut; only the row goes.
+        if !available || !aura_windows::shell::menu::common_command_visible(options, action.id(), label) {
+            return;
+        }
+        identities.push(action.id().to_owned());
+        rows.push(MenuRow::Command { label: label.into(), identity: action.id().into(), checked: false, enabled: true });
+    };
+    let files = target.files && !target.background;
+    push(&mut rows, &mut identities, files, Action::CopyPath);
+    // The picker needs the file's own path: a row whose target turned out to be
+    // unreadable would open the chooser for nothing, so it is only shown when there is a
+    // path to hand the Shell.
+    let addressable = files && target.count == 1 && target.addressed;
+    if addressable {
+        // The applications the Shell would list for this type, plus the picker. A failed
+        // enumeration still leaves the picker, so the row always does something.
+        let mut entries: Vec<MenuRow<'a>> = Vec::new();
+        for (index, name) in handlers.iter().enumerate() {
+            let identity = format!("openwith:{index}");
+            identities.push(identity.clone());
+            entries.push(MenuRow::Command { label: name.as_str().into(), identity: identity.into(), checked: false, enabled: true });
+        }
+        if !entries.is_empty() { entries.push(MenuRow::Separator); }
+        identities.push("openwith".into());
+        entries.push(MenuRow::Command {
+            label: aura_core::i18n::text("选择其他应用…").into(),
+            identity: "openwith".into(),
+            checked: false,
+            enabled: true,
+        });
+        rows.push(MenuRow::Submenu { label: aura_core::i18n::text("打开方式").into(), items: entries });
+    }
+    push(&mut rows, &mut identities, files, Action::Compress);
+    // The Shell builds shortcuts through "Send to" only; a direct row keeps the command
+    // where Windows Explorer puts it.
+    push(&mut rows, &mut identities, addressable, Action::Shortcut);
+    push(&mut rows, &mut identities, target.archive, Action::Extract);
+    push(&mut rows, &mut identities, target.background && target.folder, Action::Terminal);
+    (rows, identities)
+}
+
+/// What the host does with a chosen row, if the row is the host's to do.
+///
+/// Everything the Shell owns is picked out of the native menu by the Shell itself, so only
+/// these three ever travel back. The terminal, the shortcut and both halves of "Open with"
+/// are executed here, in the worker, and return as `NativeHandled` or `ShellInvoked`.
 pub(super) fn outcome(id: &str) -> Option<MenuOutcome> {
     Some(match id {
-        "open" => MenuOutcome::Open,
-        "cut" => MenuOutcome::Cut,
-        "copy" => MenuOutcome::Copy,
         "copypath" => MenuOutcome::CopyPath,
-        "paste" => MenuOutcome::Paste,
-        "newfolder" => MenuOutcome::NewFolder,
-        "refresh" => MenuOutcome::Refresh,
-        "rename" => MenuOutcome::Rename,
-        "delete" => MenuOutcome::Delete { permanent:false },
+        "compress" => MenuOutcome::Compress,
+        "extract" => MenuOutcome::Extract,
         _ => return None,
     })
 }
@@ -158,96 +168,138 @@ pub(super) fn outcome(id: &str) -> Option<MenuOutcome> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aura_ui::menus::UiCommand;
 
-    fn ids(spec: MenuSpec) -> Vec<String> {
-        fn collect(items: Vec<MenuItemSpec>, into: &mut Vec<String>) {
-            for row in items {
-                match row {
-                    MenuItemSpec::Command { command: UiCommand::Custom { id,.. },.. } => into.push(id),
-                    MenuItemSpec::Submenu { menu,.. } => collect(menu.items, into),
-                    _ => {}
-                }
-            }
-        }
-        let mut result = Vec::new();
-        collect(spec.items, &mut result);
-        result
+    /// The target is the whole input of the plan, so the tests state it directly instead
+    /// of going through a Shell: nothing here needs an item to resolve.
+    fn target(background: bool, count: usize, files: bool, addressed: bool, archive: bool, folder: bool) -> Target {
+        Target { background, count, files, archive, folder, addressed }
     }
 
-    fn row<'a>(spec: &'a MenuSpec, id: &str) -> Option<&'a MenuItemSpec> {
-        spec.items.iter().find(|row| matches!(row,
-            MenuItemSpec::Command { command: UiCommand::Custom { id: current,.. },.. } if current == id))
+    fn commands(rows: &[MenuRow<'_>]) -> Vec<&str> {
+        rows.iter()
+            .filter_map(|row| match row {
+                MenuRow::Command { identity, .. } => Some(identity.as_ref()),
+                _ => None,
+            })
+            .collect()
     }
 
-    fn target(background: bool, count: usize, files: bool, open: bool, rename: bool, paste: bool) -> Target {
-        Target { background, count, files, open, rename, paste, folder: true }
+    fn labels(rows: &[MenuRow<'_>]) -> Vec<String> {
+        rows.iter()
+            .map(|row| match row {
+                MenuRow::Command { label, .. } | MenuRow::Submenu { label, .. } => label.to_string(),
+                MenuRow::Separator => "―".into(),
+            })
+            .collect()
     }
 
-    #[test]
-    fn the_page_offers_every_common_command() {
-        let spec = command_page(&ContextMenuOptions::default(), &target(false, 1, true, true, true, false), &[]);
-        assert_eq!(ids(spec), [
-            "open", "openwith", "cut", "copy", "copypath", "rename", "delete", "shortcut", "compress",
-            "properties", "more",
-        ]);
+    fn plan(target: &Target, handlers: &[String]) -> (Vec<String>, Vec<String>) {
+        let (rows, identities) = rows_for(&aura_windows::shell::menu::ContextMenuOptions::default(), target, handlers);
+        (labels(&rows), identities)
     }
 
     #[test]
-    fn multiple_selection_drops_the_single_item_rows() {
-        let spec = command_page(&ContextMenuOptions::default(), &target(false, 3, true, true, true, false), &[]);
-        assert_eq!(ids(spec), ["cut", "copy", "copypath", "delete", "shortcut", "compress", "properties", "more"]);
+    fn the_group_offers_only_what_the_shell_does_not() {
+        // Cut, copy, rename, delete, "Send to" and properties are the Shell's own rows on
+        // this page; repeating them here would be two answers to one click.
+        let (labels, identities) = plan(&target(false, 1, true, true, false, true), &[]);
+        assert_eq!(identities, ["copypath", "openwith", "compress", "shortcut"]);
+        assert_eq!(labels, ["复制路径", "打开方式", "压缩为 ZIP 文件", "创建快捷方式"]);
     }
 
     #[test]
-    fn empty_space_offers_folder_commands_only() {
-        let spec = command_page(&ContextMenuOptions::default(), &target(true, 0, true, false, false, true), &[]);
-        assert_eq!(ids(spec), ["paste", "newfolder", "refresh", "terminal", "properties", "more"]);
+    fn a_selection_without_file_commands_gets_no_file_rows() {
+        let (labels, identities) = plan(&target(false, 3, false, false, false, true), &[]);
+        assert!(labels.is_empty() && identities.is_empty());
     }
 
     #[test]
-    fn open_with_lists_enumerated_apps_and_the_picker() {
+    fn open_with_lists_the_enumerated_apps_and_then_the_picker() {
         let handlers = vec!["Блокнот".to_string(), "Visual Studio Code".to_string()];
-        let spec = command_page(&ContextMenuOptions::default(), &target(false, 1, true, true, true, false), &handlers);
-        assert_eq!(ids(spec), [
-            "open", "openwith:0", "openwith:1", "openwith", "cut", "copy", "copypath", "rename", "delete",
-            "shortcut", "compress", "properties", "more",
-        ]);
-        // Without enumerated handlers the picker is still reachable.
-        let bare = command_page(&ContextMenuOptions::default(), &target(false, 1, true, true, true, false), &[]);
-        assert_eq!(ids(bare).iter().filter(|id| id.starts_with("openwith")).cloned().collect::<Vec<_>>(), ["openwith"]);
+        let (rows, identities) = rows_for(
+            &aura_windows::shell::menu::ContextMenuOptions::default(),
+            &target(false, 1, true, true, false, true),
+            &handlers,
+        );
+        assert_eq!(identities, ["copypath", "openwith:0", "openwith:1", "openwith", "compress", "shortcut"]);
+        let MenuRow::Submenu { items, .. } = &rows[1] else { panic!("expected the Open with submenu") };
+        assert_eq!(commands(items), ["openwith:0", "openwith:1", "openwith"]);
+        assert!(matches!(items[2], MenuRow::Separator), "applications are separated from the picker");
     }
 
     #[test]
-    fn hidden_commands_stay_hidden() {
-        let mut options = ContextMenuOptions::default();
-        options.hidden_verbs.push("copy".into());
-        options.hidden_verbs.push("new".into());
-        let spec = command_page(&options, &target(true, 0, true, false, false, true), &[]);
-        assert_eq!(ids(spec), ["paste", "refresh", "terminal", "properties", "more"]);
+    fn an_empty_enumeration_leaves_the_picker_alone() {
+        let (rows, identities) = rows_for(
+            &aura_windows::shell::menu::ContextMenuOptions::default(),
+            &target(false, 1, true, true, false, true),
+            &[],
+        );
+        let MenuRow::Submenu { items, .. } = &rows[1] else { panic!("expected the Open with submenu") };
+        assert!(items.iter().all(|row| !matches!(row, MenuRow::Separator)), "a lone separator separates nothing");
+        assert_eq!(commands(items), ["openwith"]);
+        assert!(identities.contains(&"openwith".to_string()));
     }
 
     #[test]
-    fn rows_carry_their_keyboard_hints() {
-        let spec = command_page(&ContextMenuOptions::default(), &target(false, 1, true, true, true, false), &[]);
-        let accelerator = |id: &str| match row(&spec, id) {
-            Some(MenuItemSpec::Command { accelerator,.. }) => *accelerator,
-            _ => None,
-        };
-        assert_eq!(accelerator("copy"), Some(ZsAccelerator::primary_character('C')));
-        assert_eq!(accelerator("copypath"), Some(ZsAccelerator::primary_character('C').shifted()));
-        assert_eq!(accelerator("rename"), Some(ZsAccelerator::new(ZsAcceleratorKey::Function(2))));
-        assert_eq!(accelerator("properties"), Some(ZsAccelerator::new(ZsAcceleratorKey::Enter).with_alt()));
-        assert_eq!(accelerator("shortcut"), None);
+    fn an_item_that_names_no_path_loses_open_with_and_the_shortcut() {
+        // Both rows name the item, so both go when the selection resolves to no path.
+        let (labels, identities) = plan(&target(false, 1, true, false, false, true), &[]);
+        assert_eq!(identities, ["copypath", "compress"]);
+        assert_eq!(labels, ["复制路径", "压缩为 ZIP 文件"]);
+    }
+
+    #[test]
+    fn a_folder_background_gets_a_terminal_and_no_file_commands() {
+        let (labels, identities) = plan(&target(true, 0, true, false, false, true), &[]);
+        assert_eq!(identities, ["terminal"]);
+        assert_eq!(labels, ["在此处打开终端"], "the terminal runs inside the worker, it never returns to the host");
+    }
+
+    #[test]
+    fn a_background_without_a_folder_gets_nothing() {
+        let (labels, identities) = plan(&target(true, 0, true, false, false, false), &[]);
+        assert!(labels.is_empty() && identities.is_empty());
+    }
+
+    #[test]
+    fn a_shortcut_needs_exactly_one_item() {
+        let (_, one) = plan(&target(false, 1, true, true, false, true), &[]);
+        assert!(one.iter().any(|id| id == "shortcut"));
+        let (_, several) = plan(&target(false, 3, true, true, false, true), &[]);
+        assert!(!several.iter().any(|id| id == "shortcut"), "a shortcut names one item");
+        // Open with is a single-item row for the same reason.
+        assert!(!several.iter().any(|id| id == "openwith"));
+    }
+
+    #[test]
+    fn extraction_is_offered_only_for_a_selected_archive() {
+        let (_, archive) = plan(&target(false, 1, true, true, true, true), &[]);
+        assert_eq!(archive.last().map(String::as_str), Some("extract"));
+        let (_, plain) = plan(&target(false, 1, true, true, false, true), &[]);
+        assert!(!plain.iter().any(|id| id == "extract"));
+    }
+
+    #[test]
+    fn hidden_commands_stay_hidden_but_keep_their_shortcuts() {
+        let mut options = aura_windows::shell::menu::ContextMenuOptions::default();
+        options.hidden_verbs.push("copypath".into());
+        let (_, identities) = rows_for(&options, &target(false, 1, true, true, false, true), &[]);
+        assert!(!identities.iter().any(|id| id == "copypath"), "the row goes, the shortcut does not");
+        assert!(identities.iter().any(|id| id == "openwith"), "one hidden row does not hide the rest");
     }
 
     #[test]
     fn outcomes_stay_inside_the_host_contract() {
-        for id in ["open", "cut", "copy", "copypath", "paste", "newfolder", "refresh", "rename", "delete"] {
+        for id in ["copypath", "compress", "extract"] {
             assert!(outcome(id).is_some(), "{id}");
         }
-        // These are executed by the worker itself, exactly like "more".
-        for id in ["shortcut", "compress", "terminal", "properties", "more", "openwith"] {
+        // Rows the worker executes on its own: a shortcut, a terminal, and either half of
+        // "Open with".
+        for id in ["shortcut", "terminal", "openwith", "openwith:0"] {
+            assert!(outcome(id).is_none(), "{id}");
+        }
+        // The Shell's rows keep their native identities and never come back here.
+        for id in ["open", "cut", "copy", "paste", "rename", "delete", "properties", "more"] {
             assert!(outcome(id).is_none(), "{id}");
         }
     }

@@ -15,7 +15,9 @@ pub fn current(profile:&Path)->Option<ContextMenuPreferences>{SHARED.get()?.lock
 /// the commands that actually exist.
 pub fn native(options:&ContextMenuPreferences)->ContextMenuOptions {
     let own = options.mode == ContextMenuMode::Own;
-    ContextMenuOptions{quick_first:!options.full_menu_first,modern:own,drawn:own,
+    // There is no choice left about which page comes first: every right click shows the
+    // file's own menu with this application's group under it. Only the style remains.
+    ContextMenuOptions{modern:own,drawn:own,
         hidden_verbs:options.hidden_commands.clone(),shown_verbs:options.shown_commands.clone(),
         scheme:scheme()}
 }
