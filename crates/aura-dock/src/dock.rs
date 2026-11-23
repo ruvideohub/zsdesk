@@ -5807,7 +5807,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     d.rescan();
                 },
                 T_REVEAL => d.on_reveal_timer(),
-                T_TRAY_RAISE => crate::tray::raise(),
+                T_TRAY_RAISE => {
+                    if crate::tray::active() { crate::tray::raise(); }
+                    else { crate::tray::start(hwnd, WM_APP_TRAY); }
+                },
                 T_UPDATE_CHECK => unsafe {
                     // Look again every hour (no network; a check runs only when due).
                     SetTimer(Some(hwnd), T_UPDATE_CHECK, 3600 * 1000, None);
@@ -6683,9 +6686,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         if main_dock {
             // Host the tray icons apps put beside the clock (shown in Launchpad).
             crate::tray::start(hwnd, WM_APP_TRAY);
-            if crate::tray::active() {
-                SetTimer(Some(hwnd), T_TRAY_RAISE, 1500, None);
-            }
+            // Retry if Explorer has not created its taskbar yet.
+            SetTimer(Some(hwnd), T_TRAY_RAISE, 1500, None);
             // Installed copies: match the sign-in switch to the Startup shortcut (never
             // created here, only from Settings), and look for updates once things settle.
             if crate::updater::installed() {

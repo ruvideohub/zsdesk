@@ -17,7 +17,7 @@ pub struct TrayIconView {
     pub stable_id: String,
     pub tip: String,
     pub brush: Option<CompositionSurfaceBrush>,
-    /// The application itself marked this icon hidden; it remains available in overflow.
+    /// The application itself marked this icon hidden; do not display it.
     pub app_hidden: bool,
     pub standard_tip: bool,
 }
@@ -36,10 +36,10 @@ pub fn partition(icons: &[TrayIconView], order: &[String], hidden: &[String], ma
     let mut bar = Vec::new();
     let mut overflow = Vec::new();
     for icon in sorted {
-        if icon.app_hidden || hidden.iter().any(|id| id == &icon.stable_id) || bar.len() >= max_on_bar {
-            overflow.push(icon);
-        } else {
-            bar.push(icon);
+        match crate::tray_policy::placement(icon.app_hidden, hidden.iter().any(|id| id == &icon.stable_id), bar.len() < max_on_bar) {
+            crate::tray_policy::Placement::HiddenByApp => {},
+            crate::tray_policy::Placement::Strip => bar.push(icon),
+            crate::tray_policy::Placement::Overflow => overflow.push(icon),
         }
     }
     (bar, overflow)
@@ -307,7 +307,15 @@ mod tests {
         let order = vec!["d".into(), "b".into(), "a".into(), "c".into()];
         let (bar, overflow) = partition(&icons, &order, &[], 2);
         assert_eq!(bar.iter().map(|i| i.stable_id.as_str()).collect::<Vec<_>>(), vec!["d", "b"]);
-        assert_eq!(overflow.iter().map(|i| i.stable_id.as_str()).collect::<Vec<_>>(), vec!["a", "c"]);
+        assert_eq!(overflow.iter().map(|i| i.stable_id.as_str()).collect::<Vec<_>>(), vec!["a"]);
+    }
+
+    #[test]
+    fn app_hidden_icons_are_not_shown_even_in_overflow() {
+        let icons = vec![icon(1, "a", true), icon(2, "b", false)];
+        let (bar, overflow) = partition(&icons, &[], &["a".to_string()], 0);
+        assert!(bar.is_empty());
+        assert_eq!(overflow.iter().map(|i| i.stable_id.as_str()).collect::<Vec<_>>(), vec!["b"]);
     }
 
     #[test]

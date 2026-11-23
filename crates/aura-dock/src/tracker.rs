@@ -40,7 +40,7 @@ pub struct Win {
 /// Remembers each window's identity so a rescan doesn't re-query every process.
 #[derive(Default)]
 pub struct Tracker {
-    identity: HashMap<isize, (String, String)>,
+    identity: HashMap<isize, (u32, String, String)>,
 }
 
 static NOTIFY: AtomicIsize = AtomicIsize::new(0);
@@ -52,8 +52,10 @@ pub fn install_hooks(notify: HWND) -> Vec<HWINEVENTHOOK> {
     let ranges = [
         (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
         (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
+        (EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_MOVESIZEEND),
         (EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE),
         (EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
+        (EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_NAMECHANGE),
     ];
     ranges
         .iter()
@@ -190,14 +192,21 @@ impl Tracker {
                 continue;
             }
             let key = h.0 as isize;
-            let (app, exe) = match self.identity.get(&key) {
-                Some(v) => v.clone(),
+            let mut pid = 0u32;
+            unsafe { GetWindowThreadProcessId(h, Some(&mut pid)); }
+            let cached = self.identity.get(&key)
+                .filter(|(owner, app, _)| crate::tray_policy::reuse_identity(*owner, pid, app))
+                .map(|(_, app, exe)| (app.clone(), exe.clone()));
+            let (app, exe) = match cached {
+                Some(v) => v,
                 None => {
                     let (paumid, exe) = process_info(h);
                     let exe = crate::apps::stable_path(&exe);
                     let app = window_aumid(h).or(paumid).unwrap_or_else(|| exe.clone());
                     let v = (app.to_lowercase(), exe.to_lowercase());
-                    self.identity.insert(key, v.clone());
+                    // A transient failure must be retried on the next scan, not cached forever.
+                    if pid != 0 && !v.0.is_empty() { self.identity.insert(key, (pid, v.0.clone(), v.1.clone())); }
+                    else { self.identity.remove(&key); }
                     v
                 }
             };

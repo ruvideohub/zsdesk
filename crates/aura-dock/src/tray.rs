@@ -199,12 +199,15 @@ pub fn is_laminar_window(h: HWND) -> bool {
         let mut len = buf.len() as u32;
         let ok = QueryFullProcessImageNameW(p, PROCESS_NAME_WIN32, windows::core::PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
         let _ = windows::Win32::Foundation::CloseHandle(p);
-        ok && String::from_utf16_lossy(&buf[..len as usize]).to_lowercase().ends_with("\\laminar.exe")
+        let image = String::from_utf16_lossy(&buf[..len as usize]);
+        let current = std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        ok && crate::tray_policy::is_dock_image(&image, &current)
     }
 }
 
 /// Start hosting. `notify` gets `notify_msg` (debounced) whenever the icons change.
 pub fn start(notify: HWND, notify_msg: u32) {
+    if active() { return; }
     let Some(explorer) = explorer_tray() else {
         ttrace!("no Explorer taskbar found; tray hosting off");
         return;
@@ -496,6 +499,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
                 }
             };
             let i = &mut host.icons[idx];
+            i.uid = crate::tray_policy::registration_uid(msg == NIM_ADD, guid.is_some(), i.uid, n.uid);
             if !owner.is_invalid() && i.owner != owner {
                 i.owner = owner;
                 i.stable_id = stable_id_for(i.owner, i.uid, i.guid);

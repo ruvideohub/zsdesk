@@ -35,6 +35,7 @@ mod taskbar;
 mod taskbar_guard;
 mod tracker;
 mod tray;
+mod tray_policy;
 mod tray_strip;
 mod ui;
 mod updater;
