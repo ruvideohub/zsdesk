@@ -114,7 +114,7 @@ fn walk(source: &Path, name: &str, depth: usize, limits: Limits, entries: &mut V
     if entries.len() >= limits.max_entries {
         return Err(too_large(format!(
             "{}: {}",
-            crate::tr_format!("压缩的项目超过 {limit} 个，未创建压缩包", limit = limits.max_entries),
+            tr_format!("压缩的项目超过 {limit} 个，未创建压缩包", limit = limits.max_entries),
             source.display(),
         )));
     }
@@ -123,7 +123,7 @@ fn walk(source: &Path, name: &str, depth: usize, limits: Limits, entries: &mut V
         if depth >= limits.max_depth {
             return Err(too_large(format!(
                 "{}: {}",
-                crate::tr_format!("文件夹层级超过 {limit} 层，未创建压缩包", limit = limits.max_depth),
+                tr_format!("文件夹层级超过 {limit} 层，未创建压缩包", limit = limits.max_depth),
                 source.display(),
             )));
         }
