@@ -128,7 +128,7 @@ impl Server{
     pub(crate) fn start(profile:&Path)->Result<Option<Self>>{
         if !same_absolute(profile,&crate::storage::config_path()){return Ok(None);}
         let profile=std::path::absolute(profile)?;let executable=std::env::current_exe()?;
-        if let Err(error)=integration::upgrade_default(&executable,&profile.with_file_name("takeover-backup.json")){
+        if let Err(error)=integration::upgrade_default(&executable,&crate::storage::integration_backup_path()){
             crate::window::diagnostics::record("folder-dde","integration-upgrade-failed",error.raw_os_error().map(|value|windows::core::HRESULT::from_win32(value as u32).0));
             crate::runtime::trace(&format!("folder DDE integration upgrade: {error}"));
         }

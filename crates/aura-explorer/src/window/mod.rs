@@ -580,7 +580,7 @@ impl WindowState {
         if level == Integration::Off { return; }
         if level==Integration::Default {
             if let Ok(exe)=std::env::current_exe(){
-                if let Err(error)=integration::upgrade_default(&exe,&self.config_path.with_file_name("takeover-backup.json")) {
+                if let Err(error)=integration::upgrade_default(&exe,&crate::storage::integration_backup_path()) {
                     self.show_message(aura_core::tr_format!("系统打开接管尚未更新：{error}", error=error));
                 }
             }
@@ -589,7 +589,7 @@ impl WindowState {
         let registered = command.trim_start_matches('"').split('"').next().unwrap_or_default().to_string();
         if std::path::Path::new(&registered).exists() { return; }
         if let Ok(exe) = std::env::current_exe() {
-            let backup = self.config_path.with_file_name("takeover-backup.json");
+            let backup = crate::storage::integration_backup_path();
             if integration::apply(level, &exe, &backup).is_err() { self.show_message(aura_core::i18n::text("系统集成需要修复：请在 ≡ → 系统集成 中重新选择").into()); }
         }
     }

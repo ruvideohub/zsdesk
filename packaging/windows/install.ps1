@@ -74,6 +74,25 @@ function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -Foreground
 function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
 function Write-Ok([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
 
+function Remove-Integration {
+    # `--uninstall-integration` is the program's own way back: it restores the recorded
+    # values and leaves alone anything the user changed afterwards. A missing or
+    # already-removed installation is not an error — there is simply nothing to undo.
+    $explorer = Join-Path $Dir 'AuraExplorer.exe'
+    if (-not (Test-Path -LiteralPath $explorer -PathType Leaf)) {
+        # The folder may already be gone but the registry entries are not: our own
+        # uninstaller cannot run, so say so rather than pretend the job is done.
+        Write-Note 'AuraExplorer.exe не найден: следы в реестре не убраны, проверь HKCU\Software\Classes\Directory\shell\AuraExplorer'
+        return
+    }
+    try {
+        Start-Process -FilePath $explorer -ArgumentList '--uninstall-integration' -Wait -ErrorAction Stop | Out-Null
+        Write-Note 'перехват открытия папок возвращён Проводнику'
+    } catch {
+        Write-Note "не удалось вернуть открытие папок: $($_.Exception.Message)"
+    }
+}
+
 function Stop-AuraExplorer {
     # Сначала останавливаем владельца запуска, иначе он немедленно поднимет Fences снова.
     Get-Process -Name 'auraservice' -ErrorAction SilentlyContinue | ForEach-Object {
@@ -150,6 +169,10 @@ function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [strin
 if ($Remove) {
     Write-Head 'Удаление AuraExplorer'
     Stop-AuraExplorer
+    # Registry first, while the program is still on disk: --uninstall-integration is what
+    # puts folders, drives and This PC back to Explorer. Without it the folders keep
+    # opening in a program that is no longer installed.
+    Remove-Integration
     Remove-Autostart 'AuraExplorer'
     Remove-Autostart 'AuraDock'
     Remove-StaleAutostart
@@ -164,6 +187,7 @@ if ($Remove) {
     }
     Write-Host ''
     Write-Host 'Готово. Настройки остались в %APPDATA%\AuraExplorer — удали папку вручную, если они больше не нужны.' -ForegroundColor Green
+    Write-Host 'Запись о прежних настройках папок лежит отдельно, в %LOCALAPPDATA%\AuraUI — по ней открытие папок возвращается к Проводнику.' -ForegroundColor DarkGray
     return
 }
 

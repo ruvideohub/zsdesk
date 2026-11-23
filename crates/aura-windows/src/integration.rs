@@ -425,10 +425,29 @@ fn restore_value(value: &SavedValue) -> io::Result<()> {
     if status == ERROR_SUCCESS || status.0 == 2 { Ok(()) } else { Err(io::Error::from_raw_os_error(status.0 as i32)) }
 }
 
+/// The backup an older build kept inside the profile folder.
+///
+/// Removal used to mean deleting the profile, which took this file with it: the one
+/// record of what the system looked like before the takeover. It is read when the new
+/// location has nothing, so an upgrade keeps the original values, and left in place —
+/// deleting a profile is the user's call, not ours.
+pub const LEGACY_BACKUP: &str = "takeover-backup.json";
+
 /// Uninstaller cleanup is limited to verbs still owned by this executable.
 /// Later choices made by the user or another installation remain in place.
-/// The profile and its original restoration record are retained.
+/// The profile is retained.
 pub fn restore_owned(exe: &Path, backup_path: &Path) -> io::Result<bool> {
+    restore_owned_accepting(exe, backup_path, &[])
+}
+
+/// [`restore_owned`], also treating `verbs` as ours.
+///
+/// An uninstaller has to name the installation it is removing, and that executable is
+/// gone by the time cleanup runs: comparing the registry against *this* process would
+/// find nothing that points at it and leave every verb behind. `plan(Default, exe)`
+/// writes only the uninstaller's own path, so naming it cannot match another
+/// installation's values.
+pub fn restore_owned_accepting(exe: &Path, backup_path: &Path, verbs: &[&Path]) -> io::Result<bool> {
     let mut backup:Backup = match std::fs::read(backup_path) {
         Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -440,7 +459,7 @@ pub fn restore_owned(exe: &Path, backup_path: &Path) -> io::Result<bool> {
     };
     validate_backup(&backup,exe)?;
     migrate_backup(&mut backup,exe);
-    let changed=replay_owned(&backup,Some(exe))?;if changed{notify();}Ok(changed)
+    let changed=replay_owned(&backup,Some(exe),verbs)?;if changed{notify();}Ok(changed)
 }
 
 /// Switches to `level`, keeping a backup of everything it changes in `backup_path`.
@@ -452,7 +471,7 @@ pub fn apply(level: Integration, exe: &Path, backup_path: &Path) -> io::Result<(
         if level!=Integration::Off&&!changed_groups(&backup)?.is_empty(){
             return Err(io::Error::other("系统集成已被其他程序或用户更改，已保留后续设置；请先恢复本应用的接管后重新选择"));
         }
-        replay_owned(&backup,None)?;std::fs::remove_file(backup_path)?;
+        replay_owned(&backup,None,&[])?;std::fs::remove_file(backup_path)?;
     }
     else {restore_owned(exe,backup_path)?;}
     if level == Integration::Off { notify();return Ok(()); }
@@ -477,10 +496,13 @@ fn saved_string(value:&SavedValue)->Option<String>{
     let bytes=value.data.as_ref()?;let units:Vec<_>=bytes.chunks_exact(2).map(|pair|u16::from_le_bytes([pair[0],pair[1]])).take_while(|unit|*unit!=0).collect();
     Some(String::from_utf16_lossy(&units))
 }
-fn replay_owned(backup:&Backup,exe:Option<&Path>)->io::Result<bool>{
+fn replay_owned(backup:&Backup,exe:Option<&Path>,verbs:&[&Path])->io::Result<bool>{
     let mut owned=std::collections::HashSet::new();
     for expected in backup.applied.iter().filter(|value|value.name.is_none()&&value.key.ends_with(r"\command")){
-        if exe.is_some_and(|exe|!saved_string(expected).is_some_and(|command|command_points_to(&command,exe)||command.eq_ignore_ascii_case(&win_e_command(exe)))){continue;}
+        if verbs.is_empty() && exe.is_some_and(|exe|!saved_string(expected).is_some_and(|command|command_points_to(&command,exe)||command.eq_ignore_ascii_case(&win_e_command(exe)))){continue;}
+        // A named verb is one of the installations being removed, not a value that has to
+        // point at the running executable.
+        if !verbs.is_empty()&&!saved_string(expected).is_some_and(|command|verbs.iter().any(|verb|command_points_to(&command,verb))){continue;}
         if read_checked(&expected.key,None)?!=*expected{continue;}
         if let Some(delegate)=backup.applied.iter().find(|value|value.key==expected.key&&value.name.as_deref()==Some("DelegateExecute")){
             if read_checked(&delegate.key,delegate.name.as_deref())?!=*delegate{continue;}
@@ -515,7 +537,7 @@ pub fn restore(backup_path: &Path) -> io::Result<()> {
             let mut backup: Backup = serde_json::from_slice(&bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("接管备份已损坏，未修改注册表：{e}")))?;
             let exe=std::env::current_exe()?;validate_backup(&backup,&exe)?;
             migrate_backup(&mut backup,&exe);
-            replay_owned(&backup,None)?;
+            replay_owned(&backup,None,&[])?;
             std::fs::remove_file(backup_path)?;
             notify();
         }
@@ -608,6 +630,29 @@ mod tests {
         std::fs::write(output.join("win-e.current.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");
         result?;assert!(cleaned);Ok(())
     }
+    #[test]
+    fn removal_matches_the_path_it_was_asked_to_remove() {
+        // Removal runs after the programs are gone: the uninstaller names the installation
+        // it is cleaning up, and the values in the registry point at that path, not at the
+        // process doing the cleaning. Comparing them against the running executable is what
+        // used to leave every verb behind.
+        let uninstaller = Path::new(r"C:\Users\a\AppData\Local\Programs\AuraUI\unins000.exe");
+        let (values, _) = plan(Integration::Default, uninstaller);
+        let command = values
+            .iter()
+            .find(|(key, name, _)| name.is_none() && key.ends_with(r"\command"))
+            .expect("a command value");
+        assert!(
+            command_points_to(&command.2, uninstaller),
+            "the recorded verb must be recognised as this installation's: {}",
+            command.2
+        );
+        assert!(
+            !command_points_to(&command.2, Path::new(r"C:\Apps\AuraExplorer.exe")),
+            "and must not match a different installation"
+        );
+    }
+
     #[test]
     fn uninstaller_only_recognizes_the_registered_executable_and_verb() {
         let exe = Path::new(r"C:\Apps\AuraExplorer\AuraExplorer.exe");

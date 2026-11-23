@@ -55,6 +55,36 @@ fn default_profile(home:&Path,portable:Option<PathBuf>)->PathBuf{
     });
     dir.join("explorer-session.json")
 }
+/// Where the record of the folder takeover lives.
+///
+/// It used to sit next to `config_path()`, inside the profile folder — and removing the
+/// profile then destroyed the only copy of what the system looked like before the
+/// takeover, leaving the registry edits behind with nothing to restore from. Keeping it
+/// beside the program's own profile means "delete my settings" no longer means "delete
+/// my way back".
+///
+/// The old file is still read when the new one is absent, and left where it is: moving
+/// it would be a write to a user folder on the strength of a guess about intent.
+pub fn integration_backup_path()->PathBuf{
+    integration_backup_path_in(&backup_home(),crate::edition::profile_name())
+}
+
+/// The per-machine application folder, which holds install state rather than settings.
+fn backup_home()->PathBuf{
+    // The name is stated here rather than taken from the integration module: this file
+    // must not depend on the crate that writes the registry.
+    let base = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join("AuraUI")
+}
+
+/// Separated from the lookup above so the rule can be read — and tested — on its own.
+pub fn integration_backup_path_in(home:&Path,profile:&str)->PathBuf{
+    home.join(profile).join(HISTORY_FILE)
+}
+
+/// The name the record has always had, in both of its homes.
+pub const HISTORY_FILE:&str = "takeover-backup.json";
+
 pub fn config_path()->PathBuf{
     static DEFAULT:std::sync::OnceLock<PathBuf>=std::sync::OnceLock::new();
     DEFAULT.get_or_init(||default_profile(&profile_home(),portable_dir())).clone()
@@ -231,6 +261,24 @@ fn merge_bookmarks(baseline:&[Bookmark],local:&[Bookmark],saved:&[Bookmark],mut 
         for item in &mut result {if order.contains_key(&item.id){*item=changed.next().unwrap();}}
     }
     result
+}
+
+#[cfg(test)]
+mod backup_location_tests {
+    use super::*;
+
+    #[test]
+    fn the_restore_record_outlives_the_profile() {
+        let home = Path::new(r"C:\Users\a\AppData\Local\AuraUI");
+        let record = integration_backup_path_in(home, "AuraExplorer");
+        assert_eq!(record, home.join("AuraExplorer").join(HISTORY_FILE));
+        // The old home was the profile folder, and deleting the profile is what used to
+        // destroy the only record of the system's previous state.
+        let old_home = Path::new(r"C:\Users\a\AppData\Roaming\AuraExplorer");
+        assert!(!record.starts_with(old_home), "the record must not live inside the profile");
+        // Every existing installation reads this name when it looks in the old place.
+        assert_eq!(HISTORY_FILE, "takeover-backup.json");
+    }
 }
 
 #[cfg(test)]

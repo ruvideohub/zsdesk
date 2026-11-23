@@ -94,7 +94,7 @@ Name: "{group}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"
 Name: "{group}\Fences — desktop grids"; Filename: "{app}\Fences.exe"
 Name: "{group}\AuraUI — настройки и запуск"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Comment: "Что запускать: компоненты, автозапуск, журнал"
 Name: "{group}\AuraArc — архиватор"; Filename: "{app}\AuraArc.exe"
-Name: "{group}\Удалить AuraUI"; Filename: "{uninstallexe}"
+Name: "{group}\Удалить AuraUI"; Filename: "{uninstallexe}"; Comment: "Убирает программу, автозапуск, ярлыки и следы в реестре"
 Name: "{autodesktop}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"; Tasks: desktopicon
 
 [Registry]
@@ -115,7 +115,21 @@ Filename: "{app}\auraservice.exe"; Parameters: "--run"; Description: "Запус
 Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Description: "Открыть настройки: что запускать"; Flags: nowait postinstall skipifsilent unchecked
 
 [UninstallRun]
-; Служба останавливается первой: иначе она поднимет то, что установщик только что убрал.
+; Сначала — следы в системе, потом остановка процессов.
+;
+; Этот вызов идёт первым намеренно. Папки, диски и «Этот компьютер» открывались в
+; AuraExplorer через HKCU\Software\Classes, и убирает это только сама программа:
+; --uninstall-integration возвращает прежние значения по своей записи. Раньше здесь его
+; не было, поэтому удаление оставляло перехват в реестре — папки продолжали открываться
+; в удалённой программе, а записи, по которой можно было бы восстановиться, уже не
+; оставалось.
+;
+; Порядок важен и внутри: программа ещё должна лежать на месте, когда её зовут. Чистка
+; запускается до taskkill, но после того, как окна закрыты кооперативно — иначе
+; работающая копия вернёт свои значения обратно.
+Filename: "{app}\AuraExplorer.exe"; Parameters: "--shutdown-for-update ""{app}\AuraExplorer.exe"""; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIStopCooperative"
+Filename: "{app}\AuraExplorer.exe"; Parameters: "--uninstall-integration"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIRemoveIntegration"
+; Служба останавливается последней: пока она жива, она поднимет то, что убрали.
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM Fences.exe /IM widgets.exe /IM AuraArc.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AuraExplorer.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStopFiles"
 

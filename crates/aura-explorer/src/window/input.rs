@@ -873,7 +873,7 @@ impl WindowState {
             if unsafe { MessageBoxW(Some(self.hwnd), pcwstr(&text), PCWSTR(wide("默认用 AuraExplorer 打开").as_ptr()), MB_OKCANCEL | MB_ICONQUESTION) } != IDOK { return; }
         }
         let Ok(exe) = std::env::current_exe() else { return };
-        let backup = self.config_path.with_file_name("takeover-backup.json");
+        let backup = crate::storage::integration_backup_path();
         match integration::apply(level, &exe, &backup) {
             Ok(()) => {
                 // The registry just changed under us: re-read it on the next tick instead

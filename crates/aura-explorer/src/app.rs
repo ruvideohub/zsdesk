@@ -36,6 +36,19 @@ struct Options {
     search_settings:bool,
 }
 
+/// Undoes the folder takeover, and says nothing when there was none.
+///
+/// The record may be in the new location or in the old one inside the profile; a missing
+/// record is not a failure, because the cleanup rebuilds the list of what this
+/// installation could have written from the executable alone.
+fn remove_folder_integration(exe: &std::path::Path) -> anyhow::Result<()> {
+    let backup = crate::storage::integration_backup_path();
+    let legacy = crate::storage::config_path().with_file_name(crate::storage::HISTORY_FILE);
+    let record = if backup.try_exists()? { backup } else { legacy };
+    aura_windows::integration::restore_owned(exe, &record)?;
+    Ok(())
+}
+
 fn parse(args: impl IntoIterator<Item=OsString>) -> Result<Options> {
     let mut opts = Options::default();
     let mut iter = args.into_iter();
@@ -251,12 +264,12 @@ pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
     if !in_host&&managed(&opts){return crate::runtime::run(config,args);}
     if opts.integration_enable{
         let exe=std::env::current_exe()?;
-        aura_windows::integration::apply(aura_windows::integration::Integration::Default,&exe,&config.with_file_name("takeover-backup.json"))?;
+        aura_windows::integration::apply(aura_windows::integration::Integration::Default,&exe,&crate::storage::integration_backup_path())?;
         println!("{}",serde_json::json!({"enabled":true,"win_e":aura_windows::integration::win_e_enabled(&exe),"this_pc":aura_windows::integration::this_pc_enabled(&exe),"folder_takeover":aura_windows::integration::owns_folder_integration(&exe)}));return Ok(());
     }
     if opts.integration_refresh {
         let exe=std::env::current_exe()?;
-        let changed=aura_windows::integration::upgrade_default(&exe,&config.with_file_name("takeover-backup.json"))?;
+        let changed=aura_windows::integration::upgrade_default(&exe,&crate::storage::integration_backup_path())?;
         println!("{}",serde_json::json!({"updated":changed,"win_e":aura_windows::integration::win_e_enabled(&exe),"folder_takeover":aura_windows::integration::owns_folder_integration(&exe)}));
         return Ok(());
     }
@@ -266,9 +279,22 @@ pub(crate) fn run_arguments(args:Vec<OsString>,in_host:bool)->Result<()> {
     }
     if opts.uninstall_integration {
         let exe = std::env::current_exe()?;
-        crate::quick_search::control::uninstall_owned(&config, &exe)?;
-        crate::routing_control::uninstall_owned(&config, &exe)?;
-        aura_windows::integration::restore_owned(&exe, &config.with_file_name("takeover-backup.json"))?;
+        // Each step is its own concern, and the uninstaller runs with the programs gone:
+        // a step that cannot find what it looks for has done its job, and none of them
+        // may stop the ones after it. Otherwise one leftover file keeps the registry
+        // edits in place — which is exactly what removal used to do.
+        for step in [
+            crate::quick_search::control::uninstall_owned(&config, &exe),
+            crate::routing_control::uninstall_owned(&config, &exe),
+            remove_folder_integration(&exe),
+        ] {
+            if let Err(error) = step {
+                // Not `runtime::trace`: it stays silent unless a variable is set, and a
+                // forgotten registry value must not be a silent outcome.
+                eprintln!("{}", aura_core::i18n::text("清理系统集成时出错"));
+                eprintln!("  {error}");
+            }
+        }
         return Ok(());
     }
     if let Some(report)=opts.diagnostics_main{return crate::instance::diagnose(&config,&std::path::absolute(report)?);}
