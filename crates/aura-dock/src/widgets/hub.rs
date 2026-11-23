@@ -120,10 +120,18 @@ impl ScreenTime {
         std::fs::read_to_string(Self::path()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
     }
     pub fn save(&self) {
-        // config.rs watches the folder for config.json only; this file doesn't trigger reloads.
-        if let Ok(t) = serde_json::to_string(self) {
-            let _ = std::fs::write(Self::path(), t);
-        }
+        // Preserve a damaged/unreadable history rather than replacing it with defaults.
+        let path = Self::path();
+        let result = (|| -> std::io::Result<()> {
+            match std::fs::read(&path) {
+                Ok(bytes) => { serde_json::from_slice::<ScreenTime>(&bytes).map_err(std::io::Error::other)?; }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                Err(e) => return Err(e),
+            }
+            let bytes = serde_json::to_vec(self).map_err(std::io::Error::other)?;
+            aura_core::atomic_file::write(&path, &bytes)
+        })();
+        if let Err(error) = result { eprintln!("screen time was not saved: {error}"); }
     }
     pub fn total(&self) -> u64 {
         self.apps.values().sum()

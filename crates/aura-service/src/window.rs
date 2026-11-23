@@ -256,6 +256,7 @@ impl App {
         let was = self.settings.wants(component);
         self.settings.set(component.id, !was);
         if launch::save(&self.settings).is_err() {
+            self.settings.set(component.id, was);
             self.say("Не удалось сохранить настройки: проверьте папку настроек.", Tone::Bad);
             return;
         }
@@ -303,6 +304,11 @@ impl App {
         let wanted = !self.settings.autostart;
         self.settings.autostart = wanted;
         let saved = launch::save(&self.settings).is_ok();
+        if !saved {
+            self.settings.autostart = !wanted;
+            self.say("Не удалось сохранить настройки: проверьте папку настроек.", Tone::Bad);
+            return;
+        }
         let written = launch::logon::set(wanted);
         launch::log(&format!("settings: autostart {}", if wanted { "on" } else { "off" }));
         let (text, tone) = if !saved {
@@ -380,9 +386,10 @@ impl App {
 
     /// Once a second: read the world again and follow up on what was asked for.
     fn tick(&mut self) {
-        let fresh = launch::load();
-        if fresh.run != self.settings.run || fresh.autostart != self.settings.autostart {
-            self.settings = fresh;
+        if let Ok(fresh) = launch::try_load() {
+            if fresh.run != self.settings.run || fresh.autostart != self.settings.autostart || fresh.profile != self.settings.profile {
+                self.settings = fresh;
+            }
         }
         let mut answered: Vec<(&'static str, bool)> = Vec::new();
         self.waiting.retain(|(id, deadline)| {
@@ -701,17 +708,21 @@ pub fn run() -> windows::core::Result<()> {
             None,
         )?;
         let scale = GetDpiForWindow(window) as f32 / 96.0;
+        let (initial_settings, settings_error) = match launch::try_load() {
+            Ok(settings) => (settings, false),
+            Err(error) => { launch::log(&format!("settings: cannot load profile: {error}")); (Settings::default(), true) }
+        };
         let state = Box::new(App {
             hwnd: window,
             dark,
             gfx: Gfx::new(FACE).ok(),
             surface: None,
             look: Look::of(dark, scale),
-            settings: launch::load(),
+            settings: initial_settings,
             tab: TAB_COMPONENTS,
             hover: None,
-            notice: String::new(),
-            tone: Tone::Info,
+            notice: if settings_error { "Не удалось прочитать настройки: файл сохранён без изменений.".into() } else { String::new() },
+            tone: if settings_error { Tone::Bad } else { Tone::Info },
             waiting: Vec::new(),
             service_wait: None,
             width: width as f32,

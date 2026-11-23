@@ -439,11 +439,21 @@ impl Config {
         self
     }
 
-    pub fn save(&self) {
-        let _ = std::fs::create_dir_all(dir());
-        if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path(), text);
+    pub fn save(&self) -> std::io::Result<()> { self.save_to(&path()) }
+
+    fn save_to(&self, destination: &std::path::Path) -> std::io::Result<()> {
+        // An existing invalid or unreadable profile may contain the user's pins.
+        // Never replace it with the in-memory fallback defaults.
+        match std::fs::read_to_string(&destination) {
+            Ok(text) => {
+                serde_json::from_str::<Config>(text.trim_start_matches('\u{feff}'))
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+            Err(e) => return Err(e),
         }
+        let text = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
+        aura_core::atomic_file::write(destination, &text)
     }
 
     /// True if anything that changes the dock's layout or look differs.
@@ -494,5 +504,22 @@ mod tests {
         c.launchpad_widgets.push(WRef::Id("no-such-widget".into()));
         c = c.sanitized();
         assert!(!c.launchpad_widgets.iter().any(|w| w.id() == "no-such-widget"));
+    }
+}
+
+#[cfg(test)]
+mod persistence_audit_tests {
+    use super::*;
+    #[test]
+    fn invalid_profile_is_never_replaced_by_defaults() {
+        let dir = std::env::temp_dir().join(format!("aura-dock-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"broken but recoverable").unwrap();
+        let error = Config::default().save_to(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), b"broken but recoverable");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

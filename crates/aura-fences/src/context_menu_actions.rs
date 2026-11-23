@@ -91,9 +91,7 @@ pub fn compress(sources: &[PathBuf], folder: &Path) -> Result<PathBuf> {
     let entries = aura_core::archive::collect(sources, aura_core::archive::Limits::default())?;
     anyhow::ensure!(!entries.is_empty(), "{}", aura_core::i18n::text("没有可压缩的项目"));
     let name = aura_core::archive::archive_name_for(sources, Some(folder));
-    let destination = aura_core::archive::unique_destination(folder, &name);
-    aura_core::archive::write_zip(&destination, &entries)?;
-    Ok(destination)
+    Ok(aura_core::archive::write_unique_zip(folder, &name, &entries)?)
 }
 
 /// Opens a console in `folder`: Windows Terminal when installed, otherwise the

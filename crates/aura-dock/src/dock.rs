@@ -44,6 +44,13 @@ use crate::taskbar;
 use crate::tracker::{self, Tracker, Win};
 use crate::{metrics, Options};
 
+fn report_settings_error(hwnd: HWND, error: &std::io::Error) {
+    eprintln!("dock settings were not saved: {error}");
+    let message: Vec<u16> = format!("Не удалось сохранить настройки панели. Существующий файл не изменён.\n\n{}", error)
+        .encode_utf16().chain(Some(0)).collect();
+    unsafe { let _ = MessageBoxW(Some(hwnd), windows::core::PCWSTR(message.as_ptr()), w!("AuraDock"), MB_OK | MB_ICONERROR); }
+}
+
 /// Defined in Win32::UI::Controls; declared here to avoid pulling in that whole module.
 const WM_MOUSELEAVE: u32 = 0x02A3;
 pub const WM_APP_RESCAN: u32 = WM_APP + 1;
@@ -2533,7 +2540,7 @@ impl Dock {
         let due = crate::updater::check_due(self.cfg.check_updates, self.cfg.update_check_hours, last, now, first);
         if due {
             self.cfg.last_update_check = now;
-            self.cfg.save();
+            if let Err(error) = self.cfg.save() { trace!("dock settings were not saved: {error}"); }
             self.check_for_update(false);
         } else if first {
             // Not checking now, but a version downloaded earlier still gets its dock icon.
@@ -2648,7 +2655,10 @@ impl Dock {
         f(&mut cfg);
         // Same rules as loading the file (e.g. always-on widgets appear or go at once).
         let cfg = cfg.sanitized();
-        cfg.save();
+        if let Err(error) = cfg.save() {
+            report_settings_error(self.hwnd, &error);
+            return;
+        }
         self.apply_config(cfg);
     }
 
@@ -4041,7 +4051,9 @@ impl Dock {
                 let mut cfg = self.cfg.clone();
                 lp::cfg_set(&mut cfg, key, v);
                 if commit {
-                    cfg.save();
+                    if let Err(error) = cfg.save() {
+                        report_settings_error(self.hwnd, &error);
+                    }
                 }
                 if cfg != self.cfg {
                     self.apply_config(cfg);
@@ -6373,7 +6385,9 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
     let integrate = !(opts.measure || opts.demo_hover || opts.demo.is_some());
 
     // Settings: first run writes defaults with the apps installed on this PC.
-    let mut cfg = match Config::load() {
+    let loaded = Config::load();
+    let profile_unreadable = loaded.is_none() && Config::exists();
+    let mut cfg = match loaded {
         Some(c) => c,
         None => {
             let mut c = Config::default();
@@ -6381,18 +6395,18 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             // Only create the file if there isn't one; never overwrite a file that
             // merely failed to parse (it may hold the user's pins).
             if !Config::exists() {
-                c.save();
+                if let Err(error) = c.save() { trace!("dock settings were not saved: {error}"); }
             }
             c
         }
     };
     // AuraExplorer's own icon leads the panel, including for settings written by an older dock.
     if apps::ensure_own_pin(&mut cfg) && Config::exists() {
-        cfg.save();
+        if let Err(error) = cfg.save() { trace!("dock settings were not saved: {error}"); }
     }
     // The control centre's own button: added once, and only if the panel never had it.
     if cfg.ensure_control_center_pin() && Config::exists() {
-        cfg.save();
+        if let Err(error) = cfg.save() { trace!("dock settings were not saved: {error}"); }
     }
 
     unsafe {
@@ -6424,6 +6438,10 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             Some(instance.into()),
             None,
         )?;
+        if profile_unreadable && integrate {
+            report_settings_error(hwnd, &std::io::Error::new(std::io::ErrorKind::InvalidData,
+                "Не удалось прочитать config.json; восстановите файл перед сохранением настроек."));
+        }
         // Allow the live desktop blur, and keep the dock visible during Aero Peek.
         // DWMWA_USE_HOSTBACKDROPBRUSH is Windows 11 only: on Windows 10 it fails and the
         // dock just loses the blur, so never let it stop startup.
@@ -6631,7 +6649,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
                 let actual = crate::updater::sync_start_at_login(dock.cfg.start_at_login);
                 if actual != dock.cfg.start_at_login {
                     dock.cfg.start_at_login = actual;
-                    dock.cfg.save();
+                    if let Err(error) = dock.cfg.save() { trace!("dock settings were not saved: {error}"); }
                 }
                 SetTimer(Some(hwnd), T_UPDATE_CHECK, 20_000, None);
             }

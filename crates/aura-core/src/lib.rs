@@ -7,6 +7,7 @@
 #[macro_use]
 pub mod i18n;
 pub mod archive;
+pub mod atomic_file;
 pub mod error;
 pub mod model;
 pub mod path;

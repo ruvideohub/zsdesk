@@ -111,6 +111,10 @@ fn walk(source: &Path, name: &str, depth: usize, limits: Limits, entries: &mut V
     if metadata.file_type().is_symlink() {
         return Ok(());
     }
+    if depth > limits.max_depth {
+        return Err(too_large(format!("{}: {}",
+            tr_format!("文件夹层级超过 {limit} 层，未创建压缩包", limit = limits.max_depth), source.display())));
+    }
     if entries.len() >= limits.max_entries {
         return Err(too_large(format!(
             "{}: {}",
@@ -120,14 +124,9 @@ fn walk(source: &Path, name: &str, depth: usize, limits: Limits, entries: &mut V
     }
     if metadata.is_dir() {
         entries.push(Entry::directory(name, source));
-        if depth >= limits.max_depth {
-            return Err(too_large(format!(
-                "{}: {}",
-                tr_format!("文件夹层级超过 {limit} 层，未创建压缩包", limit = limits.max_depth),
-                source.display(),
-            )));
-        }
-        let mut children: Vec<PathBuf> = fs::read_dir(source)?.filter_map(|item| item.ok().map(|item| item.path())).collect();
+        let mut children: Vec<PathBuf> = fs::read_dir(source)?
+            .map(|item| item.map(|item| item.path()))
+            .collect::<io::Result<_>>()?;
         children.sort_by_key(|path| path.file_name().map(|name| name.to_string_lossy().to_lowercase()).unwrap_or_default());
         for child in children {
             let Some(child_name) = child.file_name().map(|value| value.to_string_lossy().into_owned()) else { continue };
@@ -147,23 +146,77 @@ fn sanitize(name: &str) -> String {
     parts.drain(..).collect::<Vec<_>>().join("/")
 }
 
+/// Create the first available archive name without a check-then-create race.
+pub fn write_unique_zip(folder: &Path, name: &str, entries: &[Entry]) -> io::Result<PathBuf> {
+    let stem = Path::new(name).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "archive".into());
+    for index in 1..10_000u32 {
+        let path = if index == 1 { folder.join(name) } else { folder.join(format!("{stem} ({index}).zip")) };
+        let file = match create_zip(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        };
+        write_reserved(file, &path, entries)?;
+        return Ok(path);
+    }
+    Err(io::Error::new(io::ErrorKind::AlreadyExists, "no available archive name"))
+}
+
 /// Writes a stored-only archive. Returns the number of entries written.
 ///
 /// A file that is created here and not finished is removed again: a half-written
 /// ZIP beside the originals is worse than no ZIP, because it looks like the real
 /// thing until someone opens it.
 pub fn write_zip(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
-    match write_zip_inner(destination, entries) {
+    write_reserved(create_zip(destination)?, destination, entries)
+}
+
+fn create_zip(destination: &Path) -> io::Result<File> {
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Prevent renames/replacement while this operation owns the file; DELETE access
+    // permits removing this exact handle, not whatever happens to occupy its name.
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.access_mode(0x4000_0000 | 0x0001_0000).share_mode(0);
+    }
+    options.open(destination)
+}
+
+fn write_reserved(mut file: File, destination: &Path, entries: &[Entry]) -> io::Result<usize> {
+    match write_zip_inner(&mut file, entries) {
         Ok(written) => Ok(written),
-        Err(error) => {
-            let _ = fs::remove_file(destination);
-            Err(error)
-        }
+        Err(error) => match remove_owned_zip(&file, destination) {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(io::Error::new(error.kind(), format!(
+                "{error}; could not remove incomplete archive {}: {cleanup}", destination.display()))),
+        },
     }
 }
 
-fn write_zip_inner(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
-    let mut file = File::create(destination)?;
+#[cfg(windows)]
+fn remove_owned_zip(file: &File, _destination: &Path) -> io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn SetFileInformationByHandle(handle: *mut std::ffi::c_void, class: i32, info: *const std::ffi::c_void, size: u32) -> i32;
+    }
+    let delete: u8 = 1; // FILE_DISPOSITION_INFO.DeleteFile is a Windows BOOLEAN.
+    let ok = unsafe { SetFileInformationByHandle(file.as_raw_handle(), 4, (&delete as *const u8).cast(), 1) };
+    if ok == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
+
+#[cfg(not(windows))]
+fn remove_owned_zip(_file: &File, destination: &Path) -> io::Result<()> {
+    fs::remove_file(destination)
+}
+
+fn write_zip_inner(file: &mut File, entries: &[Entry]) -> io::Result<usize> {
+    write_zip_with_hook(file, entries, |_| {})
+}
+
+fn write_zip_with_hook(file: &mut File, entries: &[Entry], mut before_copy: impl FnMut(&Entry)) -> io::Result<usize> {
     let stamp = dos_timestamp(SystemTime::now());
     let mut central = Vec::with_capacity(entries.len() * 64);
     let mut offset: u64 = 0;
@@ -194,8 +247,9 @@ fn write_zip_inner(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
         file.write_all(&header)?;
         offset += header.len() as u64;
         if !entry.is_dir {
-            let copied = copy_into(&entry.source, &mut file)?;
-            if copied != size { return Err(invalid("a file changed while the archive was written")); }
+            before_copy(entry);
+            let (copied_crc, copied) = copy_into(&entry.source, file)?;
+            ensure_unchanged((crc, size), (copied_crc, copied))?;
             offset += copied;
         }
         let mut record = Vec::with_capacity(46 + name.len());
@@ -239,23 +293,30 @@ fn write_zip_inner(destination: &Path, entries: &[Entry]) -> io::Result<usize> {
     Ok(written)
 }
 
+fn ensure_unchanged(expected: (u32, u64), copied: (u32, u64)) -> io::Result<()> {
+    if expected != copied { return Err(invalid("a file changed while the archive was written")); }
+    Ok(())
+}
+
 fn invalid(message: &str) -> io::Error { io::Error::new(io::ErrorKind::InvalidInput, message.to_string()) }
 
 /// The selection is bigger or deeper than the walk budget allows. Its own kind
 /// so the caller can tell "too much to pack" apart from "the disk refused".
 fn too_large(message: String) -> io::Error { io::Error::new(io::ErrorKind::FileTooLarge, message) }
 
-fn copy_into(source: &Path, output: &mut File) -> io::Result<u64> {
+fn copy_into(source: &Path, output: &mut File) -> io::Result<(u32, u64)> {
     let mut input = File::open(source)?;
     let mut buffer = vec![0u8; COPY_BUFFER];
     let mut copied = 0u64;
+    let mut crc = 0u32;
     loop {
         let read = input.read(&mut buffer)?;
         if read == 0 { break; }
         output.write_all(&buffer[..read])?;
+        crc = crc32(crc, &buffer[..read]);
         copied += read as u64;
     }
-    Ok(copied)
+    Ok((crc, copied))
 }
 
 fn digest(source: &Path) -> io::Result<(u32, u64)> {
@@ -443,4 +504,59 @@ mod tests {
         assert!(!destination.exists(), "a half-written archive must not survive the error");
         fs::remove_dir_all(&root).unwrap();
     }
+    #[test]
+    fn existing_destination_is_never_modified_or_removed() {
+        let root = scratch("existing");
+        let zip = root.join("existing.zip");
+        fs::write(&zip, b"do not touch").unwrap();
+        let result = write_zip(&zip, &[Entry::file("missing", root.join("missing"))]);
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&zip).unwrap(), b"do not touch");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn concurrent_writers_get_distinct_names() {
+        let root = scratch("concurrent");
+        let handles: Vec<_> = (0..8).map(|_| {
+            let root = root.clone();
+            std::thread::spawn(move || write_unique_zip(&root, "archive.zip", &[]).unwrap())
+        }).collect();
+        let paths: std::collections::HashSet<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(paths.len(), 8);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn same_size_different_content_is_rejected() {
+        let first = (crc32(0, b"AAAA"), 4);
+        let second = (crc32(0, b"BBBB"), 4);
+        assert!(ensure_unchanged(first, second).is_err());
+        assert!(ensure_unchanged(first, first).is_ok());
+    }
+
+    #[test]
+    fn empty_directory_at_depth_limit_is_allowed() {
+        let root = scratch("depth-boundary");
+        fs::create_dir(root.join("empty")).unwrap();
+        assert_eq!(collect(&[root.clone()], Limits { max_entries: 10, max_depth: 1 }).unwrap().len(), 2);
+        fs::write(root.join("empty/item"), b"x").unwrap();
+        assert_eq!(collect(&[root.clone()], Limits { max_entries: 10, max_depth: 1 }).unwrap_err().kind(), io::ErrorKind::FileTooLarge);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mutation_between_passes_is_detected() {
+        let root = scratch("mutation");
+        let source = root.join("source");
+        fs::write(&source, b"AAAA").unwrap();
+        let mut zip = create_zip(&root.join("out.zip")).unwrap();
+        let result = write_zip_with_hook(&mut zip, &[Entry::file("source", &source)], |entry| {
+            fs::write(&entry.source, b"BBBB").unwrap();
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidInput);
+        drop(zip);
+        fs::remove_dir_all(root).unwrap();
+    }
+
 }

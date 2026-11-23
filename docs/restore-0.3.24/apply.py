@@ -6,6 +6,7 @@ survive snapshot resets because they are top-level files, but crates/ does not).
 Idempotent: refuses to run twice by checking a marker.
 """
 import pathlib, sys, shutil
+print("WARNING: historical restore only; it does not include later ZIP or settings fixes. Use Git for current code.", file=sys.stderr)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 HERE = pathlib.Path(__file__).resolve().parent

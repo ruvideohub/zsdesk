@@ -223,14 +223,33 @@ pub fn start_component_with(component: &Component, arguments: &[&str]) -> bool {
     command.spawn().is_ok()
 }
 
-pub fn load() -> Settings {
-    std::fs::read_to_string(settings_path()).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default()
+pub fn try_load() -> std::io::Result<Settings> {
+    load_from(&settings_path())
 }
 
-pub fn save(settings: &Settings) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir())?;
-    let text = serde_json::to_string_pretty(settings).unwrap_or_default();
-    std::fs::write(settings_path(), text)
+fn load_from(path: &Path) -> std::io::Result<Settings> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_json::from_str(text.trim_start_matches('\u{feff}'))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(e) => Err(e),
+    }
+}
+
+pub fn load() -> Settings {
+    try_load().unwrap_or_else(|error| {
+        log(&format!("settings: cannot read {}: {error}", settings_path().display()));
+        Settings::default()
+    })
+}
+
+pub fn save(settings: &Settings) -> std::io::Result<()> { save_to(&settings_path(), settings) }
+
+fn save_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
+    // Never replace an unreadable or invalid existing file with defaults.
+    load_from(path)?;
+    let text = serde_json::to_vec_pretty(settings).map_err(std::io::Error::other)?;
+    aura_core::atomic_file::write(path, &text)
 }
 
 /// Append one line to the log, keeping it from growing without bound.
@@ -487,5 +506,22 @@ mod tests {
         // `widgets.exe` is started by the panel with `--dock <panel window>`; a copy started by
         // the service would have no panel to report to and would only fight the real one.
         assert!(COMPONENTS.iter().all(|component| component.exe != "widgets.exe"));
+    }
+}
+
+#[cfg(test)]
+mod persistence_audit_tests {
+    use super::*;
+    #[test]
+    fn invalid_settings_are_reported_and_preserved() {
+        let dir = std::env::temp_dir().join(format!("aura-service-profile-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("launch.json");
+        std::fs::write(&path, b"not json").unwrap();
+        assert_eq!(load_from(&path).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(save_to(&path, &Settings::default()).unwrap_err().kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), b"not json");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

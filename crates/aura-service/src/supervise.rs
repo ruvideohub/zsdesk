@@ -51,7 +51,17 @@ pub fn run() -> windows::core::Result<()> {
     }
     log(&format!("service: started (pid {})", std::process::id()));
 
-    let mut settings = launch::load();
+    // Do not apply defaults over a temporarily unreadable or malformed profile.
+    let mut warned = false;
+    let mut settings = loop {
+        match launch::try_load() {
+            Ok(settings) => break settings,
+            Err(error) => {
+                if !warned { log(&format!("service: cannot load settings; waiting: {error}")); warned = true; }
+                std::thread::sleep(TICK);
+            }
+        }
+    };
     // The logon entry is ours to keep true, not just to write at install time.
     let _ = launch::logon::set(settings.autostart);
 
@@ -63,8 +73,15 @@ pub fn run() -> windows::core::Result<()> {
         .map(|component| (component.id, false))
         .collect();
     loop {
-        let fresh = launch::load();
-        if fresh.version != settings.version || fresh.autostart != settings.autostart || fresh.run != settings.run {
+        let fresh = match launch::try_load() {
+            Ok(fresh) => { warned = false; fresh },
+            Err(error) => {
+                if !warned { log(&format!("service: cannot reload settings; keeping previous values: {error}")); warned = true; }
+                std::thread::sleep(TICK);
+                continue;
+            }
+        };
+        if fresh.version != settings.version || fresh.autostart != settings.autostart || fresh.run != settings.run || fresh.profile != settings.profile {
             if fresh.autostart != settings.autostart {
                 let _ = launch::logon::set(fresh.autostart);
                 log(&format!("service: autostart {}", if fresh.autostart { "on" } else { "off" }));
@@ -107,8 +124,11 @@ fn reconcile(settings: &mut Settings, running: &mut Vec<Running>, roles: &mut Ve
                 // A window the user closed: leave it closed and turn its switch off, so the
                 // settings say what is true instead of promising a program that never comes.
                 settings.set(id, false);
-                let _ = launch::save(settings);
-                log(&format!("service: {id} exited and stays closed; its switch is off now"));
+                if let Err(error) = launch::save(settings) {
+                    log(&format!("service: could not save {id} switch: {error}"));
+                } else {
+                    log(&format!("service: {id} exited and stays closed; its switch is off now"));
+                }
                 continue;
             }
             // Back off, so a component that fails at once is not restarted in a loop.

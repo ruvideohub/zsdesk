@@ -1113,6 +1113,7 @@ dependencies = [
 name = "aura-dock"
 version = "0.3.23"
 dependencies = [
+ "aura-core",
  "embed-resource",
  "laminar-sys",
  "serde",
@@ -1133,6 +1134,7 @@ dependencies = [
 name = "aura-service"
 version = "0.3.23"
 dependencies = [
+ "aura-core",
  "aura-windows",
  "embed-resource",
  "serde",
