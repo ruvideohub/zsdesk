@@ -583,6 +583,7 @@ mod tests {
             wYear: 2026,
             wMonth: 11,
             wDay: 19,
+            wDayOfWeek: 4, // Thursday; SYSTEMTIME does not infer it from the date.
             wHour: 15,
             wMinute: 7,
             wSecond: 4,
