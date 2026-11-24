@@ -133,8 +133,8 @@ jobs:
       # So each package is run on its own: one broken binary cannot hide the others, and the
       # summary says which ones failed. On failure the step also prints what a test binary could
       # not load, because "STATUS_ENTRYPOINT_NOT_FOUND" on its own says nothing.
-      # Dock's full test binary is excluded below; exercise the watchdog startup and
-      # timeout protocol independently on every Windows build without GUI fixtures.
+      # Dock's library tests are run explicitly below; watchdog startup and timeout
+      # are also exercised independently without GUI fixtures.
       - name: Dock watchdog protocol tests
         shell: pwsh
         working-directory: aura
@@ -159,16 +159,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-appbar-policy-tests.exe
           exit $LASTEXITCODE
-      - name: Dock tray host protocol tests
+      - name: Dock library unit tests
         shell: pwsh
         working-directory: aura
         run: |
-          $tests = cargo test --locked --release -p aura-dock --lib tray::tests:: -- --list
+          # Two searches rely on real installed applications and the local Settings index;
+          # run the remaining tests serially (some change the global UI language).
+          $tests = cargo test --locked --release -p aura-dock --lib -- --list
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not ($tests | Select-String -SimpleMatch 'tray::tests::restart_clears_stale_icons_and_accepts_fresh_registration')) {
             throw 'Tray protocol test was not discovered'
           }
-          cargo test --locked --release -p aura-dock --lib tray::tests:: -- --test-threads=1
+          cargo test --locked --release -p aura-dock --lib -- --test-threads=1 --skip real_searches --skip learning_lifts_a_pick
           exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test
         shell: pwsh
