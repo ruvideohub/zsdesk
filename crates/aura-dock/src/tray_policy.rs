@@ -28,8 +28,8 @@ pub fn registration_uid(is_add: bool, has_guid: bool, current: u32, incoming: u3
 
 /// A partial icon learned from MODIFY must be allowed to complete registration; a
 /// GUID can also be claimed by a new owner after an application restart.
-pub fn accepts_readd(has_icon: bool, old_callback: u32, owner_changed: bool) -> bool {
-    has_icon && (old_callback == 0 || owner_changed)
+pub fn accepts_readd(provisional: bool, old_callback: u32, owner_changed: bool) -> bool {
+    provisional || old_callback == 0 || owner_changed
 }
 
 /// Windows notification callback ABI: VERSION_4 uses screen coordinates in wParam
@@ -47,6 +47,13 @@ pub fn callback_words(version: u32, uid: u32, event: u32, x: i32, y: i32) -> (us
 /// A control-centre click activates only when press and release match.
 pub fn matching_release(pressed: Option<u64>, released: Option<u64>) -> Option<u64> {
     pressed.filter(|key| released == Some(*key))
+}
+
+/// A double-click needs the same icon, the Windows time limit, and its click rectangle.
+pub fn double_click(same_icon: bool, elapsed_ms: u128, limit_ms: u32, dx: i64, dy: i64, width: i32, height: i32) -> bool {
+    same_icon && elapsed_ms <= limit_ms as u128
+        && dx.abs() * 2 <= i64::from(width.max(1))
+        && dy.abs() * 2 <= i64::from(height.max(1))
 }
 
 /// A cached HWND identity is usable only while it belongs to the same process.
@@ -97,10 +104,10 @@ mod tests {
     }
     #[test]
     fn partial_or_new_owner_may_register_but_normal_duplicate_is_rejected() {
-        assert!(!accepts_readd(false, 0, false));
-        assert!(!accepts_readd(true, 0x8050, false));
-        assert!(accepts_readd(true, 0, false));
-        assert!(accepts_readd(true, 0x8050, true));
+        assert!(!accepts_readd(false, 0x8050, false));
+        assert!(accepts_readd(true, 0x8050, false)); // MODIFY included a callback before ADD
+        assert!(accepts_readd(false, 0, false));
+        assert!(accepts_readd(false, 0x8050, true));
     }
     #[test]
     fn click_requires_release_on_the_pressed_icon() {
@@ -108,6 +115,14 @@ mod tests {
         assert_eq!(matching_release(Some(12), Some(13)), None);
         assert_eq!(matching_release(Some(12), None), None);
         assert_eq!(matching_release(None, Some(12)), None);
+    }
+    #[test]
+    fn double_click_requires_same_icon_and_windows_time_and_distance() {
+        assert!(double_click(true, 250, 500, 1, -2, 4, 4));
+        assert!(!double_click(false, 250, 500, 0, 0, 4, 4));
+        assert!(!double_click(true, 501, 500, 0, 0, 4, 4));
+        assert!(!double_click(true, 250, 500, 3, 0, 4, 4));
+        assert!(!double_click(true, 250, 500, 0, -3, 4, 4));
     }
     #[test]
     fn stale_or_unresolved_window_identity_is_not_reused() {

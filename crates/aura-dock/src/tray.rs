@@ -94,6 +94,8 @@ pub struct Icon {
     stable_id: String,
     callback: u32,
     version: u32,
+    /// A MODIFY seen before ADD is only a provisional registration.
+    provisional: bool,
     /// Laminar's own copy of the icon (the app may destroy its handle at any time).
     pub hicon: Option<HICON>,
     pub tip: String,
@@ -367,6 +369,7 @@ pub fn active() -> bool {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Click {
     Left,
+    Double,
     Right,
 }
 
@@ -374,6 +377,7 @@ pub enum Click {
 pub enum TrayInput {
     MouseMove,
     LeftDown,
+    LeftDouble,
     LeftUp,
     RightDown,
     RightUp,
@@ -410,6 +414,7 @@ fn event_code(input: TrayInput) -> u32 {
     match input {
         TrayInput::MouseMove => WM_MOUSEMOVE,
         TrayInput::LeftDown => WM_LBUTTONDOWN,
+        TrayInput::LeftDouble => WM_LBUTTONDBLCLK,
         TrayInput::LeftUp => WM_LBUTTONUP,
         TrayInput::RightDown => WM_RBUTTONDOWN,
         TrayInput::RightUp => WM_RBUTTONUP,
@@ -427,7 +432,13 @@ pub fn send(key: u64, input: TrayInput, at: POINT) {
         let icon = b.as_ref()?.icons.iter().find(|i| i.key == key)?;
         Some((icon.owner, icon.uid, icon.callback, icon.version, icon.tip.clone()))
     });
-    let Some((owner, uid, callback, version, tip)) = target else { return };
+    let Some((owner, uid, callback, version, tip)) = target else {
+        ttrace!("tray event {input:?} has no registered target (key={key})");
+        return;
+    };
+    if !matches!(input, TrayInput::MouseMove | TrayInput::PopupOpen | TrayInput::PopupClose) {
+        ttrace!("'{tip}': posting {input:?}, ABI={version}, callback={callback:#x}, owner pid={}", window_pid(owner));
+    }
     if callback == 0 {
         // One request per physical click; down/up/select arrive as a sequence.
         if !matches!(input, TrayInput::LeftDown | TrayInput::RightDown) { return; }
@@ -471,6 +482,13 @@ pub fn click(key: u64, kind: Click, at: POINT) {
             let version = with_icons(|icons| icons.iter().find(|i| i.key == key).map(|i| i.version).unwrap_or(0));
             if version >= 3 { send(key, TrayInput::Select, at); }
         }
+        Click::Double => {
+            // Windows sends DBLCLK instead of the second DOWN, followed by UP.
+            send(key, TrayInput::LeftDouble, at);
+            send(key, TrayInput::LeftUp, at);
+            let version = with_icons(|icons| icons.iter().find(|i| i.key == key).map(|i| i.version).unwrap_or(0));
+            if version >= 3 { send(key, TrayInput::Select, at); }
+        }
         Click::Right => {
             send(key, TrayInput::RightDown, at);
             send(key, TrayInput::RightUp, at);
@@ -502,7 +520,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
             // An icon we already have (Explorer answers FALSE to a repeat add) still updates
             // its details: icons first seen through a modify may lack the click message.
             let resume_add = pos.is_some_and(|p| msg == NIM_ADD &&
-                crate::tray_policy::accepts_readd(true, host.icons[p].callback,
+                crate::tray_policy::accepts_readd(host.icons[p].provisional, host.icons[p].callback,
                     !owner.is_invalid() && host.icons[p].owner != owner));
             let repeat_add = pos.is_some() && msg == NIM_ADD && !resume_add;
             let idx = match (pos, msg) {
@@ -520,6 +538,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
                         stable_id: stable_id_for(owner, n.uid, guid),
                         callback: 0,
                         version: 0,
+                        provisional: msg == NIM_MODIFY,
                         hicon: None,
                         tip: String::new(),
                         hidden: false,
@@ -530,6 +549,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
                 }
             };
             let i = &mut host.icons[idx];
+            if msg == NIM_ADD && !repeat_add { i.provisional = false; }
             if resume_add {
                 // The new registration starts in the default ABI until SETVERSION arrives.
                 i.version = 0;
@@ -584,6 +604,7 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
         NIM_SETVERSION => match pos {
             Some(p) => {
                 host.icons[p].version = n.version;
+                ttrace!("'{}': negotiated tray ABI {}", host.icons[p].tip, n.version);
                 changed(host);
                 true
             }
@@ -726,6 +747,27 @@ mod tests {
     }
 
     #[test]
+    fn qt_modify_then_add_with_callback_can_negotiate_v4() {
+        // Qt handles TaskbarCreated by MODIFYing its icon before it issues ADD.
+        // Although MODIFY contains NIF_MESSAGE, that must not make the later ADD
+        // a duplicate: Qt only sends SETVERSION after a successful ADD.
+        for guid in [false, true] {
+            let mut h = host();
+            let mut n = data(7);
+            n.flags = NIF_MESSAGE | NIF_ICON | if guid { NIF_GUID } else { 0 };
+            assert!(apply(&mut h, NIM_MODIFY, &n));
+            assert_eq!(h.icons[0].callback, WM_USER + 42);
+            assert!(h.icons[0].provisional);
+            assert!(apply(&mut h, NIM_ADD, &n));
+            assert!(!h.icons[0].provisional);
+            n.version = 4;
+            assert!(apply(&mut h, NIM_SETVERSION, &n));
+            assert_eq!(h.icons[0].version, 4);
+            assert!(!apply(&mut h, NIM_ADD, &n));
+        }
+    }
+
+    #[test]
     fn guid_with_new_owner_can_negotiate_new_version() {
         let mut h = host();
         let mut n = data(7);
@@ -760,7 +802,7 @@ mod tests {
         let mut h = host();
         h.icons.push(Icon {
             key: 81, gen: 0, owner: receiver, uid: 0x1234_5678, guid: None,
-            stable_id: "test".into(), callback: CALLBACK, version: 0,
+            stable_id: "test".into(), callback: CALLBACK, version: 0, provisional: false,
             hicon: None, tip: String::new(), hidden: false, show_tip: false,
         });
         HOST.with(|slot| *slot.borrow_mut() = Some(h));
@@ -778,12 +820,19 @@ mod tests {
         assert_eq!(legacy, [WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP].into_iter()
             .map(|event| (0x1234_5678, event as isize)).collect::<Vec<_>>());
 
+        click(81, Click::Double, point);
+        assert_eq!(read(), [WM_MOUSEMOVE, WM_LBUTTONDBLCLK, WM_LBUTTONUP].into_iter()
+            .map(|event| (0x1234_5678, event as isize)).collect::<Vec<_>>());
+
         HOST.with(|slot| slot.borrow_mut().as_mut().unwrap().icons[0].version = 4);
         click(81, Click::Left, point);
         let modern = read();
         assert_eq!(modern, [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, NIN_SELECT].into_iter()
             .map(|event| crate::tray_policy::callback_words(4, 0x1234_5678, event, point.x, point.y))
             .collect::<Vec<_>>());
+        click(81, Click::Double, point);
+        assert_eq!(read(), [WM_MOUSEMOVE, WM_LBUTTONDBLCLK, WM_LBUTTONUP, NIN_SELECT].into_iter()
+            .map(|event| crate::tray_policy::callback_words(4, 0x1234_5678, event, point.x, point.y)).collect::<Vec<_>>());
         click(81, Click::Right, point);
         let modern = read();
         assert_eq!(modern, [WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_CONTEXTMENU].into_iter()

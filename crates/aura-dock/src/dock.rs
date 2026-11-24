@@ -613,6 +613,7 @@ struct Dock {
     tray_popup: crate::tray_strip::TrayPopup,
     mini_tray: crate::tray_mini::MiniTray,
     mini_press: Option<crate::tray_mini::Hit>,
+    tray_last_click: Option<(u64, Instant, POINT)>,
     tray_hover: Option<(u64, bool)>,
     tray_tip_open: Option<u64>,
     tray_custom_popup: Option<u64>,
@@ -3958,6 +3959,22 @@ impl Dock {
         self.set_tray_hover(None, false);
         let mut p = POINT::default();
         let _ = get_cursor_pos(&mut p);
+        // Our popup class does not request CS_DBLCLKS. Reconstruct the second
+        // click only for the same icon, using Windows' time and distance settings.
+        let kind = if kind == crate::tray::Click::Left {
+            let now = Instant::now();
+            let is_double = self.tray_last_click.map(|(previous, at, point)| {
+                crate::tray_policy::double_click(previous == key, now.duration_since(at).as_millis(),
+                    unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() },
+                    i64::from(p.x) - i64::from(point.x), i64::from(p.y) - i64::from(point.y),
+                    unsafe { GetSystemMetrics(SM_CXDOUBLECLK) }, unsafe { GetSystemMetrics(SM_CYDOUBLECLK) })
+            }).unwrap_or(false);
+            self.tray_last_click = if is_double { None } else { Some((key, now, p)) };
+            if is_double { crate::tray::Click::Double } else { kind }
+        } else {
+            self.tray_last_click = None;
+            kind
+        };
         crate::tray::click(key, kind, p);
     }
 
@@ -6685,6 +6702,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             tray_popup,
             mini_tray,
             mini_press: None,
+            tray_last_click: None,
             tray_hover: None,
             tray_tip_open: None,
             tray_custom_popup: None,
