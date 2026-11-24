@@ -202,6 +202,24 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Remove Widget" => "Убрать виджет",
         "Turn Off in Settings…" => "Отключить в настройках…",
         // ---------------------------------------------------------------- launchpad
+        "Top Hit" => "Лучший результат",
+        "Commands" => "Команды",
+        "Run" => "Выполнить",
+        "Confirm" => "Подтвердить",
+        "Lock Screen" => "Заблокировать экран",
+        "Lock this PC" => "Заблокировать компьютер",
+        "Take a Screenshot" => "Сделать снимок экрана",
+        "Snipping Tool" => "Ножницы",
+        "Sign Out" => "Выйти из системы",
+        "Shut Down" => "Завершить работу",
+        "Put this PC to sleep" => "Перевести компьютер в спящий режим",
+        "Close your apps and sign out" => "Закрыть приложения и выйти из системы",
+        "Close your apps and restart" => "Закрыть приложения и перезагрузить компьютер",
+        "Close your apps and turn off" => "Закрыть приложения и выключить компьютер",
+        "Press Enter again to sleep" => "Нажмите Enter ещё раз для перехода в спящий режим",
+        "Press Enter again to sign out" => "Нажмите Enter ещё раз для выхода из системы",
+        "Press Enter again to restart" => "Нажмите Enter ещё раз для перезагрузки",
+        "Press Enter again to shut down" => "Нажмите Enter ещё раз для выключения",
         "Search apps, settings, files, or calculate" => "Поиск приложений, настроек, файлов или калькулятор",
         "Pinned" => "Закреплённые",
         "All apps" => "Все приложения",
@@ -332,6 +350,17 @@ mod tests {
         assert_eq!(tr("Microsoft Edge"), "Microsoft Edge");
         assert_eq!(tr(r"C:\Windows\explorer.exe"), r"C:\Windows\explorer.exe");
         assert_eq!(tr(""), "");
+    }
+
+    #[test]
+    fn power_confirmation_labels_are_translated() {
+        for text in [
+            "Press Enter again to sleep", "Press Enter again to sign out",
+            "Press Enter again to restart", "Press Enter again to shut down",
+            "Confirm", "Run", "Shut Down", "Sign Out", "Sleep", "Restart",
+        ] {
+            assert!(super::lookup(text).is_some(), "{text}");
+        }
     }
 
     #[test]

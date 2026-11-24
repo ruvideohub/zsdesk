@@ -350,7 +350,11 @@ fn commands(q: &str, d: &Data, armed_cmd: Option<SysCmd>) -> Vec<Row> {
     }
     let mut out = Vec::new();
     for (title, sub, g, act, kw, state, key) in v {
-        let kws: Vec<String> = kw.iter().map(|s| s.to_string()).collect();
+        // Russian phrases must start with the query: a generic word such as
+        // "компьютер" alone must not suggest turning the machine off.
+        let query = q.trim().to_lowercase();
+        let russian = crate::launchpad_command_aliases::matching(key, &query);
+        let kws: Vec<String> = kw.iter().copied().chain(russian).map(|s| s.to_string()).collect();
         // Armed rows keep matching by their plain name.
         let name_for_match = match &act {
             Act::Sys(c) | Act::Arm(c) if *c != SysCmd::EmptyBin => match c {
@@ -614,7 +618,7 @@ impl Launchpad {
             // Right side: toggle state, and on the selected row what Enter does.
             let mut rx = pad + row_w - 12.0 * s;
             if selected {
-                let hint = format!("\u{21B5} {}", r.verb);
+                let hint = format!("\u{21B5} {}", crate::strings::tr(r.verb));
                 let st = TextStyle { px: 11.5 * s, weight: 500, color: (1.0, 1.0, 1.0, 0.85), ..Default::default() };
                 let (w, h) = Self::txt(c, gfx, inner, &hint, st.clone(), 0.0, -1000.0)?;
                 Self::txt(c, gfx, inner, &hint, st, rx - w, y + (rh - h) / 2.0)?;
@@ -647,6 +651,39 @@ impl Launchpad {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn russian_commands_keep_their_actions_and_confirmation() {
+        let cfg = crate::config::Config::default();
+        let control = crate::services::ControlState::default();
+        let hub = crate::widgets::Hub::new(windows::Win32::Foundation::HWND::default());
+        let history = laminar_sys::history::History::default();
+        let brushes = HashMap::new();
+        let names = HashMap::new();
+        let d = Data {
+            apps: &[], brushes: &brushes, pinned: &[], names: &names, control: &control,
+            stats: None, weather: None, files: &[], cfg: &cfg, user: "Test", wifi: None,
+            tray: &[], tray_list: &[], hub: &hub, whatsapp: None, update: None,
+            app_version: "0.0.0", app_update: "", update_ui: crate::launchpad::UpdateUi::Off,
+            windows: &[], history: &history,
+        };
+        for (query, command) in [
+            ("СПЯЩИЙ РЕЖИМ", SysCmd::Sleep), ("выйти из системы", SysCmd::SignOut),
+            ("перезагрузка", SysCmd::Restart), ("завершить работу", SysCmd::ShutDown),
+        ] {
+            let rows = commands(query, &d, None);
+            assert!(rows.iter().any(|r| r.act == Act::Arm(command) && r.key.is_none()), "{query}");
+            assert!(!rows.iter().any(|r| r.act == Act::Sys(command)), "{query}");
+            let armed = commands(query, &d, Some(command));
+            assert!(armed.iter().any(|r| r.act == Act::Sys(command) && r.key.is_none()), "{query}");
+        }
+        for (query, act) in [("скриншот", Act::Snip), ("блокировка экрана", Act::Lock)] {
+            assert!(commands(query, &d, None).iter().any(|r| r.act == act), "{query}");
+        }
+        assert!(!commands("корзина", &d, None).iter().any(|r| r.act == Act::Sys(SysCmd::EmptyBin)));
+        assert!(!commands("компьютер", &d, None).iter().any(|r| matches!(r.act, Act::Arm(_) | Act::Sys(_))));
+        assert!(commands("restart", &d, None).iter().any(|r| r.act == Act::Arm(SysCmd::Restart)));
+    }
 
     #[test]
     fn web_shortcuts() {

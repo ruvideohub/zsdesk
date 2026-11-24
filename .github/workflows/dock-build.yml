@@ -176,6 +176,9 @@ jobs:
           if (-not ($tests | Select-String -SimpleMatch 'launchpad_input::tests::stale_replies_cannot_cross_edits_close_or_new_search')) {
             throw 'Launchpad search safety test was not discovered'
           }
+          if (-not ($tests | Select-String -SimpleMatch 'launchpad::launchpad_search::tests::russian_commands_keep_their_actions_and_confirmation')) {
+            throw 'Launchpad Russian command safety test was not discovered'
+          }
           cargo test --locked --release -p aura-dock --lib -- --test-threads=1 --skip real_searches --skip learning_lifts_a_pick
           exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test
