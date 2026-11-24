@@ -251,6 +251,8 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Dock" => "Панель",
         "Glass" => "Стекло",
         "Behavior" => "Поведение",
+        "Start Dock when I sign in" => "Запускать Dock при входе в Windows",
+        "Dock starts the desktop widgets too." => "Dock также запускает виджеты рабочего стола.",
         "About" => "О программе",
         "Widgets" => "Виджеты",
         // Dock section

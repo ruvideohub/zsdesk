@@ -220,7 +220,7 @@ const CMD_SYSTEM_HIDE: usize = 3661;
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
 /// Widgets one click away from the panel's own menu: the everyday ones.
-const DOCK_WIDGETS: [&str; 9] = [
+const DOCK_WIDGETS: [&str; 8] = [
     "clock",
     "weather-hourly",
     "month",
@@ -229,7 +229,6 @@ const DOCK_WIDGETS: [&str; 9] = [
     "now-playing-compact",
     "network",
     "control-tiles",
-    "control-center",
 ];
 /// The card's three sizes, as multipliers.
 const CLOCK_SCALES: [f32; 3] = [0.85, 1.0, 1.2];
@@ -2244,10 +2243,6 @@ impl Dock {
         let app = item.clone().filter(|it| it.kind == Kind::App);
         let wins = app.as_ref().map(|it| self.item_windows(it)).unwrap_or_default();
         let mut m: Vec<MenuItem> = Vec::new();
-        if app.is_none() {
-            m.push(MenuItem::item("Control Center", CMD_CONTROL_CENTER));
-            m.push(MenuItem::sep());
-        }
         if let Some(it) = &app {
             let name = self.names.get(&it.key).cloned().unwrap_or_else(|| it.key.clone());
             m.push(MenuItem::header(name));

@@ -193,6 +193,7 @@ fn section_rows(i: usize) -> Vec<Row> {
             r("card_shadow", "Widget shadow", "Depth under widgets and tiles.", Slider { min: 0.0, max: 1.0, step: 0.01, unit: "%" }),
         ],
         2 => vec![
+            r("start_at_login", "Start Dock when I sign in", "Dock starts the desktop widgets too.", Toggle),
             r("auto_hide", "Automatically hide the dock", "Push the pointer into the bottom edge to bring it back.", Toggle),
             r("reveal_zone", "Reveal zone height", "", Slider { min: 1.0, max: 40.0, step: 1.0, unit: "px" }),
             r("reveal_delay_ms", "Reveal delay", "", Slider { min: 0.0, max: 1000.0, step: 10.0, unit: "ms" }),
