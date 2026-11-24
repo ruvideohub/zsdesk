@@ -1733,8 +1733,8 @@ impl Dock {
     /// apps signal a new message. Mark it until it's focused or closed, and if the dock
     /// is auto-hidden, peek it up for a moment so the dot can be seen.
     fn on_flash(&mut self, h: HWND) {
-        let root = unsafe { GetAncestor(h, GA_ROOTOWNER) };
-        let target = self.windows.iter().find(|w| w.hwnd == h || w.hwnd == root).map(|w| w.hwnd).unwrap_or(root);
+        let representative = tracker::taskbar_ancestor(h);
+        let target = self.windows.iter().find(|w| w.hwnd == h || w.hwnd == representative).map(|w| w.hwnd).unwrap_or(representative);
         // Hidden windows can't be looked at, so they never need attention. (WSL's hidden
         // "RemoteApp" window, msrdc.exe, "flashes" every few seconds; it used to keep
         // popping the auto-hidden dock up.)
@@ -6172,7 +6172,9 @@ impl Dock {
     /// merely maximized: maximized windows stay behind the panel, the way a taskbar does,
     /// while exclusive and borderless full screen gets the display to itself.
     fn fullscreen_in_front(&self) -> bool {
-        let fg = self.fg;
+        // Fullscreen geometry belongs to the actual foreground window, not its
+        // taskbar representative: a modal or owned popup can cover the display.
+        let fg = unsafe { GetForegroundWindow() };
         if fg.0.is_null() || is_own_window(fg) {
             return false;
         }

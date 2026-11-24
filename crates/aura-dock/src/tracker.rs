@@ -221,18 +221,67 @@ impl Tracker {
     }
 }
 
-/// The top-level window that currently has focus.
-pub fn foreground() -> HWND {
-    unsafe { GetAncestor(GetForegroundWindow(), GA_ROOTOWNER) }
+/// Map a focused window or dialog to its closest taskbar-eligible owner.
+/// An owned WS_EX_APPWINDOW has its own button and must not be collapsed into
+/// the root owner. For untracked windows preserve the old root-owner fallback.
+pub fn taskbar_ancestor(h: HWND) -> HWND {
+    unsafe {
+        let root = GetAncestor(h, GA_ROOT);
+        if root.is_invalid() { return HWND::default(); }
+        let mut current = root;
+        // Windows normally prevents ownership cycles; bound traversal defensively
+        // against destroyed/reused HWNDs while another process changes its windows.
+        for _ in 0..128 {
+            if is_taskbar_window(current) { return current; }
+            let Ok(owner) = GetWindow(current, GW_OWNER) else { break };
+            if owner.is_invalid() || owner == current { break; }
+            current = owner;
+        }
+        GetAncestor(root, GA_ROOTOWNER)
+    }
 }
 
-/// Bring a window to the front, restoring it if minimized.
+/// The taskbar-eligible window represented by the actual foreground window.
+pub fn foreground() -> HWND {
+    taskbar_ancestor(unsafe { GetForegroundWindow() })
+}
+
+/// Use a visible owned popup only if it belongs to this taskbar button; a
+/// separately tracked WS_EX_APPWINDOW must not hijack its owner's activation.
+fn popup_target(h: HWND, popup: HWND) -> HWND {
+    if popup != h && !popup.is_invalid()
+        && unsafe { IsWindowVisible(popup).as_bool() }
+        && taskbar_ancestor(popup) == h
+    { popup } else { h }
+}
+
+/// GetLastActivePopup returns the input unchanged for owned windows. Query the
+/// root owner instead and accept the result only when it belongs to this button.
+/// If a modal dialog disabled the selected window, also try its enabled popup.
+fn activation_target(h: HWND) -> HWND {
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    unsafe {
+        let root = GetAncestor(h, GA_ROOTOWNER);
+        let last = if root.is_invalid() { h } else { GetLastActivePopup(root) };
+        let target = popup_target(h, last);
+        if target != h { return target; }
+        if !IsWindowEnabled(h).as_bool() {
+            if let Ok(popup) = GetWindow(h, GW_ENABLEDPOPUP) {
+                return popup_target(h, popup);
+            }
+        }
+        h
+    }
+}
+
+/// Bring a window or its active dialog to the front, restoring it if minimized.
 pub fn activate(h: HWND) {
     unsafe {
         if IsIconic(h).as_bool() {
             let _ = ShowWindowAsync(h, SW_RESTORE);
         }
-        let _ = SetForegroundWindow(h);
+        let popup = activation_target(h);
+        let _ = SetForegroundWindow(popup);
     }
 }
 
@@ -248,7 +297,8 @@ pub fn activate_during_drag(h: HWND) -> bool {
         if IsIconic(h).as_bool() {
             let _ = ShowWindowAsync(h, SW_RESTORE);
         }
-        SetForegroundWindow(h).as_bool()
+        let popup = activation_target(h);
+        SetForegroundWindow(popup).as_bool()
     }
 }
 
@@ -262,5 +312,78 @@ pub fn minimize(h: HWND) {
 pub fn close(h: HWND) {
     unsafe {
         let _ = PostMessageW(Some(h), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::w;
+
+    /// Small real USER32 windows, shown without activation and destroyed even on panic.
+    struct Windows(Vec<HWND>);
+    impl Windows {
+        fn new() -> Self { Self(Vec::new()) }
+        fn window(&mut self, owner: Option<HWND>, ex: WINDOW_EX_STYLE, visible: bool) -> HWND {
+            let h = unsafe {
+                CreateWindowExW(ex, w!("STATIC"), w!("Dock tracker test"), WS_POPUP,
+                    -30000, -30000, 1, 1, owner, None, None, None)
+            }.expect("create test window");
+            self.0.push(h);
+            if visible { unsafe { let _ = ShowWindow(h, SW_SHOWNOACTIVATE); } }
+            h
+        }
+    }
+    impl Drop for Windows {
+        fn drop(&mut self) {
+            for h in self.0.drain(..).rev() { unsafe { let _ = DestroyWindow(h); } }
+        }
+    }
+
+    #[test]
+    fn focus_maps_to_closest_taskbar_window_not_always_root_owner() {
+        let mut windows = Windows::new();
+        let root = windows.window(None, WINDOW_EX_STYLE(0), true);
+        let dialog = windows.window(Some(root), WINDOW_EX_STYLE(0), true);
+        let separate = windows.window(Some(root), WS_EX_APPWINDOW, true);
+        let nested = windows.window(Some(separate), WINDOW_EX_STYLE(0), true);
+        assert!(is_taskbar_window(root));
+        assert!(!is_taskbar_window(dialog));
+        assert!(is_taskbar_window(separate));
+        assert!(!is_taskbar_window(nested));
+        assert_eq!(taskbar_ancestor(root), root);
+        assert_eq!(taskbar_ancestor(dialog), root);
+        assert_eq!(taskbar_ancestor(separate), separate);
+        assert_eq!(taskbar_ancestor(nested), separate);
+        assert!(taskbar_ancestor(HWND::default()).is_invalid());
+    }
+
+    #[test]
+    fn disabled_owned_appwindow_uses_its_enabled_dialog() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
+        let mut windows = Windows::new();
+        let root = windows.window(None, WINDOW_EX_STYLE(0), true);
+        let separate = windows.window(Some(root), WS_EX_APPWINDOW, true);
+        let dialog = windows.window(Some(separate), WINDOW_EX_STYLE(0), true);
+        unsafe { let _ = EnableWindow(separate, false); }
+        assert_eq!(activation_target(separate), dialog);
+        assert_eq!(popup_target(root, dialog), root);
+    }
+
+    #[test]
+    fn activation_prefers_own_visible_dialog_but_not_another_taskbar_button() {
+        let mut windows = Windows::new();
+        let root = windows.window(None, WINDOW_EX_STYLE(0), true);
+        let dialog = windows.window(Some(root), WINDOW_EX_STYLE(0), true);
+        let separate = windows.window(Some(root), WS_EX_APPWINDOW, true);
+        let nested = windows.window(Some(separate), WINDOW_EX_STYLE(0), true);
+        let hidden = windows.window(Some(root), WINDOW_EX_STYLE(0), false);
+        assert_eq!(popup_target(root, dialog), dialog);
+        assert_eq!(popup_target(root, separate), root);
+        assert_eq!(popup_target(root, nested), root);
+        assert_eq!(popup_target(separate, nested), nested);
+        assert_eq!(popup_target(root, hidden), root);
+        assert_eq!(popup_target(root, HWND::default()), root);
     }
 }
