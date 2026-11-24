@@ -240,6 +240,8 @@ const T_WIDGETS: usize = 22;
 const T_LP_HOLD: usize = 23;
 /// Tray hover tooltip / app-owned popup delay.
 const T_TRAY_TIP: usize = 24;
+/// Debounce Shell appbar position notifications.
+const T_APPBAR: usize = 25;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -717,6 +719,7 @@ struct Dock {
     /// Remembered per edge because moving the panel needs a remove-and-register, not a
     /// second ABM_SETPOS — the old strip stayed reserved otherwise.
     appbar_edge: Option<bool>,
+    appbar_rect: Option<crate::appbar_policy::Position>,
     tray_original: Option<u32>,
     taskbar_hidden: bool,
     taskbar_watchdog: Option<std::process::Child>,
@@ -5263,13 +5266,13 @@ impl Dock {
         }
         if self.helper {
             let h = self.reserve_height();
-            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge);
+            let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge, &mut self.appbar_rect);
             self.use_floor(assigned);
             return;
         }
         self.helpers.sync(self.cfg.show_on_all_displays);
         let h = self.reserve_height();
-        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge);
+        let assigned = taskbar::appbar(self.hwnd, self.monitor, h, !self.cfg.auto_hide, self.panel_top, &mut self.appbar_edge, &mut self.appbar_rect);
         self.use_floor(assigned);
     }
 
@@ -5497,7 +5500,7 @@ impl Dock {
         }
         crate::tray::stop();
         if self.integrate {
-            taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar_edge);
+            taskbar::appbar(self.hwnd, self.monitor, 0, false, self.panel_top, &mut self.appbar_edge, &mut self.appbar_rect);
             if self.taskbar_hidden { self.release_taskbar(); }
         }
     }
@@ -5779,6 +5782,13 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             with_dock(|d| d.on_update_checked());
             return LRESULT(0);
         }
+        WM_APP_APPBAR => {
+            if wp.0 as u32 == windows::Win32::UI::Shell::ABN_POSCHANGED {
+                // Do not call Shell while inside its callback; changes are coalesced.
+                unsafe { SetTimer(Some(hwnd), T_APPBAR, 80, None) };
+            }
+            return LRESULT(0);
+        }
         WM_APP_TRAY => {
             // Debounce bursts (apps commonly update picture + tooltip separately), then
             // rebuild the strip and any open overflow grid from one consistent snapshot.
@@ -5807,6 +5817,14 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     d.rescan();
                 },
                 T_REVEAL => d.on_reveal_timer(),
+                T_APPBAR => unsafe {
+                    let _ = KillTimer(Some(hwnd), T_APPBAR);
+                    if d.integrate && d.appbar_edge.is_some() && !d.cfg.auto_hide {
+                        let h = d.reserve_height();
+                        let assigned = taskbar::appbar(d.hwnd, d.monitor, h, true, d.panel_top, &mut d.appbar_edge, &mut d.appbar_rect);
+                        d.use_floor(assigned);
+                    }
+                },
                 T_TRAY_RAISE => {
                     if crate::tray::active() { crate::tray::raise(); }
                     else { crate::tray::start(hwnd, WM_APP_TRAY); }
@@ -6026,6 +6044,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         with_dock(|d| {
             if d.taskbar_hidden { taskbar::set_visible(false); }
             d.appbar_edge = None;
+            d.appbar_rect = None;
             d.apply_system();
         });
         crate::tray::on_taskbar_created();
@@ -6611,6 +6630,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             helper: opts.monitor.is_some(),
             helpers: crate::displays::Helpers::default(),
             appbar_edge: None,
+            appbar_rect: None,
             tray_original: None,
             taskbar_hidden: false,
             taskbar_watchdog: None,

@@ -126,7 +126,7 @@ pub fn original_state(state: u32) -> Option<u32> {
 ///
 /// `registered` remembers which edge currently holds our reservation (`Some(true)` = top),
 /// because moving between edges needs a remove-and-register, not just a new position.
-pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut Option<bool>) -> Option<RECT> {
+pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut Option<bool>, last: &mut Option<crate::appbar_policy::Position>) -> Option<RECT> {
     let mut d = abd(Some(hwnd));
     d.uCallbackMessage = WM_APP_APPBAR;
     d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
@@ -144,11 +144,22 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
                 d.uEdge = if at_top { ABE_BOTTOM } else { ABE_TOP };
                 SHAppBarMessage(ABM_REMOVE, &mut d);
                 *registered = None;
+                *last = None;
                 d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
             }
             if registered.is_none() {
-                SHAppBarMessage(ABM_NEW, &mut d);
+                // TaskbarCreated can also be our own broadcast, in which case Explorer
+                // still has this HWND registered. ABM_NEW returns FALSE for both an
+                // error and a duplicate: remove any stale registration and retry once.
+                if SHAppBarMessage(ABM_NEW, &mut d) == 0 {
+                    SHAppBarMessage(ABM_REMOVE, &mut d);
+                    if SHAppBarMessage(ABM_NEW, &mut d) == 0 {
+                        *last = None;
+                        return None;
+                    }
+                }
                 *registered = Some(at_top);
+                *last = None;
             }
             SHAppBarMessage(ABM_QUERYPOS, &mut d);
             // Windows may have shrunk the strip; keep our own height on the edge we asked for.
@@ -157,7 +168,17 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
             } else {
                 d.rc.top = d.rc.bottom - height;
             }
+            let proposed = [d.rc.left, d.rc.top, d.rc.right, d.rc.bottom];
+            // ABM_SETPOS broadcasts ABN_POSCHANGED, including to other appbars.
+            // Avoid a notification feedback loop when the approved position is unchanged.
+            if let Some(assigned) = crate::appbar_policy::cached_assignment(*last, proposed) {
+                return Some(RECT { left: assigned[0], top: assigned[1], right: assigned[2], bottom: assigned[3] });
+            }
             SHAppBarMessage(ABM_SETPOS, &mut d);
+            *last = Some(crate::appbar_policy::Position {
+                proposed,
+                assigned: [d.rc.left, d.rc.top, d.rc.right, d.rc.bottom],
+            });
             return Some(d.rc);
         } else if registered.is_some() {
             if let Some(edge_top) = *registered {
@@ -166,6 +187,7 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
             SHAppBarMessage(ABM_REMOVE, &mut d);
             *registered = None;
         }
+        if !reserve { *last = None; }
     }
     None
 }

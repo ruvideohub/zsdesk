@@ -151,6 +151,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-tray-policy-tests.exe
           exit $LASTEXITCODE
+      - name: Dock appbar policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/appbar_policy.rs -o target/dock-appbar-policy-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-appbar-policy-tests.exe
+          exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test
         shell: pwsh
         working-directory: aura

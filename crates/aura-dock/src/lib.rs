@@ -12,6 +12,7 @@
 //! reports changes by posting the messages the card has always posted, now across processes.
 #![cfg_attr(not(debug_assertions), allow(dead_code))]
 
+mod appbar_policy;
 mod apps;
 mod config;
 mod control_center;
