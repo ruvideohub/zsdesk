@@ -64,7 +64,7 @@ pub fn run(out: &str, light: bool, filter: Option<&str>, scale: f32, empty: bool
 
         let hub = Hub::new(HWND::default());
         let weather = sample_weather();
-        let stats = laminar_sys::stats::Stats { cpu_percent: 23.0, mem_used_gb: 21.3, mem_total_gb: 32.0, disk_c_used_percent: 74.0, net_down_bps: 2_400_000.0, net_up_bps: 310_000.0 };
+        let stats = laminar_sys::stats::Stats { cpu_percent: 23.0, cpu_valid: true, mem_used_gb: 21.3, mem_total_gb: 32.0, disk_c_used_percent: 74.0, disk_c_free_gb: Some(65.0), net_down_bps: 2_400_000.0, net_up_bps: 310_000.0 };
         let control = crate::services::ControlState {
             volume: Some(0.42),
             muted: Some(false),

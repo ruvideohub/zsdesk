@@ -170,18 +170,32 @@ impl SystemState {
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
-        let cpu_fill = (stats.cpu_percent / 100.0).clamp(0.0, 1.0);
-        let cpu = Meter { label: "ЦП", fill: cpu_fill, text: if first { "…".to_string() } else { percent(cpu_fill) } };
-        let memory = if stats.mem_total_gb > 0.0 {
-            let fill = (stats.mem_used_gb / stats.mem_total_gb).clamp(0.0, 1.0);
-            Meter { label: "Память", fill, text: format!("{} из {} ГБ", decimal(stats.mem_used_gb), decimal(stats.mem_total_gb)) }
-        } else {
-            Meter { label: "Память", fill: 0.0, text: "нет данных".to_string() }
-        };
-        let disk_fill = (stats.disk_c_used_percent / 100.0).clamp(0.0, 1.0);
-        let disk = Meter { label: "Диск", fill: disk_fill, text: format!("занято {}", percent(disk_fill)) };
-        vec![cpu, memory, disk]
+        meters(&stats, first)
     }
+}
+
+/// Convert real readings to visible meters without treating a failed query as zero.
+fn meters(stats: &laminar_sys::stats::Stats, first: bool) -> Vec<Meter> {
+    let cpu_fill = (stats.cpu_percent / 100.0).clamp(0.0, 1.0);
+    let cpu = if first {
+        Meter { label: "ЦП", fill: 0.0, text: "…".to_string() }
+    } else if stats.cpu_valid {
+        Meter { label: "ЦП", fill: cpu_fill, text: percent(cpu_fill) }
+    } else {
+        Meter { label: "ЦП", fill: 0.0, text: "нет данных".to_string() }
+    };
+    let memory = if stats.mem_total_gb > 0.0 {
+        let fill = (stats.mem_used_gb / stats.mem_total_gb).clamp(0.0, 1.0);
+        Meter { label: "Память", fill, text: format!("{} из {} ГБ", decimal(stats.mem_used_gb), decimal(stats.mem_total_gb)) }
+    } else {
+        Meter { label: "Память", fill: 0.0, text: "нет данных".to_string() }
+    };
+    let disk = match stats.disk_c_free_gb {
+        Some(free) => Meter { label: "Диск C:", fill: (stats.disk_c_used_percent / 100.0).clamp(0.0, 1.0), text: format!("свободно {} ГБ", decimal(free)) },
+        None => Meter { label: "Диск C:", fill: 0.0, text: "нет данных".to_string() },
+    };
+    vec![cpu, memory, disk]
+
 }
 
 /// Top-left of a card of `w`×`h` in `corner` of `monitor`, `margin` px from the edges.
@@ -446,6 +460,21 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meters_distinguish_unavailable_from_a_real_zero() {
+        let mut s = laminar_sys::stats::Stats::default();
+        let unknown = meters(&s, false);
+        assert_eq!(unknown[0].text, "нет данных");
+        assert_eq!(unknown[1].text, "нет данных");
+        assert_eq!(unknown[2].text, "нет данных");
+        s.cpu_valid = true;
+        s.disk_c_free_gb = Some(100.0);
+        let measured = meters(&s, false);
+        assert_eq!(measured[0].text, "0%");
+        assert_eq!(measured[2].text, "свободно 100,0 ГБ");
+        assert_eq!(meters(&s, true)[0].text, "…");
+    }
 
     #[test]
     fn the_card_keeps_a_widget_shape() {

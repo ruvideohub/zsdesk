@@ -21,10 +21,16 @@ use windows::Win32::System::Threading::GetSystemTimes;
 pub struct Stats {
     /// 0..100, averaged over all cores since the previous sample.
     pub cpu_percent: f32,
+    /// Whether the CPU delta was actually read (not the default zero on failure).
+    #[serde(default)]
+    pub cpu_valid: bool,
     pub mem_used_gb: f32,
     pub mem_total_gb: f32,
     /// 0..100 used space on C:.
     pub disk_c_used_percent: f32,
+    /// Free space on C: in GiB, or None when the drive could not be read.
+    #[serde(default)]
+    pub disk_c_free_gb: Option<f32>,
     /// Bytes per second received since the previous sample.
     pub net_down_bps: f64,
     /// Bytes per second sent since the previous sample.
@@ -92,6 +98,7 @@ impl Sampler {
                 let (di, dt) = (idle.saturating_sub(li), total.saturating_sub(lt));
                 if dt > 0 {
                     s.cpu_percent = ((1.0 - di as f64 / dt as f64) * 100.0).clamp(0.0, 100.0) as f32;
+                    s.cpu_valid = true;
                 }
             }
             self.last_cpu = Some((idle, total));
@@ -106,7 +113,8 @@ impl Sampler {
 
         let (mut total, mut free) = (0u64, 0u64);
         if unsafe { GetDiskFreeSpaceExW(windows::core::w!("C:\\"), None, Some(&mut total), Some(&mut free)) }.is_ok() && total > 0 {
-            s.disk_c_used_percent = ((total - free) as f64 / total as f64 * 100.0) as f32;
+            s.disk_c_used_percent = (total.saturating_sub(free) as f64 / total as f64 * 100.0) as f32;
+            s.disk_c_free_gb = Some((free as f64 / (1024.0 * 1024.0 * 1024.0)) as f32);
         }
 
         if let Some((rx, tx)) = net_octets() {

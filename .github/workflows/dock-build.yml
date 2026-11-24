@@ -182,6 +182,9 @@ jobs:
           if (-not ($tests | Select-String -SimpleMatch 'launch_target::tests::passes_files_and_windows_uri_schemes_directly')) {
             throw 'Launch target test was not discovered'
           }
+          if (-not ($tests | Select-String -SimpleMatch 'desktop_system::tests::meters_distinguish_unavailable_from_a_real_zero')) {
+            throw 'Desktop system meter safety test was not discovered'
+          }
           if (-not ($tests | Select-String -SimpleMatch 'desktop_retry::tests::absent_child_is_retried_after_backoff_not_forgotten')) {
             throw 'Desktop widget retry test was not discovered'
           }
