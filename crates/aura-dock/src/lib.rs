@@ -26,6 +26,7 @@ mod gfx;
 mod host;
 mod iconcache;
 mod launchpad;
+mod launchpad_input;
 mod menu;
 mod metrics;
 mod preview;

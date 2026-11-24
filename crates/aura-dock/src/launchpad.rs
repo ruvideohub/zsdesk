@@ -361,6 +361,7 @@ pub struct Launchpad {
     hover: Option<usize>,
     hover_shape: Option<(ShapeVisual, CompositionRoundedRectangleGeometry)>,
     pub query: String,
+    input: crate::launchpad_input::Utf16Input,
     pub results_len: usize,
     results: Vec<launchpad_search::Row>,
     pub sel: usize,
@@ -414,6 +415,7 @@ impl Launchpad {
             hover: None,
             hover_shape: None,
             query: String::new(),
+            input: crate::launchpad_input::Utf16Input::default(),
             results_len: 0,
             results: Vec::new(),
             sel: 0,
@@ -450,6 +452,7 @@ impl Launchpad {
         let (w, h) = ((monitor.right - monitor.left) as f32, (monitor.bottom - monitor.top) as f32);
         self.size = (w, h);
         self.query.clear();
+        self.input.reset();
         self.sel = 0;
         self.armed = None;
         self.scroll_y = 0.0;
@@ -514,6 +517,7 @@ impl Launchpad {
     pub fn hide(&mut self) {
         if self.open {
             self.open = false;
+            self.input.reset();
             self.armed = None;
             self.dragging = None;
             self.form = None;
@@ -1126,6 +1130,20 @@ impl Launchpad {
             .filter(|(id, h)| *id == PanelId::Center && h.scroll && h.highlight)
             .map(|(_, h)| h.act.clone())
             .nth(self.sel)
+    }
+
+    pub fn decode_char(&mut self, unit: u16) -> Option<char> {
+        self.input.push(unit)
+    }
+
+    pub fn paste_query(&mut self, text: &str) -> bool {
+        if !crate::launchpad_input::paste_query(&mut self.query, text) { return false; }
+        self.settings = None;
+        self.gallery = None;
+        self.sel = 0;
+        self.armed = None;
+        self.scroll_y = 0.0;
+        true
     }
 
     pub fn key_char(&mut self, ch: char) -> bool {

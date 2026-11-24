@@ -632,7 +632,7 @@ impl Dock {
             self.open_launchpad();
         }
         self.launchpad.open_form(conn, &self.cfg);
-        self.lp_render("all");
+        self.lp_query_changed();
     }
 
     /// Save the open connect form: plain settings to config.json, secrets to Credential Manager.

@@ -84,7 +84,7 @@ pub struct ControlState {
 
 pub enum Reply {
     Apps(Vec<AppEntry>),
-    Files(u64, Vec<FileHit>),
+    Files(u64, String, Vec<FileHit>),
     Control(ControlState),
     /// Visible networks, or the Windows error code (5: Location access is off).
     Wifi(Result<Vec<laminar_sys::radios::WifiNetwork>, u32>),
@@ -160,7 +160,8 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
                 Req::Apps => post(Reply::Apps(laminar_sys::apps::installed_apps())),
                 Req::Files(gen, q) => {
                     if Some(i) == newest_files {
-                        post(Reply::Files(gen, laminar_sys::files::search_files(&q, 6)));
+                        let hits = laminar_sys::files::search_files(&q, 6);
+                        post(Reply::Files(gen, q, hits));
                     }
                 }
                 Req::Control => post(Reply::Control(control_state())),

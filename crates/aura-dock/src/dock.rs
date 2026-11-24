@@ -679,7 +679,7 @@ struct Dock {
     files: Vec<FileHit>,
     /// What the user picked in Launchpad search (search-history.json next to config.json).
     history: laminar_sys::history::History,
-    files_gen: u64,
+    files_gen: crate::launchpad_input::SearchEpoch,
     icons_requested: std::collections::HashSet<String>,
     user_name: String,
     lp_drag: Option<Act>,
@@ -3204,7 +3204,7 @@ impl Dock {
                     }
                 }
                 WM_CHAR if self.launchpad.form.is_some() => {
-                    let ch = char::from_u32(wp.0 as u32).unwrap_or('\0');
+                    let Some(ch) = self.launchpad.decode_char(wp.0 as u16) else { return Some(LRESULT(0)); };
                     let changed = if ch == '\u{16}' {
                         // Ctrl+V
                         clipboard_text().map(|t| self.launchpad.form_paste(&t)).unwrap_or(false)
@@ -3231,10 +3231,13 @@ impl Dock {
                     }
                 }
                 WM_CHAR => {
-                    let ch = char::from_u32(wp.0 as u32).unwrap_or('\0');
-                    if self.launchpad.key_char(ch) {
-                        self.lp_query_changed();
-                    }
+                    let Some(ch) = self.launchpad.decode_char(wp.0 as u16) else { return Some(LRESULT(0)); };
+                    let changed = if ch == '\u{16}' {
+                        clipboard_text().map(|t| self.launchpad.paste_query(&t)).unwrap_or(false)
+                    } else {
+                        self.launchpad.key_char(ch)
+                    };
+                    if changed { self.lp_query_changed(); }
                 }
                 WM_KEYDOWN => {
                     let vk = wp.0 as u16;
@@ -4021,6 +4024,8 @@ impl Dock {
             return;
         }
         self.launchpad.hide();
+        self.files_gen.invalidate();
+        self.files.clear();
         self.launchpad.wifi_open = false;
         self.lp_drag = None;
         unsafe {
@@ -4036,6 +4041,8 @@ impl Dock {
     }
 
     fn lp_query_changed(&mut self) {
+        // Invalidate before the debounce interval, not when the next request is sent.
+        self.files_gen.invalidate();
         self.files.clear();
         self.lp_render("all");
         unsafe {
@@ -4127,7 +4134,7 @@ impl Dock {
             Act::Section(k) => {
                 self.launchpad.query.clear();
                 self.launchpad.settings = Some(k);
-                self.lp_render("all");
+                self.lp_query_changed();
             }
             Act::Choose(key, v) => {
                 self.save_and_apply(|c| lp::cfg_set(c, key, v as f32));
@@ -4216,7 +4223,7 @@ impl Dock {
                 self.launchpad.settings = None;
                 self.launchpad.form = None;
                 self.launchpad.gallery = Some(0);
-                self.lp_render("all");
+                self.lp_query_changed();
             }
             Act::GalleryCat(k) => {
                 self.launchpad.gallery = Some(k);
@@ -4315,8 +4322,8 @@ impl Dock {
                     self.lp_apps = list;
                     render = true;
                 }
-                Reply::Files(gen, hits) => {
-                    if gen == self.files_gen {
+                Reply::Files(gen, query, hits) => {
+                    if self.files_gen.accepts(gen, &query, &self.launchpad.query, self.launchpad.open) {
                         self.files = hits;
                         render = true;
                     }
@@ -5844,8 +5851,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 T_TRAY_TIP => d.tray_tip_tick(),
                 T_FILES => unsafe {
                     let _ = KillTimer(Some(hwnd), T_FILES);
-                    d.files_gen += 1;
-                    d.services.send(Req::Files(d.files_gen, d.launchpad.query.trim().to_string()));
+                    let query = d.launchpad.query.trim();
+                    if d.launchpad.open && !query.is_empty() {
+                        d.services.send(Req::Files(d.files_gen.current(), query.to_string()));
+                    }
                 },
                 T_LP_TICK => {
                     // While Launchpad is open: refresh stats (and with them the clock).
@@ -6101,24 +6110,23 @@ fn save_history(h: &laminar_sys::history::History) {
 /// Text on the clipboard, if any.
 fn clipboard_text() -> Option<String> {
     use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     const CF_UNICODETEXT: u32 = 13;
     unsafe {
         OpenClipboard(None).ok()?;
         let out = (|| {
             let h = GetClipboardData(CF_UNICODETEXT).ok()?;
             let g = windows::Win32::Foundation::HGLOBAL(h.0);
+            // Clipboard contents come from other processes. Do not scan beyond
+            // the actual allocation, even if malformed data has no terminator.
+            let words = (GlobalSize(g) / std::mem::size_of::<u16>()).min(64 * 1024);
+            if words == 0 { return None; }
             let p = GlobalLock(g) as *const u16;
-            if p.is_null() {
-                return None;
-            }
-            let mut n = 0;
-            while *p.add(n) != 0 && n < 64 * 1024 {
-                n += 1;
-            }
-            let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
+            if p.is_null() { return None; }
+            let data = std::slice::from_raw_parts(p, words);
+            let text = crate::launchpad_input::clipboard_text(data);
             let _ = GlobalUnlock(g);
-            Some(s)
+            text
         })();
         let _ = CloseClipboard();
         out
@@ -6611,7 +6619,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             weather: None,
             files: Vec::new(),
             history: load_history(),
-            files_gen: 0,
+            files_gen: crate::launchpad_input::SearchEpoch::default(),
             icons_requested: std::collections::HashSet::new(),
             user_name: user_name(),
             lp_drag: None,

@@ -173,6 +173,9 @@ jobs:
           if (-not ($tests | Select-String -SimpleMatch 'tracker::tests::focus_maps_to_closest_taskbar_window_not_always_root_owner')) {
             throw 'Tracker window test was not discovered'
           }
+          if (-not ($tests | Select-String -SimpleMatch 'launchpad_input::tests::stale_replies_cannot_cross_edits_close_or_new_search')) {
+            throw 'Launchpad search safety test was not discovered'
+          }
           cargo test --locked --release -p aura-dock --lib -- --test-threads=1 --skip real_searches --skip learning_lifts_a_pick
           exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test
