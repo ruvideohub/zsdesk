@@ -8,7 +8,8 @@ pub fn panel(w: f32, h: f32, reserve: f32, reserve_top: bool, scale: f32) -> (f3
     let width = (620.0 * scale).min(free_w);
     let height = (600.0 * scale).min(free_h);
     let x = (w - width) / 2.0;
-    let y = margin + if reserve_top { reserved } else { 0.0 } + (free_h - height) / 2.0;
+    // Bottom dock: align just above it. Top dock: align just below it.
+    let y = margin + if reserve_top { reserved } else { free_h - height };
     (x, y, width, height)
 }
 
@@ -23,6 +24,10 @@ mod tests {
                 assert!(pw <= 620.0*s && ph <= 600.0*s);
                 assert!(x >= 0.0 && x+pw <= w && y >= 0.0 && y+ph <= h);
                 if top { assert!(y >= reserve); } else { assert!(y+ph <= h-reserve); }
+                if h - reserve - ph >= 32.0*s {
+                    if top { assert!((y - reserve - 16.0*s).abs() < 0.1); }
+                    else { assert!((h - reserve - y - ph - 16.0*s).abs() < 0.1); }
+                }
             }
         }
     }

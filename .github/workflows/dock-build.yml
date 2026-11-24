@@ -178,6 +178,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-launchpad-layout-tests.exe
           exit $LASTEXITCODE
+      - name: Launchpad category tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/launchpad_categories.rs -o target/dock-launchpad-category-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-launchpad-category-tests.exe
+          exit $LASTEXITCODE
       - name: Dock library unit tests
         shell: pwsh
         working-directory: aura

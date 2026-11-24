@@ -65,6 +65,7 @@ pub enum Act {
     Uri(String),
     Web(String),
     ToggleAll,
+    Category(usize),
     OpenSettings,
     CloseSettings,
     Section(usize),
@@ -354,7 +355,6 @@ pub struct Launchpad {
     pub open: bool,
     scale: f32,
     size: (f32, f32),
-    backdrop: Option<SpriteVisual>,
     panels: Vec<(PanelId, Panel, (f32, f32))>, // panel, its top-left in the window
     scroll_host: Option<ContainerVisual>,
     scroll_view: (f32, f32, f32, f32),
@@ -373,6 +373,7 @@ pub struct Launchpad {
     /// When it was armed: a confirm sooner than a double-click apart is ignored.
     pub armed_at: std::time::Instant,
     pub all_open: bool,
+    pub category: usize,
     /// Some(section) while the centre panel shows Settings.
     pub settings: Option<usize>,
     pub dragging: Option<&'static str>,
@@ -408,7 +409,6 @@ impl Launchpad {
             open: false,
             scale: 1.0,
             size: (0.0, 0.0),
-            backdrop: None,
             panels: Vec::new(),
             scroll_host: None,
             scroll_view: (0.0, 0.0, 0.0, 0.0),
@@ -425,6 +425,7 @@ impl Launchpad {
             armed: None,
             armed_at: std::time::Instant::now(),
             all_open: false,
+            category: 0,
             settings: None,
             dragging: None,
             caret: None,
@@ -467,16 +468,8 @@ impl Launchpad {
         root.Children()?.RemoveAll()?;
         self.panels.clear();
 
-        // Full-screen frosted backdrop.
-        let bd = c.CreateSpriteVisual()?;
-        bd.SetBrush(backdrop)?;
-        bd.SetSize(v2(w, h))?;
-        root.Children()?.InsertAtTop(&bd)?;
-        let tint = c.CreateSpriteVisual()?;
-        tint.SetBrush(&c.CreateColorBrushWithColor(theme::scrim(0.22))?)?;
-        tint.SetSize(v2(w, h))?;
-        bd.Children()?.InsertAtTop(&tint)?;
-        self.backdrop = Some(bd);
+        // Keep the full-size transparent click catcher for outside-click dismissal,
+        // but apply glass only to the panel, not the whole desktop.
 
         // A compact panel with a scrollable body; never cover the dock or exceed the monitor.
         let (px, top, pw, ph) = launchpad_layout::panel(w, h, reserve, reserve_top, s);
@@ -664,10 +657,27 @@ impl Launchpad {
         let _ = qh;
         self.hit(PanelId::Center, (ox + fx, oy + fy, fw, fh), Act::Search, fh / 2.0, false, false);
 
+        // Categories stay visible while their contents scroll. Search stays global.
+        let mut top = fy + fh + 12.0 * s;
+        if self.query.is_empty() {
+            let gap = 4.0 * s;
+            let cell = ((pw - 2.0 * pad - 3.0 * gap) / 4.0).max(1.0);
+            let row = 30.0 * s;
+            for (i, label) in crate::launchpad_categories::VIEWS.iter().enumerate() {
+                let x = pad + (i % 4) as f32 * (cell + gap);
+                let y = top + (i / 4) as f32 * (row + gap);
+                if i == self.category {
+                    Self::rect(c, &content, x, y, cell, row, 9.0 * s, theme::ink(0.16))?;
+                }
+                Self::txt(c, gfx, &content, label, TextStyle { px: 11.5 * s, center: true, weight: if i == self.category { 600 } else { 400 }, max_w: Some(cell), color: if i == self.category { theme::text() } else { theme::text_2() }, ..Default::default() }, x, y + 7.0 * s)?;
+                self.hit(PanelId::Center, (ox + x, oy + y, cell, row), Act::Category(i), 8.0 * s, true, false);
+            }
+            top += 2.0 * (row + gap) + 4.0 * s;
+        }
         // Scrolling area
-        let top = fy + fh + 12.0 * s;
+
         let foot_h = 60.0 * s;
-        let view_h = ph - top - foot_h;
+        let view_h = (ph - top - foot_h).max(1.0);
         let host = c.CreateContainerVisual()?;
         host.SetOffset(v3(0.0, top, 0.0))?;
         host.SetSize(v2(pw, view_h))?;
@@ -711,15 +721,6 @@ impl Launchpad {
     fn render_home(&mut self, c: &Compositor, gfx: &Gfx, d: &Data, inner: &ContainerVisual, ox: f32, oy: f32, pw: f32, mut y: f32) -> Result<f32> {
         let s = self.scale;
         let pad = 22.0 * s;
-        // Pinned header + "All apps" link
-        Self::txt(c, gfx, inner, if self.all_open { "All apps" } else { "Pinned" }, TextStyle { px: 13.0 * s, weight: 600, color: theme::text_2(), ..Default::default() }, pad + 4.0 * s, y)?;
-        let link = if self.all_open { "Pinned" } else { "All apps" };
-        let (lw, lh) = Self::txt(c, gfx, inner, link, TextStyle { px: 12.5 * s, weight: 500, color: (0.29, 0.62, 1.0, 1.0), ..Default::default() }, 0.0, -1000.0)?;
-        let lx = pw - pad - lw - 6.0 * s;
-        Self::txt(c, gfx, inner, link, TextStyle { px: 12.5 * s, weight: 500, color: (0.29, 0.62, 1.0, 1.0), ..Default::default() }, lx, y)?;
-        self.hit(PanelId::Center, (ox + lx - 6.0 * s, oy + y - 3.0 * s, lw + 12.0 * s, lh + 6.0 * s), Act::ToggleAll, 6.0 * s, true, true);
-        y += 30.0 * s;
-
         // Pinned grid; All apps is a separate view, not buried after the pins.
         if !self.all_open {
             let (cell_w, cell_h, icon) = (92.0 * s, 92.0 * s, 48.0 * s);
@@ -745,7 +746,14 @@ impl Launchpad {
             let row_h = 42.0 * s;
             let mut letter = ' ';
             let mut k = 0usize;
+            let mut count = 0usize;
             for a in d.apps {
+                if self.category >= 2 {
+                    let selected = crate::launchpad_categories::CATEGORIES[self.category - 2].0;
+                    let manual = d.cfg.launchpad_categories.get(&a.id).map(String::as_str);
+                    if crate::launchpad_categories::category(&a.name, &a.id, manual) != selected { continue; }
+                }
+                count += 1;
                 let first = a.name.chars().next().map(|ch| ch.to_ascii_uppercase()).unwrap_or('#');
                 let first = if first.is_ascii_alphabetic() { first } else { '#' };
                 if first != letter {
@@ -768,6 +776,10 @@ impl Launchpad {
             }
             if k % cols != 0 {
                 y += row_h;
+            }
+            if count == 0 {
+                Self::txt(c, gfx, inner, "No apps in this category", TextStyle { px: 13.0 * s, color: theme::text_2(), max_w: Some((pw - 2.0 * pad).max(1.0)), ..Default::default() }, pad + 10.0 * s, y + 10.0 * s)?;
+                y += 40.0 * s;
             }
         }
         Ok(y)

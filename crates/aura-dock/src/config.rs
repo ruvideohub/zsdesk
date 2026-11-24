@@ -176,6 +176,8 @@ pub struct Config {
     pub per_display_windows: bool,
     /// Apps shown under "Pinned" in Launchpad (empty: use the dock's pinned apps).
     pub launchpad_pins: Vec<String>,
+    /// Explicit app category overrides; missing entries use automatic classification.
+    pub launchpad_categories: std::collections::BTreeMap<String, String>,
     /// Weather location (default Toronto).
     pub weather_city: String,
     pub weather_lat: f32,
@@ -288,6 +290,7 @@ impl Default for Config {
             show_on_all_displays: true,
             per_display_windows: false,
             launchpad_pins: Vec::new(),
+            launchpad_categories: Default::default(),
             weather_city: "Toronto".into(),
             weather_lat: 43.65,
             weather_lon: -79.38,

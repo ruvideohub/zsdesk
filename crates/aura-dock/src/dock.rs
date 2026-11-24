@@ -180,6 +180,9 @@ const CMD_LP_ADMIN: usize = 51;
 const CMD_LP_DOCK: usize = 52;
 const CMD_LP_PIN: usize = 53;
 const CMD_LP_REVEAL: usize = 54;
+const CMD_LP_CATEGORY: usize = 55;
+const CMD_LP_CATEGORY_AUTO: usize = 56;
+const CMD_LP_CATEGORY_BASE: usize = 3800;
 const CMD_UPDATE_NOW: usize = 60;
 const CMD_UPDATE_NOTES: usize = 61;
 const CMD_UPDATE_TOMORROW: usize = 62;
@@ -2792,6 +2795,30 @@ impl Dock {
                 self.shutdown();
                 let _ = DestroyWindow(self.hwnd);
             },
+            CMD_LP_CATEGORY => {
+                if let Some(id) = self.lp_menu_app.as_ref() {
+                    let assigned = self.cfg.launchpad_categories.get(id).map(String::as_str);
+                    let mut items = vec![MenuItem::header("Category"),
+                        MenuItem::item("Automatic category", CMD_LP_CATEGORY_AUTO).checked(assigned.is_none())];
+                    for (i, (key, label)) in crate::launchpad_categories::CATEGORIES.iter().enumerate() {
+                        items.push(MenuItem::item(*label, CMD_LP_CATEGORY_BASE + i).checked(assigned == Some(*key)));
+                    }
+                    self.open_menu_at_cursor(items);
+                }
+            }
+            CMD_LP_CATEGORY_AUTO => {
+                if let Some(id) = self.lp_menu_app.take() {
+                    self.save_and_apply(|c| { c.launchpad_categories.remove(&id); });
+                    self.lp_render("all");
+                }
+            }
+            cmd if (CMD_LP_CATEGORY_BASE..CMD_LP_CATEGORY_BASE + crate::launchpad_categories::CATEGORIES.len()).contains(&cmd) => {
+                if let Some(id) = self.lp_menu_app.take() {
+                    let key = crate::launchpad_categories::CATEGORIES[cmd - CMD_LP_CATEGORY_BASE].0;
+                    self.save_and_apply(|c| { c.launchpad_categories.insert(id, key.to_string()); });
+                    self.lp_render("all");
+                }
+            }
             CMD_LP_OPEN | CMD_LP_ADMIN | CMD_LP_DOCK | CMD_LP_PIN | CMD_LP_REVEAL => {
                 if let Some(id) = self.lp_menu_app.take() {
                     match cmd {
@@ -3254,6 +3281,7 @@ impl Dock {
                             MenuItem::sep(),
                             MenuItem::item("Keep in Dock", CMD_LP_DOCK).checked(in_dock),
                             MenuItem::item(if in_lp { "Unpin from Launchpad" } else { "Pin to Launchpad" }, CMD_LP_PIN),
+                            MenuItem::item("Choose category", CMD_LP_CATEGORY),
                         ];
                         if has_path {
                             items.push(MenuItem::item("Open File Location", CMD_LP_REVEAL));
@@ -4079,7 +4107,9 @@ impl Dock {
             self.services.send(Req::Apps);
         }
         let pinned = self.lp_pinned();
-        self.lp_brushes(&pinned);
+        let mut needed = pinned.clone();
+        if self.launchpad.all_open { needed.extend(self.lp_apps.iter().map(|a| a.id.clone())); }
+        self.lp_brushes(&needed);
         for a in &self.lp_apps {
             self.names.entry(a.id.clone()).or_insert_with(|| a.name.clone());
         }
@@ -4242,7 +4272,16 @@ impl Dock {
             Act::ToggleAll => {
                 self.launchpad.on_wheel(f32::MAX);
                 self.launchpad.all_open = !self.launchpad.all_open;
+                self.launchpad.category = if self.launchpad.all_open { 1 } else { 0 };
                 self.lp_render("all");
+            }
+            Act::Category(category) => {
+                if category < crate::launchpad_categories::VIEWS.len() {
+                    self.launchpad.on_wheel(f32::MAX);
+                    self.launchpad.category = category;
+                    self.launchpad.all_open = category != 0;
+                    self.lp_render("all");
+                }
             }
             Act::OpenSettings => {
                 self.launchpad.on_wheel(f32::MAX);
