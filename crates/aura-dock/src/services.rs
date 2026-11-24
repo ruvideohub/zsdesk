@@ -190,7 +190,12 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
                 // Routed directly to the dedicated worker by Services::send.
                 Req::Weather(..) => unreachable!("weather must not use the control queue"),
                 Req::SetVolume(v) => {
-                    laminar_sys::audio::set_master_volume(v);
+                    let mut ok = laminar_sys::audio::set_master_volume(v);
+                    if ok && v > 0.0 {
+                        ok = laminar_sys::audio::set_muted(false);
+                    }
+                    // Don't enumerate networks and media on every slider movement.
+                    if !ok { post(Reply::Control(control_state())); }
                 }
                 Req::SetMuted(m) => {
                     laminar_sys::audio::set_muted(m);

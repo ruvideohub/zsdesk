@@ -43,6 +43,10 @@ impl Dock {
             dnd: self.hub.dnd,
             battery,
         };
+        if self.control_center.needs_reflow(&data) {
+            self.cc_reflow();
+            return;
+        }
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
         if let Err(e) = self.control_center.render(&c, gfx, &bd, &data, &self.tray_brushes) {
             trace!("control centre failed to paint: {e:?}");
@@ -92,6 +96,7 @@ impl Dock {
         if !self.control_center.open {
             return;
         }
+        self.set_tray_hover(None, false);
         self.control_center.hide();
     }
 
@@ -122,6 +127,11 @@ impl Dock {
                 }
                 // Its height changed: show it again so the window grows upwards from the panel.
                 self.cc_reflow();
+            }
+            CAct::TrayPage(delta) => {
+                self.set_tray_hover(None, false);
+                self.control_center.change_tray_page(delta);
+                self.cc_render();
             }
             CAct::Do(a) => self.widget_act(a, frac),
         }

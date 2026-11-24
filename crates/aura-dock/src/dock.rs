@@ -1107,6 +1107,8 @@ impl Dock {
                     v.push(Item { kind: Kind::Stack, key: format!("::stack{n}"), pinned: true });
                 }
                 Pin::Widget { widget, size } => {
+                    // Old separately pinned tray widgets must not duplicate the tray on the dock.
+                    if widget == "background-apps" { continue; }
                     let sz = size.or_else(|| crate::widgets::catalog::get(widget).map(|d| d.size)).unwrap_or_default();
                     let code = match sz {
                         crate::widgets::Size::Small => "s",
@@ -1141,12 +1143,7 @@ impl Dock {
             v.extend(extra);
         }
         v.push(Item { kind: Kind::Separator, key: "::sep-end".into(), pinned: false });
-        for icon in &tray_bar {
-            v.push(Item { kind: Kind::Tray(icon.key), key: format!("::tray:{}", icon.key), pinned: false });
-        }
-        if !tray_overflow.is_empty() {
-            v.push(Item { kind: Kind::TrayOverflow, key: "::tray-overflow".into(), pinned: false });
-        }
+        // All notification icons live in Control Center, never as large dock tiles.
         if self.update_icon_visible() {
             v.push(Item { kind: Kind::Update, key: "::update".into(), pinned: true });
         }
@@ -3025,11 +3022,24 @@ impl Dock {
             let (x, y) = lparam_xy(lp);
             match msg {
                 WM_MOUSEMOVE => {
+                    unsafe {
+                        let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                        let _ = TrackMouseEvent(&mut tme);
+                    }
                     if self.control_center.dragging() {
                         self.cc_drag(x, y);
-                    } else if self.control_center.on_move(x, y) {
-                        self.cc_render();
+                    } else {
+                        let key = match self.control_center.at(x, y) {
+                            Some((crate::control_center::CAct::Do(crate::widgets::WAct::Tray(key)), _, _)) => Some(key),
+                            _ => None,
+                        };
+                        self.set_tray_hover(key, false);
+                        if self.control_center.on_move(x, y) { self.cc_render(); }
                     }
+                }
+                WM_MOUSELEAVE => {
+                    self.set_tray_hover(None, false);
+                    if self.control_center.clear_hover() { self.cc_render(); }
                 }
                 WM_LBUTTONDOWN => {
                     self.cc_click(x, y);
@@ -3881,7 +3891,7 @@ impl Dock {
         self.brushes.retain(|key, _| {
             !key.starts_with("::tray:") || key.strip_prefix("::tray:").and_then(|n| n.parse::<u64>().ok()).map(|id| live.contains(&id)).unwrap_or(false)
         });
-        let px = (24.0 * self.scale).ceil();
+        let px = (16.0 * self.scale).ceil();
         let mut out = Vec::new();
         for icon in snapshots {
             let Some(hicon) = icon.hicon else { continue };
@@ -3916,7 +3926,7 @@ impl Dock {
     fn tray_views(&mut self) -> Vec<lp::TrayView> {
         let items = self.collect_tray_items();
         self.tray_items = items.clone();
-        items.into_iter().filter(|icon| !icon.app_hidden).map(|icon| lp::TrayView { key: icon.key, brush: icon.brush, tip: icon.tip }).collect()
+        items.into_iter().filter(|icon| crate::tray_compact::show_icon(&icon.stable_id, icon.app_hidden)).map(|icon| lp::TrayView { key: icon.key, brush: icon.brush, tip: icon.tip }).collect()
     }
 
     fn launchpad_results_ids(&self, need: &mut Vec<String>) {
@@ -5859,6 +5869,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     let _ = KillTimer(Some(hwnd), T_TRAY_RENDER);
                     d.refresh(true);
                     if d.launchpad.open { d.lp_render("right"); }
+                    if d.control_center.open { d.cc_render(); }
                 },
                 T_TRAY_TIP => d.tray_tip_tick(),
                 T_FILES => unsafe {
@@ -6027,6 +6038,7 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                 d.monitor = m;
                 d.scale = if msg == WM_DPICHANGED { (wp.0 & 0xFFFF) as f32 / 96.0 } else { dpi as f32 / 96.0 };
                 d.brushes.clear();
+                d.tray_brushes.clear();
                 d.refresh(true);
                 d.apply_system();
             });

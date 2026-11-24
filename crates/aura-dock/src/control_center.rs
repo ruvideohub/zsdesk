@@ -75,6 +75,7 @@ pub enum CAct {
     Do(WAct),
     /// Show or hide the network list.
     Networks,
+    TrayPage(isize),
 }
 
 /// Everything the control centre draws, borrowed for one paint.
@@ -103,6 +104,7 @@ pub struct ControlCenter {
     popup: Popup,
     pub open: bool,
     pub networks_open: bool,
+    tray_page: usize,
     scale: f32,
     size: (f32, f32),
     surface: Option<(f32, f32, f32, CompositionDrawingSurface)>,
@@ -122,6 +124,7 @@ impl ControlCenter {
             // The list is part of the section: showing it at once is what people expect
             // from a control centre (and Windows' own one does the same).
             networks_open: true,
+            tray_page: 0,
             scale: 1.0,
             size: (W, 420.0),
             surface: None,
@@ -157,14 +160,23 @@ impl ControlCenter {
         PAD + HEAD_H + 10.0 + tiles + SEP_H + sliders + SEP_H + net + SEP_H + PLAYER_H + SEP_H + FOOT_H + PAD
     }
 
+    pub fn needs_reflow(&self, d: &Data) -> bool {
+        self.height(d) != self.size.1
+    }
+
     // ------------------------------------------------------------------ open / close
 
     /// Show the drop-down right-aligned against the panel. `edge` is the shelf's inner edge
     /// in screen px; `below` puts the card under the panel (the panel at the top of the
     /// screen) instead of over it.
     pub fn show(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, monitor: RECT, edge: f32, below: bool, scale: f32, d: &Data, tray_brushes: &HashMap<u64, (u64, CompositionSurfaceBrush)>) -> Result<()> {
-        self.scale = scale;
         self.size = (W, self.height(d));
+        // Fit even a short/high-DPI monitor; avoid a tray footer outside the screen.
+        let gap = 8.0 * scale;
+        let available_h = if below { monitor.bottom as f32 - edge - gap } else { edge - monitor.top as f32 - gap };
+        let available_w = (monitor.right - monitor.left) as f32 - 24.0 * scale;
+        let scale = scale.min((available_h.max(1.0) / self.size.1).min(available_w.max(1.0) / W));
+        self.scale = scale;
         let (w, h) = ((W * scale).ceil(), (self.size.1 * scale).ceil());
         let right = monitor.right - (12.0 * scale) as i32;
         let left = right - w as i32;
@@ -175,7 +187,7 @@ impl ControlCenter {
             (edge as i32 - gap - h as i32, edge as i32 - gap)
         };
         self.render(c, gfx, backdrop, d, tray_brushes)?;
-        self.popup.show(RECT { left, top, right, bottom }, true);
+        self.popup.show(RECT { left, top, right, bottom }, !self.open);
         // Rounded corners: the drop-down sits on a rounded card.
         unsafe {
             let r = (RADIUS * scale) as i32 * 2;
@@ -225,10 +237,11 @@ impl ControlCenter {
         }
         let Some((_, _, _, surface)) = &self.surface else { return Ok(()) };
         let (mut hits, mut icons) = (Vec::new(), Vec::new());
-        let (hover, networks_open) = (self.hover, self.networks_open);
+        self.tray_page = crate::tray_compact::clamp_page(self.tray_page, d.tray.len());
+        let (hover, networks_open, tray_page) = (self.hover, self.networks_open, self.tray_page);
         gfx.draw(surface, |dc| {
             let cv = Canvas::new(dc, &gfx.factory, &gfx.dwrite, w, h, scale, theme::light());
-            let (h_, i_) = paint(&cv, d, networks_open, hover);
+            let (h_, i_) = paint(&cv, d, networks_open, hover, tray_page);
             hits = h_;
             icons = i_;
             Ok(())
@@ -286,6 +299,11 @@ impl ControlCenter {
         let (rect, act) = self.drag.as_ref()?;
         let fx = ((x / k - rect.0) / rect.2).clamp(0.0, 1.0);
         Some((act.clone(), fx))
+    }
+
+    pub fn change_tray_page(&mut self, delta: isize) {
+        self.tray_page = self.tray_page.saturating_add_signed(delta);
+        self.hover = None;
     }
 
     pub fn end_drag(&mut self) {
@@ -361,7 +379,7 @@ fn card_edge(c: &Canvas) -> Col {
 }
 
 /// Draw the whole drop-down. Returns its clickable areas and the tray icons to place on top.
-fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec<Hit>, Vec<(f32, f32, f32, String)>) {
+fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>, tray_page: usize) -> (Vec<Hit>, Vec<(f32, f32, f32, String)>) {
     let mut hits: Vec<Hit> = Vec::new();
     let mut icons: Vec<(f32, f32, f32, String)> = Vec::new();
     let mut y = PAD;
@@ -411,9 +429,11 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
     separator(c, y - SEP_H / 2.0);
 
     // ---- sliders ----------------------------------------------------------
-    let volume = d.control.volume.unwrap_or(0.6);
+    let volume = d.control.volume.unwrap_or(0.0);
+    let available = d.control.volume.is_some() && d.control.muted.is_some();
     let muted = d.control.muted.unwrap_or(false);
-    y = slider_row(c, &mut hits, y, if muted { G_MUTE } else { G_VOL }, "Sound", if muted { "Muted".to_string() } else { format!("{:.0}%", volume * 100.0) }, if muted { 0.0 } else { volume }, Some(WAct::Mute), Some(WAct::Volume), BLUE);
+    let sound_text = if !available { crate::strings::tr("Unavailable") } else if muted { crate::strings::tr("Muted") } else { format!("{:.0}%", volume * 100.0) };
+    y = slider_row(c, &mut hits, y, if muted || !available { G_MUTE } else { G_VOL }, "Sound", sound_text, if muted { 0.0 } else { volume }, available.then_some(WAct::Mute), available.then_some(WAct::Volume), BLUE);
     // The microphone: the level of the default capture device, with the glyph as its mute
     // switch (a drag above zero unmutes it again).
     let mic = d.control.mic_volume.unwrap_or(0.7);
@@ -536,14 +556,29 @@ fn paint(c: &Canvas, d: &Data, networks_open: bool, hover: Option<Rect>) -> (Vec
             label(c, "Plugged in", PAD + 24.0, y + 7.0, 12.0, 500, c.text3(), 130.0);
         }
     }
-    let mut tx = c.w - PAD - 22.0;
-    for (key, _tip) in d.tray.iter().rev() {
-        if tx < PAD + 170.0 {
-            break;
+    // Seven 16px icons per page, each with a 24px hit target. Pagination keeps
+    // every live icon reachable without growing the card beyond the monitor.
+    let pages = crate::tray_compact::page_count(d.tray.len());
+    let range = crate::tray_compact::page_range(tray_page, d.tray.len());
+    let x0 = c.w - PAD - 216.0;
+    if pages > 1 {
+        let prev = (x0, y + 4.0, 24.0, 24.0);
+        let next = (x0 + 192.0, y + 4.0, 24.0, 24.0);
+        c.glyph("\u{E76B}", prev.0 + 12.0, y + 16.0, 11.0, c.text2());
+        c.glyph("\u{E76C}", next.0 + 12.0, y + 16.0, 11.0, c.text2());
+        if tray_page > 0 { hits.push(Hit { rect: prev, act: CAct::TrayPage(-1) }); }
+        if tray_page + 1 < pages { hits.push(Hit { rect: next, act: CAct::TrayPage(1) }); }
+        c.tr(&format!("{}/{}", tray_page + 1, pages), x0 - 4.0, y + 8.0, 10.0, 400, c.text3());
+    }
+    for (i, (key, tip)) in d.tray[range].iter().enumerate() {
+        let rect = (x0 + 24.0 + i as f32 * 24.0, y + 4.0, 24.0, 24.0);
+        icons.push((rect.0 + 4.0, rect.1 + 4.0, 16.0, format!("tray:{key}")));
+        hits.push(Hit { rect, act: CAct::Do(WAct::Tray(*key)) });
+        if hover == Some(rect) && !tip.is_empty() {
+            // Tooltip replaces the battery label while the pointer is over an icon.
+            c.rr(PAD, y, x0 - PAD - 22.0, FOOT_H, 4.0, card_fill(c));
+            label(c, tip.lines().next().unwrap_or(""), PAD + 2.0, y + 7.0, 11.0, 500, c.text1(), x0 - PAD - 28.0);
         }
-        icons.push((tx, y + 5.0, 22.0, format!("tray:{key}")));
-        hits.push(Hit { rect: (tx, y + 5.0, 22.0, 22.0), act: CAct::Do(WAct::Tray(*key)) });
-        tx -= 26.0;
     }
 
     // A soft highlight on whatever the pointer is over.

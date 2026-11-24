@@ -219,6 +219,7 @@ impl Dock {
             WAct::MediaNext => self.lp_act(Act::MediaNext),
             WAct::Volume => {
                 self.control.volume = Some(frac);
+                if frac > 0.0 { self.control.muted = Some(false); }
                 self.services.send(Req::SetVolume(frac));
             }
             WAct::MicVolume => {

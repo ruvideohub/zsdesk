@@ -128,6 +128,7 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Microphone" => "Микрофон",
         "Brightness" => "Яркость",
         "Muted" => "Без звука",
+        "Unavailable" => "Недоступно",
         "Off" => "Выкл",
         "Connected" => "Подключено",
         "No networks" => "Нет сетей",
