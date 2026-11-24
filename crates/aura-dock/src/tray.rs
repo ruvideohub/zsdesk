@@ -104,6 +104,7 @@ pub struct Icon {
 struct Host {
     hwnd: HWND,
     explorer: HWND,
+    explorer_pid: u32,
     notify: HWND,
     notify_msg: u32,
     icons: Vec<Icon>,
@@ -212,6 +213,9 @@ pub fn start(notify: HWND, notify_msg: u32) {
         ttrace!("no Explorer taskbar found; tray hosting off");
         return;
     };
+    let explorer_pid = window_pid(explorer);
+    // The window may disappear between enumeration and startup; retry on the timer.
+    if explorer_pid == 0 { return; }
     unsafe {
         let Ok(instance) = GetModuleHandleW(None) else { return };
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc), hInstance: instance.into(), lpszClassName: w!("Shell_TrayWnd"), ..Default::default() };
@@ -238,7 +242,7 @@ pub fn start(notify: HWND, notify_msg: u32) {
             return;
         };
         HOST.with(|h| {
-            *h.borrow_mut() = Some(Host { hwnd, explorer, notify, notify_msg, icons: Vec::new(), next_key: 1, pending: false });
+            *h.borrow_mut() = Some(Host { hwnd, explorer, explorer_pid, notify, notify_msg, icons: Vec::new(), next_key: 1, pending: false });
         });
         raise();
         ttrace!("hosting: our window {:?}, Explorer's {:?}", hwnd.0, explorer.0);
@@ -287,23 +291,41 @@ pub fn raise() {
     });
 }
 
-/// Explorer restarted (it broadcast TaskbarCreated): follow its new taskbar window, get back
-/// in front, and ask apps to register again. Our own broadcast also lands here; Explorer's
-/// window is unchanged then, so nothing repeats.
-pub fn on_taskbar_created() {
-    let changed = HOST.with(|h| {
-        let mut b = h.borrow_mut();
-        let Some(host) = b.as_mut() else { return false };
-        match explorer_tray() {
-            Some(e) if e != host.explorer => {
-                host.explorer = e;
-                true
-            }
-            _ => false,
+/// Adopt a newly discovered Explorer tray. A transient absence is handled by the
+/// caller and must not discard registrations. HWND plus PID protects against reuse
+/// of the old window handle by a different Explorer process.
+fn replace_explorer(host: &mut Host, explorer: HWND, pid: u32) -> bool {
+    if explorer.is_invalid() || pid == 0 || (host.explorer == explorer && host.explorer_pid == pid) {
+        return false;
+    }
+    host.explorer = explorer;
+    host.explorer_pid = pid;
+    // TaskbarCreated tells apps that their old registrations no longer exist.
+    // Clear ours too: otherwise an app's NIM_ADD looks like a duplicate and fails,
+    // and owners that never re-register leave ghost icons on the Dock.
+    let had_icons = !host.icons.is_empty();
+    for icon in host.icons.drain(..) {
+        if let Some(hicon) = icon.hicon {
+            unsafe { let _ = DestroyIcon(hicon); }
         }
+    }
+    if had_icons { changed(host); }
+    // Keep next_key monotonic so old hit targets cannot address a new icon.
+    true
+}
+
+/// Follow Explorer's replacement tray and ask apps to register again. The timer
+/// calls this as well as TaskbarCreated: Explorer's broadcast may arrive before its
+/// new tray is discoverable. Our own broadcast does not trigger another reset.
+pub fn on_taskbar_created() {
+    let Some(explorer) = explorer_tray() else { return };
+    let pid = window_pid(explorer);
+    let replaced = HOST.with(|h| {
+        let mut b = h.borrow_mut();
+        b.as_mut().map(|host| replace_explorer(host, explorer, pid)).unwrap_or(false)
     });
-    if changed {
-        ttrace!("Explorer restarted; re-registering");
+    if replaced {
+        ttrace!("Explorer tray replaced; requesting fresh registrations");
         raise();
         broadcast_taskbar_created();
     }
@@ -609,5 +631,68 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         // TaskbarCreated, which Explorer's taskbar must not receive from us.)
         m if m == WM_COMMAND || (WM_USER..0xC000).contains(&m) => forward(explorer, msg, wp, lp),
         _ => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn hwnd(n: usize) -> HWND { HWND(n as _) }
+    fn host() -> Host {
+        Host { hwnd: hwnd(101), explorer: hwnd(201), explorer_pid: 42,
+            notify: HWND::default(), notify_msg: 0, icons: Vec::new(), next_key: 1, pending: false }
+    }
+    fn data(uid: u32) -> NotifyIconData32 {
+        let mut n: NotifyIconData32 = unsafe { std::mem::zeroed() };
+        n.hwnd = 301;
+        n.uid = uid;
+        n.flags = NIF_GUID | NIF_MESSAGE;
+        n.callback = WM_USER + 42;
+        n.guid = GUID::from_u128(0x12345678_1234_5678_9abc_def012345678);
+        n
+    }
+
+    #[test]
+    fn restart_clears_stale_icons_and_accepts_fresh_registration() {
+        let mut h = host();
+        let mut n = data(7);
+        assert!(apply(&mut h, NIM_ADD, &n));
+        let old_key = h.icons[0].key;
+        n.version = 4;
+        assert!(apply(&mut h, NIM_SETVERSION, &n));
+        assert!(!apply(&mut h, NIM_ADD, &n));
+        h.pending = false;
+        assert!(replace_explorer(&mut h, hwnd(202), 43));
+        assert!(h.icons.is_empty());
+        assert!(h.pending); // UI receives a refresh when stale icons are discarded.
+        n.uid = 9;
+        assert!(apply(&mut h, NIM_ADD, &n));
+        assert_ne!(h.icons[0].key, old_key);
+        assert_eq!(h.icons[0].uid, 9);
+        assert_eq!(h.icons[0].version, 0); // app must explicitly set version again.
+        assert!(apply(&mut h, NIM_SETVERSION, &n));
+        assert_eq!(h.icons[0].version, 4);
+    }
+
+    #[test]
+    fn unchanged_or_temporarily_missing_tray_does_not_clear_icons() {
+        let mut h = host();
+        assert!(apply(&mut h, NIM_ADD, &data(1)));
+        assert!(!replace_explorer(&mut h, hwnd(201), 42));
+        assert!(!replace_explorer(&mut h, HWND::default(), 43));
+        assert!(!replace_explorer(&mut h, hwnd(202), 0));
+        assert_eq!(h.icons.len(), 1);
+        assert_eq!(h.explorer, hwnd(201));
+    }
+
+    #[test]
+    fn same_hwnd_belonging_to_new_explorer_process_is_replaced() {
+        let mut h = host();
+        assert!(apply(&mut h, NIM_ADD, &data(1)));
+        assert!(replace_explorer(&mut h, hwnd(201), 43));
+        assert!(h.icons.is_empty());
+        assert_eq!(h.explorer_pid, 43);
     }
 }

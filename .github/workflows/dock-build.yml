@@ -159,6 +159,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-appbar-policy-tests.exe
           exit $LASTEXITCODE
+      - name: Dock tray host protocol tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          $tests = cargo test --locked --release -p aura-dock --lib tray::tests:: -- --list
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not ($tests | Select-String -SimpleMatch 'tray::tests::restart_clears_stale_icons_and_accepts_fresh_registration')) {
+            throw 'Tray protocol test was not discovered'
+          }
+          cargo test --locked --release -p aura-dock --lib tray::tests:: -- --test-threads=1
+          exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test
         shell: pwsh
         working-directory: aura

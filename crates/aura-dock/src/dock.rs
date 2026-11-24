@@ -5826,8 +5826,10 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
                     }
                 },
                 T_TRAY_RAISE => {
-                    if crate::tray::active() { crate::tray::raise(); }
-                    else { crate::tray::start(hwnd, WM_APP_TRAY); }
+                    if crate::tray::active() {
+                        crate::tray::on_taskbar_created();
+                        crate::tray::raise();
+                    } else { crate::tray::start(hwnd, WM_APP_TRAY); }
                 },
                 T_UPDATE_CHECK => unsafe {
                     // Look again every hour (no network; a check runs only when due).
