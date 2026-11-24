@@ -4223,18 +4223,22 @@ impl Dock {
                 apps::launch(&format!("https://www.bing.com/search?q={enc}"));
             }
             Act::ToggleAll => {
+                self.launchpad.on_wheel(f32::MAX);
                 self.launchpad.all_open = !self.launchpad.all_open;
                 self.lp_render("all");
             }
             Act::OpenSettings => {
+                self.launchpad.on_wheel(f32::MAX);
                 self.launchpad.settings = Some(0);
                 self.lp_render("all");
             }
             Act::CloseSettings => {
+                self.launchpad.on_wheel(f32::MAX);
                 self.launchpad.settings = None;
                 self.lp_render("all");
             }
             Act::Section(k) => {
+                self.launchpad.on_wheel(f32::MAX);
                 self.launchpad.query.clear();
                 self.launchpad.settings = Some(k);
                 self.lp_query_changed();

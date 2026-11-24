@@ -9,6 +9,9 @@
 //! Each panel renders its visuals independently. Clicks are returned to the dock as
 //! `Act` values, because most actions touch the dock or the system.
 
+#[path = "launchpad_layout.rs"]
+mod launchpad_layout;
+
 use std::collections::HashMap;
 
 use laminar_sys::apps::AppEntry;
@@ -475,16 +478,10 @@ impl Launchpad {
         bd.Children()?.InsertAtTop(&tint)?;
         self.backdrop = Some(bd);
 
-        // Panel geometry: one quiet centred panel, not Laminar's three.
-        // About 70% of the screen, never wider than 1180 pt, never so tall that it
-        // reaches the dock: search on top, the app grid in the middle, nothing else.
-        let m0 = 24.0 * s;
-        let avail_h = (h - reserve - 2.0 * m0).max(240.0 * s);
-        let pw = (w * 0.70).clamp(640.0 * s, 1180.0 * s).min(w - 2.0 * m0);
-        let ph = (avail_h * 0.86).clamp(360.0 * s, 820.0 * s).min(avail_h);
-        let top = m0 + if reserve_top { reserve } else { 0.0 } + ((avail_h - ph) / 2.0).max(0.0);
+        // A compact panel with a scrollable body; never cover the dock or exceed the monitor.
+        let (px, top, pw, ph) = launchpad_layout::panel(w, h, reserve, reserve_top, s);
         let tint = theme::surface(0.52);
-        let order = vec![(PanelId::Center, (w - pw) / 2.0, pw)];
+        let order = vec![(PanelId::Center, px, pw)];
         for (k, (id, px, pw)) in order.into_iter().enumerate() {
             let p = ui::panel(c, gfx, backdrop, pw, ph, 28.0 * s, tint, s, d.cfg.panel_shadow)?;
             p.root.SetOffset(v3(px - p.margin, top - p.margin, 0.0))?;
@@ -646,7 +643,7 @@ impl Launchpad {
         Self::glyph(c, gfx, &content, G_SEARCH, 16.0 * s, theme::text_2(), fx + 24.0 * s, fy + fh / 2.0)?;
         let tx = fx + 44.0 * s;
         let (qw, qh) = if self.query.is_empty() {
-            let (_, h) = Self::txt(c, gfx, &content, "Search apps, settings, files, or calculate", TextStyle { px: 16.0 * s, color: theme::text_3(), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?;
+            let (_, h) = Self::txt(c, gfx, &content, "Search apps, settings, files, or calculate", TextStyle { px: 16.0 * s, color: theme::text_3(), max_w: Some((fw - 60.0 * s).max(1.0)), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?;
             (0.0, h)
         } else {
             Self::txt(c, gfx, &content, &self.query, TextStyle { px: 16.0 * s, max_w: Some(fw - 80.0 * s), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?
@@ -698,7 +695,7 @@ impl Launchpad {
         Self::rect(c, &content, pad, fy2 + (foot_h - av) / 2.0, av, av, av / 2.0, rgba(106, 77, 245, 1.0))?;
         let initial: String = d.user.chars().next().map(|ch| ch.to_uppercase().collect()).unwrap_or_else(|| "U".into());
         Self::txt(c, gfx, &content, &initial, TextStyle { px: 14.0 * s, weight: 600, center: true, max_w: Some(av), ..Default::default() }, pad, fy2 + (foot_h - 20.0 * s) / 2.0)?;
-        Self::txt(c, gfx, &content, d.user, TextStyle { px: 13.0 * s, weight: 500, ..Default::default() }, pad + av + 10.0 * s, fy2 + (foot_h - 18.0 * s) / 2.0)?;
+        Self::txt(c, gfx, &content, d.user, TextStyle { px: 13.0 * s, weight: 500, max_w: Some((pw - 2.0 * pad - av - 92.0 * s).max(1.0)), ..Default::default() }, pad + av + 10.0 * s, fy2 + (foot_h - 18.0 * s) / 2.0)?;
         let bs = 36.0 * s;
         let bx_power = pw - pad - bs;
         let bx_set = bx_power - bs - 6.0 * s;
@@ -715,36 +712,31 @@ impl Launchpad {
         let s = self.scale;
         let pad = 22.0 * s;
         // Pinned header + "All apps" link
-        Self::txt(c, gfx, inner, "Pinned", TextStyle { px: 13.0 * s, weight: 600, color: theme::text_2(), ..Default::default() }, pad + 4.0 * s, y)?;
-        let link = if self.all_open { "Hide all apps" } else { "All apps" };
+        Self::txt(c, gfx, inner, if self.all_open { "All apps" } else { "Pinned" }, TextStyle { px: 13.0 * s, weight: 600, color: theme::text_2(), ..Default::default() }, pad + 4.0 * s, y)?;
+        let link = if self.all_open { "Pinned" } else { "All apps" };
         let (lw, lh) = Self::txt(c, gfx, inner, link, TextStyle { px: 12.5 * s, weight: 500, color: (0.29, 0.62, 1.0, 1.0), ..Default::default() }, 0.0, -1000.0)?;
         let lx = pw - pad - lw - 6.0 * s;
         Self::txt(c, gfx, inner, link, TextStyle { px: 12.5 * s, weight: 500, color: (0.29, 0.62, 1.0, 1.0), ..Default::default() }, lx, y)?;
         self.hit(PanelId::Center, (ox + lx - 6.0 * s, oy + y - 3.0 * s, lw + 12.0 * s, lh + 6.0 * s), Act::ToggleAll, 6.0 * s, true, true);
         y += 30.0 * s;
 
-        // Pinned grid
-        let (cell_w, cell_h, icon) = (100.0 * s, 104.0 * s, 58.0 * s);
-        let cols = (((pw - 2.0 * pad) / cell_w).floor() as usize).max(1);
-        let gx = pad + ((pw - 2.0 * pad) - cols as f32 * cell_w) / 2.0;
-        for (k, id) in d.pinned.iter().enumerate() {
-            let (col, row) = (k % cols, k / cols);
-            let x = gx + col as f32 * cell_w;
-            let yy = y + row as f32 * cell_h;
-            Self::icon(c, inner, d.brushes.get(id), x + (cell_w - icon) / 2.0, yy + 8.0 * s, icon)?;
-            let name = d.names.get(id).cloned().unwrap_or_else(|| short_name(id));
-            Self::txt(c, gfx, inner, &name, TextStyle { px: 12.0 * s, center: true, max_w: Some(cell_w - 8.0 * s), ..Default::default() }, x + 4.0 * s, yy + 8.0 * s + icon + 8.0 * s)?;
-            self.hit(PanelId::Center, (ox + x, oy + yy, cell_w, cell_h - 4.0 * s), Act::App(id.clone()), 16.0 * s, true, true);
+        // Pinned grid; All apps is a separate view, not buried after the pins.
+        if !self.all_open {
+            let (cell_w, cell_h, icon) = (92.0 * s, 92.0 * s, 48.0 * s);
+            let cols = (((pw - 2.0 * pad) / cell_w).floor() as usize).max(1);
+            let gx = pad + ((pw - 2.0 * pad) - cols as f32 * cell_w) / 2.0;
+            for (k, id) in d.pinned.iter().enumerate() {
+                let (col, row) = (k % cols, k / cols);
+                let x = gx + col as f32 * cell_w;
+                let yy = y + row as f32 * cell_h;
+                Self::icon(c, inner, d.brushes.get(id), x + (cell_w - icon) / 2.0, yy + 8.0 * s, icon)?;
+                let name = d.names.get(id).cloned().unwrap_or_else(|| short_name(id));
+                Self::txt(c, gfx, inner, &name, TextStyle { px: 12.0 * s, center: true, max_w: Some(cell_w - 8.0 * s), ..Default::default() }, x + 4.0 * s, yy + 8.0 * s + icon + 8.0 * s)?;
+                self.hit(PanelId::Center, (ox + x, oy + yy, cell_w, cell_h - 4.0 * s), Act::App(id.clone()), 16.0 * s, true, true);
+            }
+            let rows = d.pinned.len().div_ceil(cols);
+            y += rows as f32 * cell_h + 10.0 * s;
         }
-        let rows = d.pinned.len().div_ceil(cols);
-        y += rows as f32 * cell_h + 10.0 * s;
-
-        // All Apps disclosure
-        let dw = pw - 2.0 * pad;
-        Self::glyph(c, gfx, inner, if self.all_open { G_CHEV_D } else { G_CHEV_R }, 11.0 * s, theme::text_2(), pad + dw - 18.0 * s, y + 19.0 * s)?;
-        Self::txt(c, gfx, inner, &format!("All Apps   {}", d.apps.len()), TextStyle { px: 13.0 * s, weight: 600, color: theme::text_2(), ..Default::default() }, pad + 12.0 * s, y + 10.0 * s)?;
-        self.hit(PanelId::Center, (ox + pad, oy + y, dw, 38.0 * s), Act::ToggleAll, 12.0 * s, true, true);
-        y += 44.0 * s;
 
         if self.all_open {
             let col_w = 230.0 * s;
@@ -793,7 +785,7 @@ impl Launchpad {
 
         // Section tabs (segmented control)
         let ty = 70.0 * s;
-        let tab_w = 104.0 * s;
+        let tab_w = (104.0 * s).min(((pw - 2.0 * pad - 6.0 * s) / SECTION_NAMES.len() as f32).max(1.0));
         let tw = tab_w * SECTION_NAMES.len() as f32 + 6.0 * s;
         Self::rect(c, content, pad, ty, tw, 34.0 * s, 10.0 * s, theme::ink(0.10))?;
         for (pos, &k) in TAB_ORDER.iter().enumerate() {
@@ -810,8 +802,8 @@ impl Launchpad {
 
         let mut y = ty + 56.0 * s;
         let row_w = pw - 2.0 * pad;
-        // Widgets: a scrolling page (switches, then settings and every connection).
-        let page = if sec == 4 {
+        // Every settings page scrolls, so no controls are lost in the compact panel.
+        let page = {
             let top = y;
             let host = c.CreateContainerVisual()?;
             host.SetOffset(v3(0.0, top, 0.0))?;
@@ -823,8 +815,6 @@ impl Launchpad {
             self.scroll_view = (ox, oy + top, pw, _ph - top - 8.0 * s);
             y = 0.0;
             Some((inner, top))
-        } else {
-            None
         };
         let (content, oy, scroll) = match &page {
             Some((inner, top)) => (inner, oy + top, true),
@@ -854,7 +844,7 @@ impl Launchpad {
                     self.hit(PanelId::Center, (ox + x - 6.0 * s, oy + yy - 6.0 * s, sw + 12.0 * s, sh + 12.0 * s), Act::Toggle(row.key), sh / 2.0, false, scroll);
                 }
                 Ctl::Slider { min, max, unit, .. } => {
-                    let tw2 = 220.0 * s;
+                    let tw2 = (220.0 * s).min((row_w * 0.38).max(40.0 * s));
                     let x = pad + row_w - 16.0 * s - tw2 - 64.0 * s;
                     let yy = ry + 56.0 * s / 2.0;
                     let frac = ((v - min) / (max - min)).clamp(0.0, 1.0);
@@ -892,7 +882,7 @@ impl Launchpad {
         }
         if let Some((inner, _)) = page {
             y += rows.len() as f32 * 56.0 * s + 24.0 * s;
-            let end = self.render_widget_settings(c, gfx, d, &inner, (ox, oy), pw, y)?;
+            let end = if sec == 4 { self.render_widget_settings(c, gfx, d, &inner, (ox, oy), pw, y)? } else { y };
             self.content_h = end;
             self.scroll_y = self.scroll_y.min((end - self.scroll_view.3).max(0.0));
             inner.SetOffset(v3(0.0, -self.scroll_y, 0.0))?;
