@@ -4353,15 +4353,21 @@ impl Dock {
                     self.paint_dock_widgets(false);
                     live = true;
                 }
-                Reply::Weather(w) => {
+                Reply::Weather(gen, lat, lon, w) => {
+                    if !self.services.weather_is_current(gen)
+                        || lat.to_bits() != self.cfg.weather_lat.to_bits()
+                        || lon.to_bits() != self.cfg.weather_lon.to_bits() {
+                        continue;
+                    }
                     if w.is_some() {
                         self.weather = w;
                         self.paint_dock_widgets(true);
                     } else {
-                        // No network, no answer, or no place yet: the widget says so and the
-                        // panel tries again in a few minutes instead of in half an hour.
                         trace!("weather: no data");
                     }
+                    // A first failure needs a retry too, not only failures after a timer tick.
+                    let next = if self.weather.is_none() { 3 * 60 * 1000 } else { 30 * 60 * 1000 };
+                    unsafe { SetTimer(Some(self.hwnd), T_WEATHER, next, None); }
                     render = true;
                 }
                 Reply::Icons(list) => {
@@ -5441,6 +5447,12 @@ impl Dock {
 
     fn apply_config(&mut self, new: Config) {
         let old = std::mem::replace(&mut self.cfg, new);
+        if old.weather_lat.to_bits() != self.cfg.weather_lat.to_bits() || old.weather_lon.to_bits() != self.cfg.weather_lon.to_bits() {
+            self.weather = None; // Never show the previous location's weather under the new name.
+            self.services.send(Req::Weather(self.cfg.weather_lat, self.cfg.weather_lon));
+            self.paint_dock_widgets(true);
+            unsafe { SetTimer(Some(self.hwnd), T_WEATHER, 3 * 60 * 1000, None); }
+        }
         crate::winkey::set_enabled(self.cfg.win_key_launchpad);
         if old.start_at_login != self.cfg.start_at_login && self.is_main_dock() {
             crate::updater::set_start_at_login(self.cfg.start_at_login);

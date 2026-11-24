@@ -28,6 +28,7 @@ mod iconcache;
 mod launchpad;
 mod launchpad_input;
 mod launch_target;
+mod latest_worker;
 mod launchpad_command_aliases;
 mod menu;
 mod metrics;

@@ -354,13 +354,28 @@ impl Dock {
                 Some((lat, lon, label)) => {
                     trace!("weather location: {label}");
                     let name = label.split(',').next().unwrap_or(&city).trim().to_string();
-                    self.save_and_apply(|c| {
-                        c.weather_city = name;
-                        c.weather_lat = lat;
-                        c.weather_lon = lon;
-                    });
-                    self.services.send(Req::Weather(lat, lon));
-                    self.launchpad.form = None;
+                    let mut cfg = self.cfg.clone();
+                    cfg.weather_city = name;
+                    cfg.weather_lat = lat;
+                    cfg.weather_lon = lon;
+                    let cfg = cfg.sanitized();
+                    if let Err(error) = cfg.save() {
+                        report_settings_error(self.hwnd, &error);
+                        if let Some(f) = self.launchpad.form.as_mut() {
+                            f.busy = None;
+                            f.pending = None;
+                        }
+                    } else {
+                        let same_location = self.cfg.weather_lat.to_bits() == cfg.weather_lat.to_bits()
+                            && self.cfg.weather_lon.to_bits() == cfg.weather_lon.to_bits();
+                        self.apply_config(cfg);
+                        // A re-saved location also refreshes its weather; changed coordinates
+                        // are already handled by apply_config (including config-file reloads).
+                        if same_location {
+                            self.services.send(Req::Weather(self.cfg.weather_lat, self.cfg.weather_lon));
+                        }
+                        self.launchpad.form = None;
+                    }
                 }
                 None => {
                     if let Some(f) = self.launchpad.form.as_mut() {

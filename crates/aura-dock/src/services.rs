@@ -89,7 +89,7 @@ pub enum Reply {
     /// Visible networks, or the Windows error code (5: Location access is off).
     Wifi(Result<Vec<laminar_sys::radios::WifiNetwork>, u32>),
     Stats(Stats),
-    Weather(Option<Weather>),
+    Weather(u64, f32, f32, Option<Weather>),
     /// (app id, display name) for icons now in the cache.
     Icons(Vec<(String, String)>),
     Update(laminar_sys::update::UpdateStatus),
@@ -97,6 +97,7 @@ pub enum Reply {
 
 pub struct Services {
     tx: Sender<Req>,
+    weather: Option<crate::latest_worker::LatestWorker<(f32, f32)>>,
     replies: Arc<Mutex<Vec<Reply>>>,
 }
 
@@ -108,15 +109,35 @@ impl Services {
         let replies = Arc::new(Mutex::new(Vec::new()));
         let out = replies.clone();
         let hwnd = notify.0 as isize;
+        let weather_out = replies.clone();
+        let weather = crate::latest_worker::LatestWorker::start(
+            "laminar-weather",
+            |(lat, lon)| (lat, lon, laminar_sys::weather::fetch(lat, lon)),
+            move |gen, (lat, lon, result)| {
+                weather_out.lock().unwrap().push(Reply::Weather(gen, lat, lon, result));
+                unsafe { let _ = PostMessageW(Some(HWND(hwnd as _)), WM_APP_SVC, WPARAM(0), LPARAM(0)); }
+            },
+        ).map_err(|error| eprintln!("weather worker could not start: {error}")).ok();
         std::thread::Builder::new()
             .name("laminar-services".into())
             .spawn(move || worker(rx, out, hwnd))
             .ok();
-        Self { tx, replies }
+        Self { tx, weather, replies }
     }
 
     pub fn send(&self, r: Req) {
-        let _ = self.tx.send(r);
+        match r {
+            Req::Weather(lat, lon) => {
+                if let Some(worker) = &self.weather {
+                    if !worker.submit((lat, lon)) { eprintln!("weather worker is unavailable"); }
+                }
+            }
+            other => { let _ = self.tx.send(other); }
+        }
+    }
+
+    pub fn weather_is_current(&self, gen: u64) -> bool {
+        self.weather.as_ref().map(|w| w.is_current(gen)).unwrap_or(false)
     }
 
     pub fn take(&self) -> Vec<Reply> {
@@ -166,7 +187,8 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
                 }
                 Req::Control => post(Reply::Control(control_state())),
                 Req::Stats => post(Reply::Stats(sampler.sample())),
-                Req::Weather(lat, lon) => post(Reply::Weather(laminar_sys::weather::fetch(lat, lon))),
+                // Routed directly to the dedicated worker by Services::send.
+                Req::Weather(..) => unreachable!("weather must not use the control queue"),
                 Req::SetVolume(v) => {
                     laminar_sys::audio::set_master_volume(v);
                 }
