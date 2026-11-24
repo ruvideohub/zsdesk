@@ -179,6 +179,9 @@ jobs:
           if (-not ($tests | Select-String -SimpleMatch 'launchpad::launchpad_search::tests::russian_commands_keep_their_actions_and_confirmation')) {
             throw 'Launchpad Russian command safety test was not discovered'
           }
+          if (-not ($tests | Select-String -SimpleMatch 'launch_target::tests::passes_files_and_windows_uri_schemes_directly')) {
+            throw 'Launch target test was not discovered'
+          }
           cargo test --locked --release -p aura-dock --lib -- --test-threads=1 --skip real_searches --skip learning_lifts_a_pick
           exit $LASTEXITCODE
       - name: Dock watchdog executable smoke test

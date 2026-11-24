@@ -26,13 +26,7 @@ pub fn is_path(id: &str) -> bool {
 }
 
 fn parsing_name(id: &str) -> String {
-    // Paths, shell locations and URIs (https:, ms-settings:, ms-screenclip:) pass through.
-    let is_uri = id.contains("://") || id.starts_with("ms-");
-    if is_path(id) || id.starts_with("shell:") || id.starts_with("::") || is_uri {
-        id.to_string()
-    } else {
-        format!("shell:AppsFolder\\{id}")
-    }
+    crate::launch_target::parsing_name(id)
 }
 
 pub fn shell_item(id: &str) -> Result<IShellItem> {

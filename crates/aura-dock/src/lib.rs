@@ -27,6 +27,7 @@ mod host;
 mod iconcache;
 mod launchpad;
 mod launchpad_input;
+mod launch_target;
 mod launchpad_command_aliases;
 mod menu;
 mod metrics;
