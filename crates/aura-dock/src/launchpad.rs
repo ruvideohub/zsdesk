@@ -66,6 +66,12 @@ pub enum Act {
     Web(String),
     ToggleAll,
     Category(usize),
+    NewCategory,
+    SaveCategory,
+    CancelCategory,
+    ChooseCategoryApps,
+    FinishCategoryApps,
+    ToggleCategoryApp(String),
     OpenSettings,
     CloseSettings,
     Section(usize),
@@ -144,6 +150,7 @@ struct Hit {
     scroll: bool,
     /// In a widget column's scrolling list (0 left, 1 right).
     col: Option<usize>,
+    sidebar: bool,
 }
 
 enum Ctl {
@@ -374,6 +381,13 @@ pub struct Launchpad {
     pub armed_at: std::time::Instant,
     pub all_open: bool,
     pub category: usize,
+    pub category_name: Option<String>,
+    pub category_error: bool,
+    pub choosing_apps: bool,
+    sidebar_view: (f32, f32, f32, f32),
+    sidebar_scroll: f32,
+    sidebar_content_h: f32,
+    sidebar_host: Option<ContainerVisual>,
     /// Some(section) while the centre panel shows Settings.
     pub settings: Option<usize>,
     pub dragging: Option<&'static str>,
@@ -426,6 +440,13 @@ impl Launchpad {
             armed_at: std::time::Instant::now(),
             all_open: false,
             category: 0,
+            category_name: None,
+            category_error: false,
+            choosing_apps: false,
+            sidebar_view: (0.0, 0.0, 0.0, 0.0),
+            sidebar_scroll: 0.0,
+            sidebar_content_h: 0.0,
+            sidebar_host: None,
             settings: None,
             dragging: None,
             caret: None,
@@ -462,6 +483,9 @@ impl Launchpad {
         self.scroll_y = 0.0;
         self.settings = None;
         self.gallery = None;
+        self.category_name = None;
+        self.choosing_apps = false;
+        self.sidebar_scroll = 0.0;
         self.wdrag = None;
         self.cols.iter_mut().for_each(|c| c.scroll = 0.0);
         let root = &self.popup.root;
@@ -591,13 +615,42 @@ impl Launchpad {
     }
 
     fn hit(&mut self, id: PanelId, r: (f32, f32, f32, f32), act: Act, radius: f32, highlight: bool, scroll: bool) {
-        self.hits.push((id, Hit { r, act, radius, highlight, scroll, col: None }));
+        self.hits.push((id, Hit { r, act, radius, highlight, scroll, col: None, sidebar: false }));
+    }
+
+    fn hit_sidebar(&mut self, r: (f32, f32, f32, f32), act: Act) {
+        self.hits.push((PanelId::Center, Hit { r, act, radius: 8.0 * self.scale, highlight: false, scroll: false, col: None, sidebar: true }));
+    }
+
+    pub fn category_key(index: usize, cfg: &Config) -> Option<&str> {
+        if index < 2 { return None; }
+        if let Some((id, _)) = crate::launchpad_categories::CATEGORIES.get(index - 2) { return Some(id); }
+        cfg.launchpad_custom_categories.get(index - 2 - crate::launchpad_categories::CATEGORIES.len()).map(|c| c.id.as_str())
+    }
+
+    pub fn category_has(cfg: &Config, key: &str, app: &AppEntry) -> bool {
+        let added = cfg.launchpad_category_apps.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        let excluded = cfg.launchpad_category_excluded.get(key).map(Vec::as_slice).unwrap_or(&[]);
+        let assigned = cfg.launchpad_categories.get(&app.id).map(String::as_str);
+        crate::launchpad_categories::contains(key, &app.name, &app.id, assigned, added, excluded)
+    }
+
+    pub fn sidebar_to_end(&mut self) { self.sidebar_scroll = f32::MAX; }
+
+    pub fn sidebar_wheel(&mut self, x: f32, y: f32, delta: f32) -> bool {
+        if self.sidebar_host.is_none() || !inside(self.sidebar_view, x, y) { return false; }
+        let max = (self.sidebar_content_h - self.sidebar_view.3).max(0.0);
+        self.sidebar_scroll = (self.sidebar_scroll - delta).clamp(0.0, max);
+        if let Some(inner) = &self.sidebar_host { let _ = inner.SetOffset(v3(0.0, -self.sidebar_scroll, 0.0)); }
+        self.hover = None;
+        if let Some((shape, _)) = &self.hover_shape { let _ = shape.SetOpacity(0.0); }
+        true
     }
 
     /// A hit in a widget column's scrolling list (content coordinates).
     fn hit_col(&mut self, ci: usize, r: (f32, f32, f32, f32), act: Act, radius: f32, highlight: bool) {
         let id = if ci == 0 { PanelId::Left } else { PanelId::Right };
-        self.hits.push((id, Hit { r, act, radius, highlight, scroll: false, col: Some(ci) }));
+        self.hits.push((id, Hit { r, act, radius, highlight, scroll: false, col: Some(ci), sidebar: false }));
     }
 
     // ------------------------------------------------------------ left: widgets
@@ -613,9 +666,14 @@ impl Launchpad {
         let Some((content, pw, ph, ox, oy)) = self.panel(PanelId::Center).map(|(p, (x, y))| (p.content.clone(), p.w, p.h, x, y)) else { return Ok(()) };
         self.clear_hits(PanelId::Center);
         content.Children()?.RemoveAll()?;
+        self.sidebar_host = None;
+        self.sidebar_view = (0.0, 0.0, 0.0, 0.0);
         let s = self.scale;
         let pad = 22.0 * s;
 
+        if self.category_name.is_some() {
+            return self.render_new_category(c, gfx, &content, (ox, oy), pw);
+        }
         if self.form.is_some() {
             return self.render_form(c, gfx, d, &content, (ox, oy), pw, ph);
         }
@@ -636,7 +694,7 @@ impl Launchpad {
         Self::glyph(c, gfx, &content, G_SEARCH, 16.0 * s, theme::text_2(), fx + 24.0 * s, fy + fh / 2.0)?;
         let tx = fx + 44.0 * s;
         let (qw, qh) = if self.query.is_empty() {
-            let (_, h) = Self::txt(c, gfx, &content, "Search apps, settings, files, or calculate", TextStyle { px: 16.0 * s, color: theme::text_3(), max_w: Some((fw - 60.0 * s).max(1.0)), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?;
+            let (_, h) = Self::txt(c, gfx, &content, if self.choosing_apps { "Search apps" } else { "Search apps, settings, files, or calculate" }, TextStyle { px: 16.0 * s, color: theme::text_3(), max_w: Some((fw - 60.0 * s).max(1.0)), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?;
             (0.0, h)
         } else {
             Self::txt(c, gfx, &content, &self.query, TextStyle { px: 16.0 * s, max_w: Some(fw - 80.0 * s), ..Default::default() }, tx, fy + (fh - 22.0 * s) / 2.0)?
@@ -657,44 +715,65 @@ impl Launchpad {
         let _ = qh;
         self.hit(PanelId::Center, (ox + fx, oy + fy, fw, fh), Act::Search, fh / 2.0, false, false);
 
-        // Categories stay visible while their contents scroll. Search stays global.
-        let mut top = fy + fh + 12.0 * s;
-        if self.query.is_empty() {
-            let gap = 4.0 * s;
-            let cell = ((pw - 2.0 * pad - 3.0 * gap) / 4.0).max(1.0);
-            let row = 30.0 * s;
-            for (i, label) in crate::launchpad_categories::VIEWS.iter().enumerate() {
-                let x = pad + (i % 4) as f32 * (cell + gap);
-                let y = top + (i / 4) as f32 * (row + gap);
-                if i == self.category {
-                    Self::rect(c, &content, x, y, cell, row, 9.0 * s, theme::ink(0.16))?;
-                }
-                Self::txt(c, gfx, &content, label, TextStyle { px: 11.5 * s, center: true, weight: if i == self.category { 600 } else { 400 }, max_w: Some(cell), color: if i == self.category { theme::text() } else { theme::text_2() }, ..Default::default() }, x, y + 7.0 * s)?;
-                self.hit(PanelId::Center, (ox + x, oy + y, cell, row), Act::Category(i), 8.0 * s, true, false);
-            }
-            top += 2.0 * (row + gap) + 4.0 * s;
-        }
-        // Scrolling area
-
+        // A separately clipped, independently scrollable category column.
+        let top = fy + fh + 12.0 * s;
         let foot_h = 60.0 * s;
         let view_h = (ph - top - foot_h).max(1.0);
+        let side_w = (148.0 * s).min((pw * 0.34).max(1.0));
+        let right_x = pad + side_w + 10.0 * s;
+        let right_w = (pw - right_x - pad).max(1.0);
+        let side = c.CreateContainerVisual()?;
+        side.SetOffset(v3(pad, top, 0.0))?;
+        side.SetSize(v2(side_w, view_h))?;
+        side.SetClip(&c.CreateInsetClip()?)?;
+        content.Children()?.InsertAtTop(&side)?;
+        let side_inner = c.CreateContainerVisual()?;
+        side.Children()?.InsertAtTop(&side_inner)?;
+        self.sidebar_view = (ox + pad, oy + top, side_w, view_h);
+        let mut names: Vec<String> = crate::launchpad_categories::VIEWS.iter().map(|v| crate::strings::tr(v)).collect();
+        names.extend(d.cfg.launchpad_custom_categories.iter().map(|cat| cat.name.clone()));
+        if self.category >= names.len() { self.category = 0; self.all_open = false; }
+        let row = 36.0 * s;
+        for (i, name) in names.iter().enumerate() {
+            let y = i as f32 * row;
+            if i == self.category {
+                Self::rect(c, &side_inner, 0.0, y, side_w, row - 3.0*s, 9.0*s, theme::ink(0.16))?;
+            }
+            Self::txt(c, gfx, &side_inner, name, TextStyle { px: 12.0*s, weight: if i == self.category { 600 } else { 400 }, max_w: Some((side_w - 18.0*s).max(1.0)), ..Default::default() }, 9.0*s, y + 8.0*s)?;
+            self.hit_sidebar((ox + pad, oy + top + y, side_w, row - 3.0*s), Act::Category(i));
+        }
+        let add_y = names.len() as f32 * row;
+        Self::txt(c, gfx, &side_inner, "+", TextStyle { px: 19.0*s, color: theme::text_2(), ..Default::default() }, 8.0*s, add_y + 3.0*s)?;
+        Self::txt(c, gfx, &side_inner, "New category", TextStyle { px: 12.0*s, color: theme::text_2(), max_w: Some((side_w - 32.0*s).max(1.0)), ..Default::default() }, 28.0*s, add_y + 8.0*s)?;
+        self.hit_sidebar((ox + pad, oy + top + add_y, side_w, row - 3.0*s), Act::NewCategory);
+        self.sidebar_content_h = add_y + row;
+        self.sidebar_scroll = self.sidebar_scroll.min((self.sidebar_content_h - view_h).max(0.0));
+        side_inner.SetOffset(v3(0.0, -self.sidebar_scroll, 0.0))?;
+        self.sidebar_host = Some(side_inner);
+
+        let (list_top, list_h) = if self.choosing_apps {
+            Self::txt(c, gfx, &content, "Choose apps", TextStyle { px: 14.0*s, weight: 600, max_w: Some(right_w*0.65), ..Default::default() }, right_x+4.0*s, top+8.0*s)?;
+            Self::txt(c, gfx, &content, "Done", TextStyle { px: 13.0*s, weight: 600, color: theme::text_2(), ..Default::default() }, right_x+(right_w-55.0*s).max(4.0*s), top+8.0*s)?;
+            self.hit(PanelId::Center, (ox+right_x+(right_w-65.0*s).max(0.0), oy+top, 65.0*s, 34.0*s), Act::FinishCategoryApps, 8.0*s, true, false);
+            (top+38.0*s, (view_h-38.0*s).max(1.0))
+        } else { (top, view_h) };
         let host = c.CreateContainerVisual()?;
-        host.SetOffset(v3(0.0, top, 0.0))?;
-        host.SetSize(v2(pw, view_h))?;
+        host.SetOffset(v3(right_x, list_top, 0.0))?;
+        host.SetSize(v2(right_w, list_h))?;
         host.SetClip(&c.CreateInsetClip()?)?;
         content.Children()?.InsertAtTop(&host)?;
         let inner = c.CreateContainerVisual()?;
         host.Children()?.InsertAtTop(&inner)?;
-        self.scroll_view = (ox, oy + top, pw, view_h);
-        let mut y = 4.0 * s;
-
-        if self.query.is_empty() {
-            y = self.render_home(c, gfx, d, &inner, ox, oy + top, pw, y)?;
+        self.scroll_view = (ox + right_x, oy + list_top, right_w, list_h);
+        let y = if self.choosing_apps {
+            self.render_category_picker(c, gfx, d, &inner, ox + right_x, oy + list_top, right_w)?
+        } else if self.query.is_empty() {
+            self.render_home(c, gfx, d, &inner, ox + right_x, oy + list_top, right_w, 4.0*s)?
         } else {
-            y = self.render_results(c, gfx, d, &inner, ox, oy + top, pw, y)?;
-        }
+            self.render_results(c, gfx, d, &inner, ox + right_x, oy + list_top, right_w, 4.0*s)?
+        };
         self.content_h = y + 12.0 * s;
-        self.scroll_y = self.scroll_y.min((self.content_h - view_h).max(0.0));
+        self.scroll_y = self.scroll_y.min((self.content_h - list_h).max(0.0));
         inner.SetOffset(v3(0.0, -self.scroll_y, 0.0))?;
         self.scroll_host = Some(inner);
 
@@ -720,7 +799,7 @@ impl Launchpad {
     #[allow(clippy::too_many_arguments)]
     fn render_home(&mut self, c: &Compositor, gfx: &Gfx, d: &Data, inner: &ContainerVisual, ox: f32, oy: f32, pw: f32, mut y: f32) -> Result<f32> {
         let s = self.scale;
-        let pad = 22.0 * s;
+        let pad = 4.0 * s;
         // Pinned grid; All apps is a separate view, not buried after the pins.
         if !self.all_open {
             let (cell_w, cell_h, icon) = (92.0 * s, 92.0 * s, 48.0 * s);
@@ -739,7 +818,28 @@ impl Launchpad {
             y += rows as f32 * cell_h + 10.0 * s;
         }
 
-        if self.all_open {
+        if self.category >= 2 {
+            let key = Self::category_key(self.category, d.cfg).unwrap_or("");
+            let apps: Vec<&AppEntry> = d.apps.iter().filter(|app| Self::category_has(d.cfg, key, app)).collect();
+            let (cell_w, cell_h, icon) = (92.0*s, 92.0*s, 48.0*s);
+            let cols = (((pw - 2.0*pad) / cell_w).floor() as usize).max(1);
+            let gx = pad + ((pw - 2.0*pad) - cols as f32*cell_w).max(0.0) / 2.0;
+            for (k, app) in apps.iter().enumerate() {
+                let x = gx + (k % cols) as f32*cell_w;
+                let yy = y + (k / cols) as f32*cell_h;
+                Self::icon(c, inner, d.brushes.get(&app.id), x + (cell_w-icon)/2.0, yy+8.0*s, icon)?;
+                Self::txt(c, gfx, inner, &app.name, TextStyle { px: 12.0*s, center: true, max_w: Some(cell_w-8.0*s), ..Default::default() }, x+4.0*s, yy+icon+16.0*s)?;
+                self.hit(PanelId::Center, (ox+x, oy+yy, cell_w, cell_h-4.0*s), Act::App(app.id.clone()), 16.0*s, true, true);
+            }
+            let k = apps.len();
+            let x = gx + (k % cols) as f32*cell_w;
+            let yy = y + (k / cols) as f32*cell_h;
+            Self::rect(c, inner, x+(cell_w-icon)/2.0, yy+8.0*s, icon, icon, icon/2.0, theme::ink(0.12))?;
+            Self::txt(c, gfx, inner, "+", TextStyle { px: 25.0*s, center: true, max_w: Some(icon), color: theme::text_2(), ..Default::default() }, x+(cell_w-icon)/2.0, yy+12.0*s)?;
+            Self::txt(c, gfx, inner, "Add apps", TextStyle { px: 11.0*s, center: true, max_w: Some(cell_w-8.0*s), color: theme::text_2(), ..Default::default() }, x+4.0*s, yy+icon+16.0*s)?;
+            self.hit(PanelId::Center, (ox+x, oy+yy, cell_w, cell_h-4.0*s), Act::ChooseCategoryApps, 16.0*s, true, true);
+            y += ((apps.len()+1).div_ceil(cols)) as f32 * cell_h;
+        } else if self.all_open {
             let col_w = 230.0 * s;
             let cols = (((pw - 2.0 * pad) / col_w).floor() as usize).max(1);
             let col_w = (pw - 2.0 * pad) / cols as f32;
@@ -748,11 +848,6 @@ impl Launchpad {
             let mut k = 0usize;
             let mut count = 0usize;
             for a in d.apps {
-                if self.category >= 2 {
-                    let selected = crate::launchpad_categories::CATEGORIES[self.category - 2].0;
-                    let manual = d.cfg.launchpad_categories.get(&a.id).map(String::as_str);
-                    if crate::launchpad_categories::category(&a.name, &a.id, manual) != selected { continue; }
-                }
                 count += 1;
                 let first = a.name.chars().next().map(|ch| ch.to_ascii_uppercase()).unwrap_or('#');
                 let first = if first.is_ascii_alphabetic() { first } else { '#' };
@@ -783,6 +878,44 @@ impl Launchpad {
             }
         }
         Ok(y)
+    }
+
+    fn render_new_category(&mut self, c: &Compositor, gfx: &Gfx, content: &ContainerVisual, (ox, oy): (f32, f32), pw: f32) -> Result<()> {
+        let s = self.scale;
+        let pad = 26.0*s;
+        Self::txt(c, gfx, content, "New category", TextStyle { px: 20.0*s, weight: 600, ..Default::default() }, pad, 24.0*s)?;
+        let width = (pw-2.0*pad).max(1.0);
+        Self::rect(c, content, pad, 68.0*s, width, 44.0*s, 10.0*s, theme::ink(0.10))?;
+        let name = self.category_name.as_deref().unwrap_or("");
+        let text = if name.is_empty() { crate::strings::tr("Category name") } else { name.to_string() };
+        Self::txt(c, gfx, content, &text, TextStyle { px: 15.0*s, max_w: Some((width-24.0*s).max(1.0)), color: if name.is_empty() { theme::text_3() } else { theme::text() }, ..Default::default() }, pad+12.0*s, 80.0*s)?;
+        if self.category_error {
+            Self::txt(c, gfx, content, "Enter a unique category name", TextStyle { px: 12.0*s, color: theme::text_2(), max_w: Some(width), ..Default::default() }, pad, 122.0*s)?;
+        }
+        for (label, act, x) in [("Cancel", Act::CancelCategory, pad), ("Create", Act::SaveCategory, pw-pad-100.0*s)] {
+            Self::rect(c, content, x, 160.0*s, 100.0*s, 36.0*s, 9.0*s, theme::ink(0.12))?;
+            Self::txt(c, gfx, content, label, TextStyle { px: 13.0*s, center: true, max_w: Some(100.0*s), ..Default::default() }, x, 169.0*s)?;
+            self.hit(PanelId::Center, (ox+x, oy+160.0*s, 100.0*s, 36.0*s), act, 9.0*s, true, false);
+        }
+        Ok(())
+    }
+
+    fn render_category_picker(&mut self, c: &Compositor, gfx: &Gfx, d: &Data, inner: &ContainerVisual, ox: f32, oy: f32, pw: f32) -> Result<f32> {
+        let s = self.scale;
+        let key = Self::category_key(self.category, d.cfg).unwrap_or("");
+        let query = self.query.to_lowercase();
+        let mut y = 4.0*s;
+        for app in d.apps.iter().filter(|a| query.is_empty() || a.name.to_lowercase().contains(&query)) {
+            let checked = Self::category_has(d.cfg, key, app);
+            Self::icon(c, inner, d.brushes.get(&app.id), 8.0*s, y+5.0*s, 30.0*s)?;
+            Self::txt(c, gfx, inner, &app.name, TextStyle { px: 13.0*s, max_w: Some((pw-95.0*s).max(1.0)), ..Default::default() }, 48.0*s, y+10.0*s)?;
+            let x = (pw-30.0*s).max(0.0);
+            Self::rect(c, inner, x, y+9.0*s, 22.0*s, 22.0*s, 6.0*s, if checked { theme::accent() } else { theme::ink(0.13) })?;
+            if checked { Self::txt(c, gfx, inner, "✓", TextStyle { px: 14.0*s, center: true, max_w: Some(22.0*s), ..Default::default() }, x, y+10.0*s)?; }
+            self.hit(PanelId::Center, (ox, oy+y, pw, 40.0*s), Act::ToggleCategoryApp(app.id.clone()), 8.0*s, true, true);
+            y += 42.0*s;
+        }
+        Ok(y+8.0*s)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1022,6 +1155,9 @@ impl Launchpad {
                     return false;
                 }
                 inside((h.r.0, h.r.1 - self.cols[ci].scroll, h.r.2, h.r.3), x, y)
+            } else if h.sidebar {
+                if !inside(self.sidebar_view, x, y) { return false; }
+                inside((h.r.0, h.r.1 - self.sidebar_scroll, h.r.2, h.r.3), x, y)
             } else if h.scroll {
                 if !inside((vx, vy, vw, vh), x, y) {
                     return false;

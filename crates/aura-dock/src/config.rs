@@ -118,6 +118,13 @@ impl Pin {
     }
 }
 
+/// A user-created Launchpad category, identified independently from its label.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct LaunchpadCategory {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Config {
@@ -178,6 +185,10 @@ pub struct Config {
     pub launchpad_pins: Vec<String>,
     /// Explicit app category overrides; missing entries use automatic classification.
     pub launchpad_categories: std::collections::BTreeMap<String, String>,
+    pub launchpad_custom_categories: Vec<LaunchpadCategory>,
+    /// Extra memberships and explicit exclusions (including automatic categories).
+    pub launchpad_category_apps: std::collections::BTreeMap<String, Vec<String>>,
+    pub launchpad_category_excluded: std::collections::BTreeMap<String, Vec<String>>,
     /// Weather location (default Toronto).
     pub weather_city: String,
     pub weather_lat: f32,
@@ -291,6 +302,9 @@ impl Default for Config {
             per_display_windows: false,
             launchpad_pins: Vec::new(),
             launchpad_categories: Default::default(),
+            launchpad_custom_categories: Vec::new(),
+            launchpad_category_apps: Default::default(),
+            launchpad_category_excluded: Default::default(),
             weather_city: "Toronto".into(),
             weather_lat: 43.65,
             weather_lon: -79.38,
@@ -485,6 +499,22 @@ impl Config {
 mod tests {
     use super::*;
     use crate::widgets::catalog::Size;
+
+    #[test]
+    fn launchpad_category_data_round_trips_and_old_profiles_load() {
+        let old: Config = serde_json::from_str(r#"{"launchpad_categories":{"steam":"games"}}"#).unwrap();
+        assert!(old.launchpad_custom_categories.is_empty());
+        assert_eq!(old.launchpad_categories.get("steam").map(String::as_str), Some("games"));
+        let mut cfg = old;
+        cfg.launchpad_custom_categories.push(LaunchpadCategory { id: "custom:1".into(), name: "Игры с друзьями".into() });
+        cfg.launchpad_category_apps.insert("custom:1".into(), vec!["steam".into()]);
+        cfg.launchpad_category_excluded.insert("games".into(), vec!["steam".into()]);
+        let json = serde_json::to_string(&cfg).unwrap();
+        let restored: Config = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.launchpad_custom_categories, cfg.launchpad_custom_categories);
+        assert_eq!(restored.launchpad_category_apps, cfg.launchpad_category_apps);
+        assert_eq!(restored.launchpad_category_excluded, cfg.launchpad_category_excluded);
+    }
 
     #[test]
     fn widget_entries_old_and_new() {

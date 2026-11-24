@@ -197,6 +197,9 @@ jobs:
           if (-not ($tests | Select-String -SimpleMatch 'tray::tests::restart_clears_stale_icons_and_accepts_fresh_registration')) {
             throw 'Tray protocol test was not discovered'
           }
+          if (-not ($tests | Select-String -SimpleMatch 'config::tests::launchpad_category_data_round_trips_and_old_profiles_load')) {
+            throw 'Launchpad category persistence test was not discovered'
+          }
           if (-not ($tests | Select-String -SimpleMatch 'tray::tests::qt_modify_then_add_with_callback_can_negotiate_v4')) {
             throw 'Tray Qt re-registration test was not discovered'
           }

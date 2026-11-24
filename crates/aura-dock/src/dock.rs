@@ -3299,10 +3299,34 @@ impl Dock {
                     // Wheel messages carry screen coordinates.
                     let (sx, sy) = ((lp.0 & 0xFFFF) as i16 as f32, ((lp.0 >> 16) & 0xFFFF) as i16 as f32);
                     let (wx, wy) = (sx - self.monitor.left as f32, sy - self.monitor.top as f32);
-                    if let Some(ci) = self.launchpad.column_at(wx, wy) {
+                    if self.launchpad.sidebar_wheel(wx, wy, delta * 72.0 * self.scale) {
+                        // The category list scrolls independently from the apps.
+                    } else if let Some(ci) = self.launchpad.column_at(wx, wy) {
                         self.launchpad.on_wheel_col(ci, delta * 72.0 * self.scale);
                     } else {
                         self.launchpad.on_wheel(delta * 72.0 * self.scale);
+                    }
+                }
+                WM_CHAR if self.launchpad.category_name.is_some() => {
+                    let Some(ch) = self.launchpad.decode_char(wp.0 as u16) else { return Some(LRESULT(0)); };
+                    let pasted = if ch == '\u{16}' { clipboard_text() } else { None };
+                    if let Some(name) = self.launchpad.category_name.as_mut() {
+                        if let Some(text) = pasted {
+                            for ch in text.chars().filter(|c| !c.is_control()) { if name.chars().count() < 48 { name.push(ch); } }
+                        } else if !ch.is_control() && name.chars().count() < 48 { name.push(ch); }
+                    }
+                    self.launchpad.category_error = false;
+                    self.lp_render("center");
+                }
+                WM_KEYDOWN if self.launchpad.category_name.is_some() => {
+                    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_BACK, VK_ESCAPE, VK_RETURN};
+                    let vk = wp.0 as u16;
+                    if vk == VK_ESCAPE.0 { self.lp_act(Act::CancelCategory); }
+                    else if vk == VK_RETURN.0 && (lp.0 >> 30) & 1 == 0 { self.lp_act(Act::SaveCategory); }
+                    else if vk == VK_BACK.0 {
+                        if let Some(name) = self.launchpad.category_name.as_mut() { name.pop(); }
+                        self.launchpad.category_error = false;
+                        self.lp_render("center");
                     }
                 }
                 WM_CHAR if self.launchpad.form.is_some() => {
@@ -3345,7 +3369,9 @@ impl Dock {
                     let vk = wp.0 as u16;
                     use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_RETURN, VK_UP};
                     if vk == VK_ESCAPE.0 {
-                        if self.launchpad.gallery.is_some() {
+                        if self.launchpad.choosing_apps {
+                            self.lp_act(Act::FinishCategoryApps);
+                        } else if self.launchpad.gallery.is_some() {
                             self.launchpad.gallery = None;
                             self.lp_render("all");
                         } else if self.launchpad.settings.is_some() {
@@ -3357,6 +3383,8 @@ impl Dock {
                         } else {
                             self.close_launchpad();
                         }
+                    } else if vk == VK_RETURN.0 && self.launchpad.choosing_apps {
+                        // Enter while filtering the picker must not launch a search result.
                     } else if vk == VK_RETURN.0 {
                         // Holding Enter must not repeat it (a first press arms Restart; a
                         // repeat would confirm it).
@@ -3661,7 +3689,7 @@ impl Dock {
             windows: &lp_wins,
             history: &self.history,
         };
-        self.launchpad.update_results(&data);
+        if !self.launchpad.choosing_apps { self.launchpad.update_results(&data); }
         let (c, gfx) = (self.compositor.clone(), &self.gfx);
         let r = match which {
             "all" => self.launchpad.render(&c, gfx, &data),
@@ -4197,7 +4225,7 @@ impl Dock {
         self.lp_render("all");
         unsafe {
             let _ = KillTimer(Some(self.hwnd), T_FILES);
-            if !self.launchpad.query.trim().is_empty() {
+            if !self.launchpad.choosing_apps && !self.launchpad.query.trim().is_empty() {
                 SetTimer(Some(self.hwnd), T_FILES, 180, None);
             }
         }
@@ -4276,10 +4304,77 @@ impl Dock {
                 self.lp_render("all");
             }
             Act::Category(category) => {
-                if category < crate::launchpad_categories::VIEWS.len() {
+                let count = crate::launchpad_categories::VIEWS.len() + self.cfg.launchpad_custom_categories.len();
+                if category < count {
                     self.launchpad.on_wheel(f32::MAX);
                     self.launchpad.category = category;
                     self.launchpad.all_open = category != 0;
+                    self.launchpad.choosing_apps = false;
+                    self.launchpad.query.clear();
+                    self.lp_query_changed();
+                }
+            }
+            Act::NewCategory => {
+                self.launchpad.category_name = Some(String::new());
+                self.launchpad.category_error = false;
+                self.launchpad.choosing_apps = false;
+                self.launchpad.query.clear();
+                self.lp_render("center");
+            }
+            Act::CancelCategory => {
+                self.launchpad.category_name = None;
+                self.lp_render("center");
+            }
+            Act::SaveCategory => {
+                if let Some(name) = self.launchpad.category_name.as_ref() {
+                    let name = name.trim().to_string();
+                    let mut existing: Vec<String> = crate::launchpad_categories::VIEWS.iter().flat_map(|n| [n.to_string(), crate::strings::tr(n)]).collect();
+                    existing.extend(self.cfg.launchpad_custom_categories.iter().map(|c| c.name.clone()));
+                    if !crate::launchpad_categories::valid_name(&name, &existing) || self.cfg.launchpad_custom_categories.len() >= 200 {
+                        self.launchpad.category_error = true;
+                        self.lp_render("center");
+                    } else {
+                        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|v| v.as_nanos()).unwrap_or(0);
+                        let mut id = format!("custom:{stamp}");
+                        while self.cfg.launchpad_custom_categories.iter().any(|c| c.id == id) { id.push('x'); }
+                        let expected = id.clone();
+                        self.save_and_apply(|cfg| cfg.launchpad_custom_categories.push(crate::config::LaunchpadCategory { id, name }));
+                        if self.cfg.launchpad_custom_categories.iter().any(|c| c.id == expected) {
+                            self.launchpad.category_name = None;
+                            self.launchpad.category = crate::launchpad_categories::VIEWS.len() + self.cfg.launchpad_custom_categories.len() - 1;
+                            self.launchpad.all_open = true;
+                            self.launchpad.sidebar_to_end();
+                            self.launchpad.on_wheel(f32::MAX);
+                            self.lp_render("all");
+                        }
+                    }
+                }
+            }
+            Act::ChooseCategoryApps => {
+                if Launchpad::category_key(self.launchpad.category, &self.cfg).is_some() {
+                    self.launchpad.choosing_apps = true;
+                    self.launchpad.query.clear();
+                    self.launchpad.on_wheel(f32::MAX);
+                    self.lp_render("all");
+                }
+            }
+            Act::FinishCategoryApps => {
+                self.launchpad.choosing_apps = false;
+                self.launchpad.query.clear();
+                self.launchpad.on_wheel(f32::MAX);
+                self.lp_query_changed();
+            }
+            Act::ToggleCategoryApp(id) => {
+                if let (Some(key), Some(app)) = (Launchpad::category_key(self.launchpad.category, &self.cfg), self.lp_apps.iter().find(|a| a.id == id)) {
+                    let key = key.to_string();
+                    let selected = Launchpad::category_has(&self.cfg, &key, app);
+                    self.save_and_apply(|cfg| {
+                        let mut added = cfg.launchpad_category_apps.remove(&key).unwrap_or_default();
+                        let mut excluded = cfg.launchpad_category_excluded.remove(&key).unwrap_or_default();
+                        crate::launchpad_categories::set_membership(&id, !selected, &mut added, &mut excluded);
+                        if !added.is_empty() { cfg.launchpad_category_apps.insert(key.clone(), added); }
+                        if !excluded.is_empty() { cfg.launchpad_category_excluded.insert(key, excluded); }
+                    });
                     self.lp_render("all");
                 }
             }

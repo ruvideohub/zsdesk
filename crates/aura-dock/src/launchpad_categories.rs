@@ -23,9 +23,47 @@ pub fn category<'a>(name: &str, id: &str, assigned: Option<&'a str>) -> &'a str 
     else { "other" }
 }
 
+/// Existing manual single-category assignments override automatic classification.
+/// Extra memberships allow an app in multiple categories; exclusions can remove
+/// an automatic match without disturbing the user's other categories.
+pub fn contains(selected: &str, name: &str, id: &str, assigned: Option<&str>, added: &[String], excluded: &[String]) -> bool {
+    if excluded.iter().any(|value| value == id) { return false; }
+    added.iter().any(|value| value == id) || category(name, id, assigned) == selected
+}
+
+pub fn set_membership(id: &str, member: bool, added: &mut Vec<String>, excluded: &mut Vec<String>) {
+    added.retain(|v| v != id);
+    excluded.retain(|v| v != id);
+    if member { added.push(id.to_string()); } else { excluded.push(id.to_string()); }
+}
+
+pub fn valid_name(name: &str, existing: &[String]) -> bool {
+    let name = name.trim();
+    !name.is_empty() && name.chars().count() <= 48 && !name.chars().any(char::is_control)
+        && !existing.iter().any(|old| old.trim().eq_ignore_ascii_case(name) || old.trim().to_lowercase() == name.to_lowercase())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn memberships_add_and_exclude_without_affecting_other_categories() {
+        let mut added = Vec::new();
+        let mut excluded = Vec::new();
+        assert!(contains("communication", "Telegram", "tg", None, &added, &excluded));
+        set_membership("tg", false, &mut added, &mut excluded);
+        assert!(!contains("communication", "Telegram", "tg", None, &added, &excluded));
+        set_membership("tg", true, &mut added, &mut excluded);
+        assert!(contains("communication", "Telegram", "tg", None, &added, &excluded));
+        assert!(contains("custom:1", "Telegram", "tg", None, &added, &excluded));
+    }
+    #[test]
+    fn names_reject_empty_duplicates_and_controls() {
+        assert!(!valid_name("   ", &[]));
+        assert!(!valid_name(" ИГРЫ ", &["игры".into()]));
+        assert!(!valid_name("bad\nname", &[]));
+        assert!(valid_name("Избранное", &["игры".into()]));
+    }
     #[test]
     fn automatic_and_manual_classification() {
         assert_eq!(category("Telegram", "telegram.exe", None), "communication");
