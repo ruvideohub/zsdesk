@@ -5495,11 +5495,7 @@ impl Dock {
             self.restart_system();
         }
         if old.desktop_clock != self.cfg.desktop_clock
-            || old.clock_corner != self.cfg.clock_corner
-            || (old.clock_scale - self.cfg.clock_scale).abs() > f32::EPSILON
-            || old.clock_12h != self.cfg.clock_12h
-            || old.clock_date != self.cfg.clock_date
-            || old.clock_seconds != self.cfg.clock_seconds
+            || crate::desktop_clock::Prefs::from_config(&old) != crate::desktop_clock::Prefs::from_config(&self.cfg)
         {
             self.restart_clock();
         }
@@ -6328,18 +6324,13 @@ impl Dock {
         if !self.cfg.desktop_clock || !self.is_main_dock() {
             return;
         }
-        let gone = match self.clock_host.as_mut() {
-            Some(child) => !matches!(child.try_wait(), Ok(None)),
-            None => false,
-        };
-        if !gone {
+        let running = self.clock_host.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        let now = Instant::now();
+        if !crate::desktop_retry::due(running, now, self.clock_retry_at) {
             return;
         }
         self.clock_host = None;
-        if Instant::now() < self.clock_retry_at {
-            return;
-        }
-        self.clock_retry_at = Instant::now() + std::time::Duration::from_secs(30);
+        self.clock_retry_at = now + crate::desktop_retry::BACKOFF;
         trace!("desktop clock: the card exited; starting it again");
         self.restart_clock();
     }
@@ -6394,19 +6385,13 @@ impl Dock {
         if !self.cfg.desktop_system || !self.is_main_dock() {
             return;
         }
-        let gone = match self.system_host.as_mut() {
-            Some(child) => !matches!(child.try_wait(), Ok(None)),
-            // Switched on but never started (or its start failed): try again, on the backoff.
-            None => true,
-        };
-        if !gone {
+        let running = self.system_host.as_mut().is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        let now = Instant::now();
+        if !crate::desktop_retry::due(running, now, self.system_retry_at) {
             return;
         }
         self.system_host = None;
-        if Instant::now() < self.system_retry_at {
-            return;
-        }
-        self.system_retry_at = Instant::now() + std::time::Duration::from_secs(30);
+        self.system_retry_at = now + crate::desktop_retry::BACKOFF;
         trace!("desktop load card: starting it again");
         self.restart_system();
     }

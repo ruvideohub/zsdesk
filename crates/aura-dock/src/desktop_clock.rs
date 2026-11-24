@@ -535,6 +535,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn preferences_include_position_and_drag_lock() {
+        let base = crate::config::Config::default();
+        let initial = Prefs::from_config(&base);
+        let mut changed = base.clone();
+        changed.clock_locked = !base.clock_locked;
+        assert_ne!(Prefs::from_config(&changed), initial);
+        changed = base.clone();
+        changed.clock_pos = Some([42, -7]);
+        assert_ne!(Prefs::from_config(&changed), initial);
+    }
+
+    #[test]
     fn the_card_keeps_a_widget_shape() {
         assert!(CARD_W > CARD_H);
         assert!(CARD_W / CARD_H < 3.0);

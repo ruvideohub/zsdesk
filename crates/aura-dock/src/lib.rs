@@ -17,6 +17,7 @@ mod apps;
 mod config;
 mod control_center;
 mod desktop_clock;
+mod desktop_retry;
 mod desktop_system;
 mod displays;
 mod dock;
