@@ -5,19 +5,15 @@
   "about": "Единственное описание того, что входит в сборку AuraUI. Из него собирает scripts/package.ps1, по нему проверяет scripts/verify-bundle.ps1, и эту же проверку зовёт CI. Добавил компонент — добавь строку сюда; проверка скажет, если строка разошлась с делом.",
   "entries": [
     {
-      "name": "AuraExplorer.exe",
-      "role": "files",
-      "title": "Файловый менеджер",
-      "note": "Окна файлов, поиск, интеграция с проводником. Запускается и сам по себе, если служба выключена.",
-      "source": { "kind": "cargo", "package": "aura-explorer", "bin": "aura-explorer" },
-      "required": true
-    },
-    {
       "name": "AuraDock.exe",
       "role": "dock",
       "title": "Панель, Launchpad, контрол-центр",
       "note": "Своя страница настроек: AuraDock.exe --settings.",
-      "source": { "kind": "cargo", "package": "aura-dock", "bin": "aura-dock" },
+      "source": {
+        "kind": "cargo",
+        "package": "aura-dock",
+        "bin": "aura-dock"
+      },
       "required": true
     },
     {
@@ -25,7 +21,11 @@
       "role": "desktop",
       "title": "Сетки рабочего стола",
       "note": "Standalone host for desktop and folder grids; own profile and process.",
-      "source": { "kind": "cargo", "package": "aura-fences", "bin": "Fences" },
+      "source": {
+        "kind": "cargo",
+        "package": "aura-fences",
+        "bin": "Fences"
+      },
       "required": true
     },
     {
@@ -33,66 +33,72 @@
       "role": "widgets",
       "title": "Виджеты рабочего стола",
       "note": "Часы и карточка нагрузки. Пока поднимается панелью и живёт, пока она жива.",
-      "source": { "kind": "cargo", "package": "aura-dock", "bin": "widgets" },
-      "required": true
-    },
-    {
-      "name": "auraservice.exe",
-      "role": "service",
-      "title": "Служба запуска и её настройки",
-      "note": "Единственный владелец автозапуска: --run держит компоненты, --settings открывает окно настроек.",
-      "source": { "kind": "cargo", "package": "aura-service", "bin": "auraservice" },
-      "required": true
-    },
-    {
-      "name": "AuraExplorerWindowHook-*.dll",
-      "role": "hook",
-      "title": "Перехват окон проводника",
-      "note": "Имя собирает build-скрипт, поэтому в наборе оно с хешем; грузится по имени из папки программы.",
-      "source": { "kind": "cargo-glob", "pattern": "AuraExplorerWindowHook-*.dll" },
+      "source": {
+        "kind": "cargo",
+        "package": "aura-dock",
+        "bin": "widgets"
+      },
       "required": true
     },
     {
       "name": "install.ps1",
       "role": "installer",
       "title": "Установка",
-      "note": "Копирует программы в профиль, делает ярлыки, включает автозапуск службы, проверяет manifest.json.",
-      "source": { "kind": "file", "path": "packaging/windows/install.ps1" },
+      "note": "Установка для текущего пользователя; Dock запускается при входе, Fences — вручную.",
+      "source": {
+        "kind": "file",
+        "path": "packaging/windows/install.ps1"
+      },
       "required": true
     },
     {
       "name": "install.cmd",
       "role": "installer",
       "title": "Установка двойным щелчком",
-      "source": { "kind": "file", "path": "packaging/windows/install.cmd" },
+      "source": {
+        "kind": "file",
+        "path": "packaging/windows/install.cmd"
+      },
       "required": true
     },
     {
       "name": "install-readme.txt",
       "role": "docs",
       "title": "Что в архиве и как поставить",
-      "source": { "kind": "file", "path": "packaging/windows/install-readme.txt" },
+      "source": {
+        "kind": "file",
+        "path": "packaging/windows/install-readme.txt"
+      },
       "required": true
     },
     {
       "name": "LICENSE.txt",
       "role": "legal",
       "title": "Лицензия AuraUI",
-      "source": { "kind": "file", "path": "LICENSE" },
+      "source": {
+        "kind": "file",
+        "path": "LICENSE"
+      },
       "required": true
     },
     {
       "name": "THIRD-PARTY-NOTICES.txt",
       "role": "legal",
       "title": "Уведомления третьих сторон",
-      "source": { "kind": "file", "path": "THIRD-PARTY-NOTICES.txt" },
+      "source": {
+        "kind": "file",
+        "path": "THIRD-PARTY-NOTICES.txt"
+      },
       "required": true
     },
     {
       "name": "licenses/*",
       "role": "legal",
       "title": "Тексты лицензий зависимостей",
-      "source": { "kind": "dir", "path": "packaging/licenses" },
+      "source": {
+        "kind": "dir",
+        "path": "packaging/licenses"
+      },
       "required": false
     },
     {
@@ -100,7 +106,9 @@
       "role": "manifest",
       "title": "Опечатка сборки: версия и хеши всех файлов",
       "note": "Пишет scripts/package.ps1 последним. install.ps1 сверяет по нему файлы перед копированием, verify-bundle.ps1 — после.",
-      "source": { "kind": "generated" },
+      "source": {
+        "kind": "generated"
+      },
       "required": true
     }
   ]

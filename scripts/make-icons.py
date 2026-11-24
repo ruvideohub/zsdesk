@@ -1,23 +1,5 @@
-#!/usr/bin/env python3
-"""Draw the suite's icons and write them next to their crates.
+"""Generate the AuraDock Windows icon. Run from the repository root."""
 
-Writes `crates/aura-dock/resources/aura-dock.ico` and
-`crates/aura-service/resources/auraservice.ico`.
-
-The file manager's own icon (`crates/aura-explorer/resources/aura.ico`) is a golden
-macOS-style folder; the panel's icon is the same gold, drawn as the panel itself —
-a rounded bar with three app tiles on it — so the two read as one product in Explorer
-and in the Start menu.
-
-The service is the same gold drawn as a gear, so the programs read as one family.
-`auraservice.exe` had no icon at all before this — it showed up as a blank generic
-program in Explorer, in the Start menu and in the uninstall list.
-
-Every size is drawn from scratch at 4x and downsampled, which keeps the 16 px and
-20 px variants legible instead of mush. Run it from the repository root:
-
-    python3 scripts/make-icons.py
-"""
 from PIL import Image, ImageDraw, ImageFilter
 
 GOLD_TOP = (247, 204, 94)
@@ -149,7 +131,6 @@ def draw_service_icon(units=BOX, scale=SUPERSAMPLE):
 
 def main():
     write("crates/aura-dock/resources/aura-dock.ico", draw_icon)
-    write("crates/aura-service/resources/auraservice.ico", draw_service_icon)
 
 
 def write(path, paint):

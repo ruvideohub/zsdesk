@@ -1,333 +1,160 @@
-﻿<#
-.SYNOPSIS
-    Устанавливает AuraExplorer с панелью и включает автозапуск.
-
-.DESCRIPTION
-    Копирует программы AuraUI в папку пользователя, кладёт ярлыки в меню «Пуск» и
-    прописывает автозапуск при входе в Windows. Каждый компонент (панель, сетки рабочего
-    стола, виджеты, файловый менеджер) — отдельная программа, и запускает их одна служба:
-    `auraservice.exe --run`. Автозапуск поэтому один — служба; что именно она поднимает,
-    решается в её окне «Запуск и компоненты» (`auraservice.exe --settings`), и там же
-    переключатели каждого компонента. Так у всех запусков один хозяин и нет двух панелей,
-    которые дрались бы за место на экране.
-
-    Администратор не нужен: всё ставится в профиль пользователя (PrivilegesRequired)
-    и в HKCU.
-
-.PARAMETER Dir
-    Куда ставить. По умолчанию %LOCALAPPDATA%\Programs\AuraExplorer.
-
-.PARAMETER NoAutostart
-    Не прописывать автозапуск (и убрать прежний).
-
-.PARAMETER PanelOnly
-    Оставлен для совместимости: раньше включал автозапуск только панели. Теперь набор
-    компонентов задаётся в окне службы, и скрипт просто пишет обычный автозапуск службы.
-
-.PARAMETER DesktopShortcut
-    Положить ярлык ещё и на рабочий стол.
-
-.PARAMETER NoStart
-    Не запускать AuraExplorer после установки.
-
-.PARAMETER Remove
-    Удалить: остановить процессы, убрать автозапуск, ярлыки и папку.
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1
-
-.EXAMPLE
-    powershell -ExecutionPolicy Bypass -File install.ps1 -Remove
-#>
+﻿<# Install the verified AuraUI bundle for the current user. No profiles are deleted. #>
 [CmdletBinding()]
 param(
-    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\AuraExplorer'),
+    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\AuraUI'),
     [switch]$NoAutostart,
-    [switch]$PanelOnly,
+    [switch]$PanelOnly, # compatibility: only Dock is automatic in this version
     [switch]$DesktopShortcut,
     [switch]$NoStart,
     [switch]$Remove
 )
-
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+$Dir = [IO.Path]::GetFullPath($Dir).TrimEnd('\')
+$Source = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\')
+$Dock = Join-Path $Dir 'AuraDock.exe'
+$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$RunName = 'AuraDock'
+$Command = '"{0}"' -f $Dock
+$Programs = [Environment]::GetFolderPath('Programs')
+$Desktop = [Environment]::GetFolderPath('Desktop')
+$Group = if ($Programs) { Join-Path $Programs 'AuraUI' } else { $null }
 
-$RunKey    = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-# Папки оболочки могут быть пустыми в урезанной среде — тогда ярлыки просто не делаем.
-$Programs   = [Environment]::GetFolderPath('Programs')
-$DesktopDir = [Environment]::GetFolderPath('Desktop')
-$StartMenu  = if ($Programs) { Join-Path $Programs 'AuraExplorer.lnk' } else { $null }
-$ShellLink  = if ($Programs) { Join-Path $Programs 'AuraUI - запуск и компоненты.lnk' } else { $null }
-# Так ярлык назывался до службы; при обновлении его надо убрать, иначе их станет два.
-$OldShellLink = if ($Programs) { Join-Path $Programs 'AuraExplorer - сетки и панель.lnk' } else { $null }
-$FencesLink = if ($Programs) { Join-Path $Programs 'Fences.lnk' } else { $null }
-$Desktop    = if ($DesktopDir) { Join-Path $DesktopDir 'AuraExplorer.lnk' } else { $null }
-$Source    = $PSScriptRoot
-if (-not $Source) { $Source = (Get-Location).Path }
-if (-not $Dir) { throw 'Не задана папка установки и пуст %LOCALAPPDATA%: запусти с -Dir "C:\AuraExplorer".' }
-$Exe       = Join-Path $Dir 'AuraExplorer.exe'
-$Dock      = Join-Path $Dir 'AuraDock.exe'
-$Service   = Join-Path $Dir 'auraservice.exe'
-$Fences    = Join-Path $Dir 'Fences.exe'
-
-function Write-Head([string]$Text) { Write-Host ''; Write-Host $Text -ForegroundColor Cyan }
-function Write-Note([string]$Text) { Write-Host "  $Text" -ForegroundColor DarkGray }
-function Write-Ok([string]$Text) { Write-Host "  $Text" -ForegroundColor Green }
-
-function Remove-Integration {
-    # `--uninstall-integration` is the program's own way back: it restores the recorded
-    # values and leaves alone anything the user changed afterwards. A missing or
-    # already-removed installation is not an error — there is simply nothing to undo.
-    $explorer = Join-Path $Dir 'AuraExplorer.exe'
-    if (-not (Test-Path -LiteralPath $explorer -PathType Leaf)) {
-        # The folder may already be gone but the registry entries are not: our own
-        # uninstaller cannot run, so say so rather than pretend the job is done.
-        Write-Note 'AuraExplorer.exe не найден: следы в реестре не убраны, проверь HKCU\Software\Classes\Directory\shell\AuraExplorer'
-        return
-    }
-    try {
-        Start-Process -FilePath $explorer -ArgumentList '--uninstall-integration' -Wait -ErrorAction Stop | Out-Null
-        Write-Note 'перехват открытия папок возвращён Проводнику'
-    } catch {
-        Write-Note "не удалось вернуть открытие папок: $($_.Exception.Message)"
-    }
-}
-
-function Stop-AuraExplorer {
-    # Сначала останавливаем владельца запуска, иначе он немедленно поднимет Fences снова.
-    Get-Process -Name 'auraservice' -ErrorAction SilentlyContinue | ForEach-Object {
-        try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
-    }
-    # Fences — отдельная программа со своей shutdown-командой.
-    if (Test-Path -LiteralPath $Fences) {
-        try { Start-Process -FilePath $Fences -ArgumentList '--quit' -Wait -ErrorAction Stop | Out-Null } catch { }
-    }
-    # AuraExplorer предоставляет ограниченное кооперативное закрытие для обновления.
-    if (Test-Path -LiteralPath $Exe) {
-        try { Start-Process -FilePath $Exe -ArgumentList @('--shutdown-for-update', ('"{0}"' -f $Exe)) -Wait -ErrorAction Stop | Out-Null } catch { }
-    }
-    Get-Process -Name 'AuraExplorer', 'aura-dock', 'Fences', 'widgets' -ErrorAction SilentlyContinue | ForEach-Object {
-        try { $_.Kill(); [void]$_.WaitForExit(2000) } catch { }
-    }
-}
-
-function Set-Autostart([string]$Name, [string]$Value) {
-    New-ItemProperty -Path $RunKey -Name $Name -Value $Value -PropertyType String -Force | Out-Null
-}
-
-function Remove-Autostart([string]$Name) {
-    $existing = Get-ItemProperty -Path $RunKey -Name $Name -ErrorAction SilentlyContinue
-    if ($existing) { Remove-ItemProperty -Path $RunKey -Name $Name -Force; Write-Note "автозапуск «$Name» выключен" }
-}
-
-# Прежние записи автозапуска компонентов: старый AuraExplorer desktop-mode, отдельный
-# Fences и AuraDock. Их работу теперь делает AuraService, поэтому записи удаляются.
-# а оставленная запись подняла бы второй экземпляр — или вообще старую программу.
-function Remove-StaleAutostart {
+function Get-DockStartup {
     $key = Get-Item -LiteralPath $RunKey -ErrorAction SilentlyContinue
-    if (-not $key) { return }
-    $fencesPrefix = '"' + [IO.Path]::GetFullPath($Fences) + '" '
-    foreach ($name in @($key.GetValueNames())) {
-        if ($name -eq 'AuraExplorer') { continue }
-        $value = [string]$key.GetValue($name)
-        $oldExplorerDesktop = ($value -match 'AuraExplorer(\.exe)?["\s]') -and ($value -match '--desktop')
-        # Standalone Fences uses a profile-scoped Run value. Retire it only when it points
-        # to this exact suite copy; a different standalone Fences installation survives.
-        $thisFencesInstall = $value.StartsWith($fencesPrefix, [StringComparison]::OrdinalIgnoreCase)
-        if ($oldExplorerDesktop -or $thisFencesInstall) {
-            Remove-ItemProperty -Path $RunKey -Name $name -Force -ErrorAction SilentlyContinue
-            Write-Note "снята прежняя запись автозапуска «$name»"
-        }
-    }
-    Remove-Autostart 'AuraDock'
+    if (-not $key -or $key.GetValueNames() -notcontains $RunName) { return $null }
+    if ($key.GetValueKind($RunName) -ne [Microsoft.Win32.RegistryValueKind]::String) { throw 'Запись AuraDock имеет неизвестный тип и не изменена.' }
+    return [string]$key.GetValue($RunName)
 }
-
-function Remove-Shortcut([string]$Path) {
-    if (-not $Path) { return }
-    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force; Write-Note "удалён ярлык $Path" }
+function Test-OwnStartup([string]$value) {
+    return $null -ne $value -and $value.Trim().Equals($Command, [StringComparison]::OrdinalIgnoreCase)
 }
-
-function New-Shortcut([string]$Path, [string]$Target, [string]$Arguments, [string]$Description) {
-    if (-not $Path) { return }
-    $link = $null
+function Remove-OwnShortcut([string]$path, [string]$target) {
+    if (-not $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
     $shell = New-Object -ComObject WScript.Shell
     try {
-        $link = $shell.CreateShortcut($Path)
-        $link.TargetPath = $Target
-        if ($Arguments) { $link.Arguments = $Arguments }
-        $link.WorkingDirectory = Split-Path -Parent $Target
-        $link.IconLocation = "$Target,0"
-        $link.Description = $Description
-        $link.Save()
-    } finally {
-        if ($link) { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
-        [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
+        $link = $shell.CreateShortcut($path)
+        try {
+            if ([string]::Equals($link.TargetPath, $target, [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $path -Force }
+        } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+}
+function New-OwnShortcut([string]$path, [string]$target, [string]$arguments) {
+    if (-not $path) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($path)
+        try {
+            if ((Test-Path -LiteralPath $path) -and -not [string]::Equals($link.TargetPath, $target, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Чужой ярлык не заменён: $path"
+            }
+            $link.TargetPath = $target
+            $link.Arguments = $arguments
+            $link.WorkingDirectory = $Dir
+            $link.Save()
+        } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+}
+function Assert-NotRunning {
+    foreach ($name in @('AuraDock', 'aura-dock', 'Fences', 'widgets')) {
+        foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+            try { $path = $process.Path } catch { $path = $null }
+            if ($path -and [IO.Path]::GetDirectoryName($path).Equals($Dir, [StringComparison]::OrdinalIgnoreCase)) {
+                throw "Закройте $name из этой установки и повторите операцию; процессы принудительно не завершаются."
+            }
+        }
     }
 }
-
-# ------------------------------------------------------------------ удаление
-if ($Remove) {
-    Write-Head 'Удаление AuraExplorer'
-    Stop-AuraExplorer
-    # Registry first, while the program is still on disk: --uninstall-integration is what
-    # puts folders, drives and This PC back to Explorer. Without it the folders keep
-    # opening in a program that is no longer installed.
-    Remove-Integration
-    Remove-Autostart 'AuraExplorer'
-    Remove-Autostart 'AuraDock'
-    Remove-StaleAutostart
-    Remove-Shortcut $StartMenu
-    Remove-Shortcut $ShellLink
-    Remove-Shortcut $OldShellLink
-    Remove-Shortcut $FencesLink
-    Remove-Shortcut $Desktop
-    if (Test-Path -LiteralPath $Dir) {
-        Remove-Item -LiteralPath $Dir -Recurse -Force
-        Write-Note "папка $Dir удалена"
+function Assert-NoLegacyInstall {
+    $legacyRun = (Get-ItemProperty -LiteralPath $RunKey -Name 'AuraExplorer' -ErrorAction SilentlyContinue).AuraExplorer
+    if ((Test-Path -LiteralPath (Join-Path $Dir 'AuraExplorer.exe')) -or
+        (Test-Path -LiteralPath (Join-Path $Dir 'auraservice.exe')) -or
+        ($legacyRun -and $legacyRun -match '(?i)auraservice\.exe') -or
+        (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\shell\AuraExplorer') -or
+        (Test-Path -LiteralPath 'HKCU:\Software\Classes\Drive\shell\AuraExplorer') -or
+        (Test-Path -LiteralPath 'HKCU:\Software\Classes\Directory\Background\shell\AuraExplorer') -or
+        (Test-Path -LiteralPath 'HKCU:\Software\Classes\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\AuraExplorer')) {
+        throw 'Найдена старая AuraExplorer/AuraService. Сначала удалите её прежним деинсталлятором, восстановив системный Проводник, затем повторите установку. Профили не удаляйте.'
     }
-    Write-Host ''
-    Write-Host 'Готово. Настройки остались в %APPDATA%\AuraExplorer — удали папку вручную, если они больше не нужны.' -ForegroundColor Green
-    Write-Host 'Запись о прежних настройках папок лежит отдельно, в %LOCALAPPDATA%\AuraUI — по ней открытие папок возвращается к Проводнику.' -ForegroundColor DarkGray
+}
+$shortcuts = @()
+if ($Group) {
+    $shortcuts += @{Path=(Join-Path $Group 'AuraDock.lnk'); Target=$Dock; Args=''}
+    $shortcuts += @{Path=(Join-Path $Group 'AuraDock Settings.lnk'); Target=$Dock; Args='--settings'}
+    $shortcuts += @{Path=(Join-Path $Group 'Fences.lnk'); Target=(Join-Path $Dir 'Fences.exe'); Args=''}
+}
+if ($Desktop) { $desktopLink = Join-Path $Desktop 'AuraDock.lnk' } else { $desktopLink = $null }
+
+if ($Remove) {
+    Assert-NoLegacyInstall
+    Assert-NotRunning
+    $installedManifest = Join-Path $Dir 'manifest.json'
+    if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) { throw 'Нет манифеста установленного AuraUI; файлы и ярлыки не удалены.' }
+    $receipt = Get-Content -LiteralPath $installedManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($receipt.product -ne 'AuraUI' -or $null -eq $receipt.files) { throw 'Манифест установленного AuraUI неверен; файлы и ярлыки не удалены.' }
+    $current = Get-DockStartup
+    if (Test-OwnStartup $current) { Remove-ItemProperty -LiteralPath $RunKey -Name $RunName }
+    foreach ($shortcut in $shortcuts) { Remove-OwnShortcut $shortcut.Path $shortcut.Target }
+    Remove-OwnShortcut $desktopLink $Dock
+    # Only delete files exactly matching this installation receipt. Keep modified files,
+    # scripts, licenses, the manifest and all unknown/user-owned files.
+    foreach ($name in @('AuraDock.exe','Fences.exe','widgets.exe')) {
+        $path = Join-Path $Dir $name
+        $record = $receipt.files.PSObject.Properties[$name]
+        if ($record -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            if ((Get-Item -LiteralPath $path).Length -eq [int64]$record.Value.bytes -and
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq [string]$record.Value.sha256) {
+                Remove-Item -LiteralPath $path -Force
+            } else { Write-Warning "Изменённый файл сохранён: $path" }
+        }
+    }
+    Write-Host 'Удаление завершено; пользовательские настройки и прочие файлы сохранены.' -ForegroundColor Green
     return
 }
 
-# ------------------------------------------------------------------ установка
-Write-Head 'Установка AuraExplorer'
-
-# AuraService owns the suite startup. Every required executable in bundle.json must be
-# present before install, so an incomplete desktop bundle is rejected rather than half-installed.
-$needed = @('AuraExplorer.exe', 'AuraDock.exe', 'Fences.exe', 'widgets.exe', 'auraservice.exe')
-$components = @()
-$missing = @($needed | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Source $_) -PathType Leaf) })
-if ($missing.Count -gt 0) {
-    Write-Host ("Рядом со скриптом нет: {0}." -f ($missing -join ', ')) -ForegroundColor Red
-    Write-Host 'Положи install.ps1 рядом с AuraExplorer.exe, AuraDock.exe, Fences.exe и auraservice.exe (как в архиве сборки).' -ForegroundColor Red
-    exit 1
-}
-
-# Опечатка сборки: manifest.json с версией и хешами всех файлов. Если он лежит рядом,
-# файлы сверяются до копирования: подменённый или недокачанный архив не установится молча,
-# а скажет, какой именно файл не тот.
+Assert-NoLegacyInstall
+Assert-NotRunning
+$current = Get-DockStartup
+if ($null -ne $current -and -not (Test-OwnStartup $current)) { throw 'Запись AuraDock принадлежит другой установке и не изменена.' }
+$required = @('AuraDock.exe','Fences.exe','widgets.exe')
 $manifestPath = Join-Path $Source 'manifest.json'
-if (Test-Path -LiteralPath $manifestPath -PathType Leaf) {
-    Write-Head 'Проверка набора'
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding utf8 | ConvertFrom-Json
-    $bad = @()
-    foreach ($entry in $manifest.files.PSObject.Properties) {
-        $file = Join-Path $Source ($entry.Name.Replace('/', '\'))
-        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { $bad += "$($entry.Name): файла нет"; continue }
-        $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne ([string]$entry.Value.sha256)) { $bad += "$($entry.Name): файл изменён" }
-    }
-    if ($bad.Count -gt 0) {
-        Write-Host 'Набор не сходится с manifest.json:' -ForegroundColor Red
-        foreach ($line in $bad) { Write-Host "  $line" -ForegroundColor Red }
-        Write-Host 'Скачай архив заново: файлы подменены или распакованы частично.' -ForegroundColor Red
-        exit 1
-    }
-    Write-Ok ("версия {0}: сверены {1} файлов" -f $manifest.version, @($manifest.files.PSObject.Properties).Count)
-} else {
-    Write-Note 'manifest.json рядом нет — сверку файлов пропускаю (архив собран вручную)'
+if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Нет manifest.json: установка неполного набора запрещена.' }
+$manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($manifest.product -ne 'AuraUI' -or $null -eq $manifest.files) { throw 'Неверный манифест набора.' }
+$records = @($manifest.files.PSObject.Properties)
+foreach ($name in $required) {
+    if ($records.Name -notcontains $name) { throw "Нет $name в манифесте." }
 }
-
-$sameFolder = ($Source.TrimEnd('\') -eq $Dir.TrimEnd('\'))
-if (-not $sameFolder) { Stop-AuraExplorer }
-
+foreach ($entry in $records) {
+    $relative = [string]$entry.Name
+    if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)' -or $relative -match ':') { throw "Недопустимый путь в манифесте: $relative" }
+    $path = [IO.Path]::GetFullPath((Join-Path $Source $relative))
+    if (-not $path.StartsWith($Source + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Файл отсутствует: $relative" }
+    if ((Get-Item -LiteralPath $path).Length -ne [int64]$entry.Value.bytes -or
+        (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -ne [string]$entry.Value.sha256) { throw "Файл повреждён: $relative" }
+}
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
-foreach ($file in $needed + $components) {
-    $from = Join-Path $Source $file
-    if (-not (Test-Path -LiteralPath $from -PathType Leaf)) {
-        if ($needed -contains $file) { continue }
-        Write-Note "$file нет в архиве — архив неполный: этот компонент не установится"
-        continue
+if (-not $Source.Equals($Dir, [StringComparison]::OrdinalIgnoreCase)) {
+    foreach ($entry in $records) {
+        $from = Join-Path $Source $entry.Name
+        $to = Join-Path $Dir $entry.Name
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+        Copy-Item -LiteralPath $from -Destination $to -Force
     }
-    if (-not $sameFolder) {
-        Copy-Item -LiteralPath $from -Destination $Dir -Force
-    }
-    Write-Note "$file -> $Dir"
+    Copy-Item -LiteralPath $manifestPath -Destination $Dir -Force
 }
-# Скачанный архив помечен «из интернета»; снимаем метку, иначе SmartScreen ругается
-# сильнее, чем на подпись.
-try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
-
-# Перехват окон проводника: DLL подгружается по имени из папки exe. Без неё перехват
-# работает в упрощённом режиме (окна не прячутся до показа), поэтому копируем рядом.
-foreach ($dll in Get-ChildItem -LiteralPath $Source -Filter 'AuraExplorerWindowHook-*.dll' -ErrorAction SilentlyContinue) {
-    if (-not $sameFolder) {
-        Copy-Item -LiteralPath $dll.FullName -Destination $Dir -Force
-    }
-    Write-Note ("{0} -> {1}" -f $dll.Name, $Dir)
-}
-
-# Visual C++ Runtime: AuraExplorer собран с динамическим CRT. Если рядом с exe лежат
-# библиотеки — копируем их; если нет и в системе их тоже нет, предупреждаем.
-$runtime = @('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll')
-foreach ($dll in $runtime) {
-    if (Test-Path -LiteralPath (Join-Path $Source $dll)) {
-        Copy-Item -LiteralPath (Join-Path $Source $dll) -Destination $Dir -Force
-    }
-}
-if ($env:SystemRoot) {
-    $system32 = Join-Path $env:SystemRoot 'System32'
-    if (-not (Test-Path -LiteralPath (Join-Path $system32 'vcruntime140.dll'))) {
-        Write-Host '  Внимание: в системе нет Visual C++ Runtime (vcruntime140.dll). Поставь «Microsoft Visual C++ 2015-2022 Redistributable (x64)».' -ForegroundColor Yellow
-    }
-}
-
-# ------------------------------------------------------------------ автозапуск
-Write-Head 'Автозапуск'
-Remove-StaleAutostart
+# Recheck ownership after copying; never overwrite a competing installation's entry.
+if ((Get-DockStartup) -ne $current) { throw 'Запись автозапуска изменилась; установка остановлена.' }
 if ($NoAutostart) {
-    Remove-Autostart 'AuraExplorer'
-    Write-Note 'автозапуск не прописан'
+    if (Test-OwnStartup $current) { Remove-ItemProperty -LiteralPath $RunKey -Name $RunName }
 } else {
-    if ($PanelOnly) { Write-Note 'ключ -PanelOnly больше не нужен: набор компонентов задаётся в окне службы' }
-    Set-Autostart 'AuraExplorer' ('"{0}" --run' -f $Service)
-    Write-Ok "при входе в Windows запускается служба: $Service --run"
-    Write-Note 'она поднимает панель, сетки и виджеты — по переключателям из окна «Запуск и компоненты»'
+    New-Item -Path $RunKey -Force | Out-Null
+    New-ItemProperty -LiteralPath $RunKey -Name $RunName -PropertyType String -Value $Command -Force | Out-Null
 }
-
-# ------------------------------------------------------------------ ярлыки
-Write-Head 'Ярлыки'
-Remove-Shortcut $OldShellLink
-if ($StartMenu -or $Desktop) {
-    New-Shortcut $StartMenu $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
-    if ($StartMenu) { Write-Note "меню «Пуск»: $StartMenu" }
-    New-Shortcut $ShellLink $Service '--settings' 'AuraUI — запуск и компоненты: что и когда запускать'
-    if ($ShellLink) { Write-Note "меню «Пуск»: $ShellLink" }
-    New-Shortcut $FencesLink $Fences '' 'Fences — самостоятельные сетки рабочего стола'
-    if ($FencesLink) { Write-Note "меню «Пуск»: $FencesLink" }
-    if ($DesktopShortcut) {
-        New-Shortcut $Desktop $Exe '' 'AuraExplorer — файловый менеджер с панелью и сетками'
-        if ($Desktop) { Write-Note "рабочий стол: $Desktop" }
-    }
-} else {
-    Write-Note 'папки оболочки недоступны — ярлыки не создаются'
+if ($Group) {
+    New-Item -ItemType Directory -Force -Path $Group | Out-Null
+    foreach ($shortcut in $shortcuts) { New-OwnShortcut $shortcut.Path $shortcut.Target $shortcut.Args }
 }
-
-# ------------------------------------------------------------------ подпись
-try {
-    foreach ($file in Get-ChildItem -LiteralPath $Dir -Filter '*.exe') {
-        $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
-        $state = if ($signature.Status -eq 'Valid') { 'подпись проверена' } else { "подпись: $($signature.Status)" }
-        Write-Note ("{0}: {1}" -f $file.Name, $state)
-    }
-} catch { Write-Note 'проверить подпись не удалось — на работу это не влияет' }
-
-# ------------------------------------------------------------------ запуск
-if (-not $NoStart) {
-    Stop-AuraExplorer
-    Start-Process -FilePath $Service -ArgumentList '--run' -WorkingDirectory $Dir
-    Write-Ok 'служба запущена: Fences, панель и остальные компоненты запускаются по её настройкам'
-}
-
-Write-Host ''
-Write-Host 'Установлено.' -ForegroundColor Green
-Write-Host "  Папка:      $Dir"
-Write-Host '  Панель:     внизу экрана, первая иконка — сам AuraExplorer'
-Write-Host '  Сетки:      на рабочем столе, появляются сразу'
-Write-Host '  Часы:       правый нижний угол, стеклянная карточка'
-Write-Host '  Значок:     в трее; выход — правый клик по нему'
-Write-Host '  Запуск:     «AuraUI — запуск и компоненты» в меню «Пуск» (auraservice.exe --settings)'
-Write-Host ''
-Write-Host 'Удалить: powershell -ExecutionPolicy Bypass -File install.ps1 -Remove'
+if ($DesktopShortcut -and $desktopLink) { New-OwnShortcut $desktopLink $Dock '' }
+if (-not $NoStart) { Start-Process -FilePath $Dock -WorkingDirectory $Dir }
+Write-Host 'AuraUI установлен. Dock запускается при входе, Fences запускается вручную.' -ForegroundColor Green

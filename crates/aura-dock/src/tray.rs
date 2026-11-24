@@ -440,17 +440,23 @@ pub fn send(key: u64, input: TrayInput, at: POINT) {
     }
     if version < 4 && matches!(input, TrayInput::PopupOpen | TrayInput::PopupClose) { return; }
     let message = event_code(input);
-    let (wp, lp) = if version >= 4 {
-        (((at.y as u16 as usize) << 16) | (at.x as u16 as usize), ((uid as usize & 0xFFFF) << 16 | message as usize) as isize)
-    } else {
-        (uid as usize, message as isize)
-    };
-    if matches!(input, TrayInput::LeftUp | TrayInput::RightUp) {
-        unsafe { let _ = AllowSetForegroundWindow(window_pid(owner)); }
-    }
+    let (wp, lp) = crate::tray_policy::callback_words(version, uid, message, at.x, at.y);
     unsafe {
         if let Err(e) = PostMessageW(Some(owner), callback, WPARAM(wp), LPARAM(lp)) {
             ttrace!("'{tip}': message {message:#x} refused ({e:?}) — a closed window, or the app runs elevated");
+        }
+    }
+}
+
+/// Grant foreground rights while the clicked panel is still foreground. Hiding an
+/// active panel first can transfer foreground to another process, making the grant fail.
+pub fn prepare_click(key: u64) {
+    let owner = HOST.with(|h| h.borrow().as_ref()?.icons.iter().find(|i| i.key == key).map(|i| i.owner));
+    if let Some(owner) = owner {
+        let pid = window_pid(owner);
+        if pid == 0 { return; }
+        if let Err(error) = unsafe { AllowSetForegroundWindow(pid) } {
+            ttrace!("could not grant tray owner {pid} foreground permission: {error:?}");
         }
     }
 }
@@ -495,7 +501,10 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
         NIM_ADD | NIM_MODIFY => {
             // An icon we already have (Explorer answers FALSE to a repeat add) still updates
             // its details: icons first seen through a modify may lack the click message.
-            let repeat_add = pos.is_some() && msg == NIM_ADD;
+            let resume_add = pos.is_some_and(|p| msg == NIM_ADD &&
+                crate::tray_policy::accepts_readd(true, host.icons[p].callback,
+                    !owner.is_invalid() && host.icons[p].owner != owner));
+            let repeat_add = pos.is_some() && msg == NIM_ADD && !resume_add;
             let idx = match (pos, msg) {
                 (Some(p), _) => p,
                 (None, NIM_MODIFY) if n.flags & NIF_ICON == 0 => return false,
@@ -521,6 +530,11 @@ fn apply(host: &mut Host, msg: u32, n: &NotifyIconData32) -> bool {
                 }
             };
             let i = &mut host.icons[idx];
+            if resume_add {
+                // The new registration starts in the default ABI until SETVERSION arrives.
+                i.version = 0;
+                i.callback = 0;
+            }
             i.uid = crate::tray_policy::registration_uid(msg == NIM_ADD, guid.is_some(), i.uid, n.uid);
             if !owner.is_invalid() && i.owner != owner {
                 i.owner = owner;
@@ -695,4 +709,86 @@ mod tests {
         assert!(h.icons.is_empty());
         assert_eq!(h.explorer_pid, 43);
     }
+    #[test]
+    fn partial_icon_can_finish_registration_and_negotiate_v4() {
+        let mut h = host();
+        let mut n = data(7);
+        n.flags = NIF_GUID | NIF_ICON; // first observed through an incomplete modify
+        assert!(apply(&mut h, NIM_MODIFY, &n));
+        assert_eq!(h.icons[0].callback, 0);
+        n.flags = NIF_GUID | NIF_MESSAGE;
+        assert!(apply(&mut h, NIM_ADD, &n));
+        assert_eq!(h.icons[0].callback, WM_USER + 42);
+        n.version = 4;
+        assert!(apply(&mut h, NIM_SETVERSION, &n));
+        assert_eq!(h.icons[0].version, 4);
+        assert!(!apply(&mut h, NIM_ADD, &n));
+    }
+
+    #[test]
+    fn guid_with_new_owner_can_negotiate_new_version() {
+        let mut h = host();
+        let mut n = data(7);
+        assert!(apply(&mut h, NIM_ADD, &n));
+        n.version = 4;
+        assert!(apply(&mut h, NIM_SETVERSION, &n));
+        n.hwnd = 302; n.uid = 13;
+        assert!(apply(&mut h, NIM_ADD, &n));
+        assert_eq!(h.icons[0].version, 0);
+        assert_eq!(h.icons[0].uid, 13);
+        assert!(apply(&mut h, NIM_SETVERSION, &n));
+        assert_eq!(h.icons[0].version, 4);
+    }
+
+    #[test]
+    fn real_posted_callbacks_use_the_negotiated_abi() {
+        // A hidden local receiver exercises the real PostMessageW path, not Explorer's
+        // taskbar and not simulated user input. It needs no real tray icons or apps.
+        const CALLBACK: u32 = WM_APP + 111;
+        let receiver = unsafe { CreateWindowExW(
+            WINDOW_EX_STYLE::default(), w!("STATIC"), w!(""), WS_OVERLAPPED,
+            0, 0, 1, 1, None, None, None, None,
+        ) }.expect("create hidden test receiver");
+        struct Cleanup(HWND);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                HOST.with(|h| { h.borrow_mut().take(); });
+                unsafe { let _ = DestroyWindow(self.0); }
+            }
+        }
+        let _cleanup = Cleanup(receiver);
+        let mut h = host();
+        h.icons.push(Icon {
+            key: 81, gen: 0, owner: receiver, uid: 0x1234_5678, guid: None,
+            stable_id: "test".into(), callback: CALLBACK, version: 0,
+            hicon: None, tip: String::new(), hidden: false, show_tip: false,
+        });
+        HOST.with(|slot| *slot.borrow_mut() = Some(h));
+        let read = || {
+            let mut result = Vec::new();
+            let mut message = MSG::default();
+            while unsafe { PeekMessageW(&mut message, Some(receiver), CALLBACK, CALLBACK, PM_REMOVE) }.as_bool() {
+                result.push((message.wParam.0, message.lParam.0));
+            }
+            result
+        };
+        let point = POINT { x: -120, y: 850 };
+        click(81, Click::Right, point);
+        let legacy = read();
+        assert_eq!(legacy, [WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP].into_iter()
+            .map(|event| (0x1234_5678, event as isize)).collect::<Vec<_>>());
+
+        HOST.with(|slot| slot.borrow_mut().as_mut().unwrap().icons[0].version = 4);
+        click(81, Click::Left, point);
+        let modern = read();
+        assert_eq!(modern, [WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_LBUTTONUP, NIN_SELECT].into_iter()
+            .map(|event| crate::tray_policy::callback_words(4, 0x1234_5678, event, point.x, point.y))
+            .collect::<Vec<_>>());
+        click(81, Click::Right, point);
+        let modern = read();
+        assert_eq!(modern, [WM_MOUSEMOVE, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_CONTEXTMENU].into_iter()
+            .map(|event| crate::tray_policy::callback_words(4, 0x1234_5678, event, point.x, point.y))
+            .collect::<Vec<_>>());
+    }
+
 }

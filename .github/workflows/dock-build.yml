@@ -54,21 +54,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           python scripts/check-translations.py
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          python scripts/check_slim_bundle.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          python scripts/check_fences_boundary.py
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
-      - name: Build the file manager, Fences and dock
+      - name: Build Fences, Dock and widgets
         working-directory: aura
         shell: pwsh
         run: |
-          # Fences is a separate crate/binary; Explorer no longer contains a Fences bin.
-          cargo build --locked --release -p aura-explorer --bins
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           cargo build --locked --release -p aura-fences --bin Fences
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # AuraDock still builds widgets.exe as its companion.
           cargo build --locked --release -p aura-dock --bins
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # The launch service: one owner for everything that starts at logon.
-          cargo build --locked --release -p aura-service --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           exit $LASTEXITCODE
       - name: Lay out the bundle and verify it
@@ -106,13 +103,11 @@ jobs:
       - name: Installer (Inno Setup)
         working-directory: aura
         shell: pwsh
-        continue-on-error: true
         run: |
           # Тот же упаковщик: он сам передаёт ISCC путь к набору, выходную папку и версию.
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
           if (-not (Test-Path -LiteralPath $iscc)) {
-            Write-Host "Inno Setup не найден ($iscc): пропускаю установщик, набор и install.ps1 готовы."
-            exit 0
+            throw "Inno Setup is required for installer verification: $iscc"
           }
           # -ManifestOnly: набор уже разложен и подписан, его нельзя перезаписывать неподписанным.
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist -OutputDir installer -NoZip -InnoCompiler $iscc
@@ -121,7 +116,7 @@ jobs:
         with:
           name: aura-ui-setup
           path: aura/installer/*
-          if-no-files-found: ignore
+          if-no-files-found: error
       # The tests run after the archive is uploaded, so the archive exists either way — but a
       # failing test must make the run red. Two things were wrong with the old step:
       #
@@ -135,6 +130,14 @@ jobs:
       # not load, because "STATUS_ENTRYPOINT_NOT_FOUND" on its own says nothing.
       # Dock's library tests are run explicitly below; watchdog startup and timeout
       # are also exercised independently without GUI fixtures.
+      - name: Dock startup policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/startup_policy.rs -o target/dock-startup-policy-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-startup-policy-tests.exe
+          exit $LASTEXITCODE
       - name: Dock watchdog protocol tests
         shell: pwsh
         working-directory: aura
@@ -159,6 +162,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-appbar-policy-tests.exe
           exit $LASTEXITCODE
+      - name: Mini tray geometry tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/tray_mini_layout.rs -o target/dock-mini-tray-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-mini-tray-tests.exe
+          exit $LASTEXITCODE
       - name: Dock library unit tests
         shell: pwsh
         working-directory: aura
@@ -169,6 +180,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not ($tests | Select-String -SimpleMatch 'tray::tests::restart_clears_stale_icons_and_accepts_fresh_registration')) {
             throw 'Tray protocol test was not discovered'
+          }
+          if (-not ($tests | Select-String -SimpleMatch 'tray::tests::real_posted_callbacks_use_the_negotiated_abi')) {
+            throw 'Tray real callback test was not discovered'
           }
           if (-not ($tests | Select-String -SimpleMatch 'tracker::tests::focus_maps_to_closest_taskbar_window_not_always_root_owner')) {
             throw 'Tracker window test was not discovered'
@@ -244,47 +258,8 @@ jobs:
             Write-Host 'Диагностика: что лежит рядом с тестовыми exe и что они грузят'
             Get-ChildItem target/release/*.dll -ErrorAction SilentlyContinue | ForEach-Object { "release: {0} {1}" -f $_.Name, $_.Length }
             Get-ChildItem target/release/deps/*.dll -ErrorAction SilentlyContinue | ForEach-Object { "deps: {0} {1}" -f $_.Name, $_.Length }
-            $dumpbin = Get-ChildItem 'C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($dumpbin) {
-              Get-ChildItem target/release/deps/aura_explorer-*.exe -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object {
-                # STATUS_ENTRYPOINT_NOT_FOUND называет виновника только в диалоговом окне,
-                # которого в CI нет: сверяем импорты exe с экспортами системных DLL сами.
-                $text = & $dumpbin.FullName /nologo /imports $_.FullName | Out-String
-                $current = $null
-                $sets = @{}
-                foreach ($line in ($text -split "`r?`n")) {
-                  if ($line -match '^\s{4}(\S+\.dll)\s*$') {
-                    $current = $matches[1]
-                    if (-not $sets.ContainsKey($current)) { $sets[$current] = New-Object System.Collections.Generic.List[string] }
-                    continue
-                  }
-                  if ($current -and $line -match '^\s+[0-9A-Fa-f]+\s+([A-Za-z_][^\s]*)\s*$') { $sets[$current].Add($matches[1]) }
-                }
-                foreach ($dll in $sets.Keys) {
-                  # api-ms-win-* — не настоящие DLL, а схемы API set: их экспорты не перечислить.
-                  if ($dll -like 'api-ms-win-*') { continue }
-                  $system = Join-Path $env:SystemRoot ("System32\" + $dll)
-                  if (-not (Test-Path $system)) { Write-Host "нет $dll"; continue }
-                  $exports = @{}
-                  (& $dumpbin.FullName /nologo /exports $system) | ForEach-Object {
-                    if ($_ -match '^\s+\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)') { $exports[$matches[1]] = 1 }
-                  }
-                  foreach ($name in $sets[$dll]) {
-                    if (-not $exports.ContainsKey($name)) { Write-Host "не найдено в ${dll}: $name" -ForegroundColor Yellow }
-                  }
-                }
-              }
-            } else {
-              Write-Host 'dumpbin.exe не найден'
-            }
             Get-ChildItem "$env:SystemRoot\System32\vcruntime140*.dll", "$env:SystemRoot\System32\msvcp140*.dll" -ErrorAction SilentlyContinue |
               ForEach-Object { "{0} {1}" -f $_.Name, $_.VersionInfo.FileVersion }
             exit 1
           }
           Write-Host ("Тесты прошли: {0} пакетов" -f $packages.Count) -ForegroundColor Green
-      # A second edition of the explorer (no default features) has to keep compiling.
-      - name: Desktop edition compiles (does not block the archive)
-        if: always()
-        continue-on-error: true
-        working-directory: aura
-        run: cargo check --locked --release -p aura-explorer --no-default-features --features desktop

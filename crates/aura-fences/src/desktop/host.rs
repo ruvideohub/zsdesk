@@ -2316,8 +2316,7 @@ impl DesktopHost {
     }
 
     fn global_items(&self, s: &aura_fences_model::desktop::DesktopSettings) -> Vec<MenuItemSpec> {
-        let service_settings = crate::service_start::available();
-        let autostart = !service_settings && super::startup_enabled(&self.config_path).unwrap_or(false);
+        let autostart = super::startup_enabled(&self.config_path).unwrap_or(false);
         let all_collapsed = !self.config.fences.is_empty()
             && self.config.fences.iter().filter(|fence| !self.config.is_released(fence.id)).all(|fence| fence.collapsed);
         let transparency = |opacity: u8| {
@@ -2355,8 +2354,7 @@ impl DesktopHost {
             entry(aura_core::i18n::text("鼠标悬停展开折叠的格子"), "hover-expand", true, s.hover_expand),
             entry(aura_core::i18n::text("隐藏托盘图标"), "hide-tray", true, s.hide_tray),
             entry(
-                if service_settings { aura_core::i18n::text("启动与组件…") } else { aura_core::i18n::text("登录 Windows 时启动桌面格子") },
-                if service_settings { "launch-settings" } else { "autostart" }, true, autostart,
+                aura_core::i18n::text("登录 Windows 时启动桌面格子"), "autostart", true, autostart,
             ),
             MenuItemSpec::Separator,
             entry(aura_core::i18n::text("打开系统资源管理器"), "open-aura", true, false),
@@ -2436,7 +2434,6 @@ impl DesktopHost {
                     return After::Notice(aura_core::i18n::text("托盘图标已隐藏。\n\n右键任意格子 → 桌面格子 可取消隐藏；也可在文件管理器 ≡ → 桌面格子 → 显示托盘图标。"));
                 }
             }
-            "launch-settings" => crate::service_start::open_settings(),
             "autostart" => {
                 let current=match super::startup_enabled(&self.config_path){
                     Ok(value)=>value,

@@ -8,7 +8,8 @@ use crate::control_center::{CAct, ControlCenter, Data};
 impl Dock {
     /// The tray icons' (key, tooltip) list for the drop-down's footer.
     fn cc_tray(&mut self) -> Vec<(u64, String)> {
-        self.tray_views().iter().map(|t| (t.key, t.tip.clone())).collect()
+        // Icons live in the adjacent mini tray, not a second row in this popup.
+        Vec::new()
     }
 
     /// Battery for the drop-down's footer: percent, charging, time left.
@@ -21,7 +22,7 @@ impl Dock {
 
     /// The shelf's inner edge in screen px — the drop-down's anchor.
     pub(super) fn cc_anchor(&self) -> f32 {
-        self.shelf_inner_y() as f32
+        if self.mini_tray.visible { self.mini_tray.bounds().top as f32 } else { self.shelf_inner_y() as f32 }
     }
 
     /// Repaint the drop-down when it is open (it follows the system state).
@@ -86,7 +87,7 @@ impl Dock {
         };
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
         let anchor = self.cc_anchor();
-        match self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.panel_top, self.scale, &data, &self.tray_brushes) {
+        match self.control_center.show(&c, gfx, &bd, self.monitor, anchor, false, self.scale, &data, &self.tray_brushes) {
             Ok(()) => trace!("control centre open at {anchor:.0}"),
             Err(e) => trace!("control centre failed: {e:?}"),
         }
@@ -158,7 +159,7 @@ impl Dock {
         };
         let (c, gfx, bd) = (self.compositor.clone(), &self.gfx, self.backdrop.clone());
         let anchor = self.cc_anchor();
-        if let Err(e) = self.control_center.show(&c, gfx, &bd, self.monitor, anchor, self.panel_top, self.scale, &data, &self.tray_brushes) {
+        if let Err(e) = self.control_center.show(&c, gfx, &bd, self.monitor, anchor, false, self.scale, &data, &self.tray_brushes) {
             trace!("control centre reflow failed: {e:?}");
         }
     }

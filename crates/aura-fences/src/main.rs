@@ -27,8 +27,6 @@ mod quick_search;
 #[cfg(windows)]
 mod runtime;
 #[cfg(windows)]
-mod service_start;
-#[cfg(windows)]
 mod storage;
 
 #[cfg(windows)]

@@ -539,6 +539,7 @@ struct Drag {
 enum TrayOrigin {
     Dock,
     Popup,
+    ControlCenter,
 }
 
 struct TrayPress {
@@ -610,6 +611,8 @@ struct Dock {
     tray_bar_keys: Vec<u64>,
     tray_overflow_keys: Vec<u64>,
     tray_popup: crate::tray_strip::TrayPopup,
+    mini_tray: crate::tray_mini::MiniTray,
+    mini_press: Option<crate::tray_mini::Hit>,
     tray_hover: Option<(u64, bool)>,
     tray_tip_open: Option<u64>,
     tray_custom_popup: Option<u64>,
@@ -1072,10 +1075,10 @@ impl Dock {
     fn compute_items(&mut self) -> Vec<Item> {
         self.tray_items = self.collect_tray_items();
         let (tray_bar, tray_overflow) = crate::tray_strip::partition(
-            &self.tray_items,
+            &self.tray_items.iter().filter(|icon| crate::tray_compact::show_icon(&icon.stable_id, icon.app_hidden)).cloned().collect::<Vec<_>>(),
             &self.cfg.tray_order,
             &self.cfg.tray_hidden,
-            crate::tray_strip::MAX_ON_BAR,
+            crate::tray_mini_layout::icon_capacity(self.monitor.right - self.monitor.left, self.scale),
         );
         self.tray_bar_keys = tray_bar.iter().map(|i| i.key).collect();
         self.tray_overflow_keys = tray_overflow.iter().map(|i| i.key).collect();
@@ -1083,7 +1086,7 @@ impl Dock {
         let pins = self.cfg.pins.clone();
         // The control centre is a pinned widget, but it belongs at the right-hand end of
         // the panel (where the Recycle Bin used to sit), after the running apps.
-        let mut cc_item: Option<Item> = None;
+        // The control center now has a dedicated button in the right-hand mini tray.
         // Identities already on the panel. One program, one icon: two pins for the same app,
         // a stack member that is also running, a window that reports its AppUserModelID while
         // its twin reports the executable path — all of those used to draw twice.
@@ -1116,11 +1119,7 @@ impl Dock {
                         crate::widgets::Size::Large => "l",
                     };
                     let item = Item { kind: Kind::Widget, key: format!("::widget{n}:{widget}:{code}"), pinned: true };
-                    if widget == CONTROL_CENTER {
-                        cc_item = Some(item);
-                    } else {
-                        v.push(item);
-                    }
+                    if widget != CONTROL_CENTER { v.push(item); }
                 }
             }
         }
@@ -1146,9 +1145,6 @@ impl Dock {
         // All notification icons live in Control Center, never as large dock tiles.
         if self.update_icon_visible() {
             v.push(Item { kind: Kind::Update, key: "::update".into(), pinned: true });
-        }
-        if let Some(it) = cc_item {
-            v.push(it);
         }
         v
     }
@@ -1254,9 +1250,12 @@ impl Dock {
             }
         }
         self.update_indicators();
+        if self.is_main_dock() && !self.hidden_for_fullscreen && (force || tray_changed || !self.mini_tray.visible) {
+            self.refresh_mini_tray();
+        }
         if self.control_center.open {
             let anchor = self.cc_anchor();
-            self.control_center.reposition(self.monitor, anchor, self.panel_top);
+            self.control_center.reposition(self.monitor, anchor, false);
         }
         if self.tray_popup.open && (visual_changed || tray_changed) {
             self.show_tray_popup();
@@ -2040,9 +2039,10 @@ impl Dock {
         let mut point = POINT::default();
         let _ = get_cursor_pos(&mut point);
         let popup = self.tray_popup.bounds();
-        let inside_tray_popup = self.tray_popup.open
+        let inside_tray_popup = (self.tray_popup.open
             && point.x >= popup.left && point.x < popup.right
-            && point.y >= popup.top && point.y < popup.bottom;
+            && point.y >= popup.top && point.y < popup.bottom)
+            || self.mini_tray.contains(point.x, point.y);
         if !inside_tray_popup {
             self.set_tray_hover(None, false);
             if self.tray_popup.open { self.hide_tray_popup(); }
@@ -2932,6 +2932,58 @@ impl Dock {
 
     /// Messages for pop-up windows (menus, previews, stacks, Launchpad, Settings).
     fn popup_message(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+        if hwnd == self.mini_tray.hwnd() {
+            use crate::tray_mini::Hit;
+            let (x, y) = lparam_xy(lp);
+            match msg {
+                WM_MOUSEACTIVATE => return Some(LRESULT(MA_NOACTIVATE as isize)),
+                WM_MOUSEMOVE => {
+                    unsafe {
+                        let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                        let _ = TrackMouseEvent(&mut tme);
+                    }
+                    let hit = self.mini_tray.at(x, y);
+                    self.mini_tray.set_hover(hit);
+                    let key = match hit { Some(Hit::Icon(key)) => Some(key), _ => None };
+                    self.set_tray_hover(key, false);
+                }
+                WM_MOUSELEAVE => {
+                    self.mini_tray.set_hover(None);
+                    self.set_tray_hover(None, false);
+                }
+                WM_LBUTTONDOWN => {
+                    self.mini_press = self.mini_tray.at(x, y);
+                    if self.mini_press.is_some() { unsafe { SetCapture(hwnd); } }
+                }
+                WM_LBUTTONUP => {
+                    let hit = self.mini_tray.at(x, y);
+                    let pressed = self.mini_press.take();
+                    unsafe { let _ = ReleaseCapture(); }
+                    if hit.is_some() && hit == pressed {
+                        match hit.unwrap() {
+                            Hit::Icon(key) => {
+                                // A real click gives our process foreground rights. The strip is
+                                // otherwise non-activating; take foreground briefly so those rights
+                                // can be delegated to the app before its callback is posted.
+                                unsafe { let _ = SetForegroundWindow(hwnd); }
+                                self.tray_click(key, crate::tray::Click::Left);
+                            },
+                            Hit::Overflow => if self.tray_popup.open { self.hide_tray_popup() } else { self.show_tray_popup() },
+                            Hit::Control => self.toggle_control_center(),
+                        }
+                    }
+                }
+                WM_RBUTTONUP => {
+                    if let Some(Hit::Icon(key)) = self.mini_tray.at(x, y) {
+                        unsafe { let _ = SetForegroundWindow(hwnd); }
+                        self.tray_click(key, crate::tray::Click::Right);
+                    }
+                }
+                WM_CAPTURECHANGED => self.mini_press = None,
+                _ => return None,
+            }
+            return Some(LRESULT(0));
+        }
         if hwnd == self.tray_popup.hwnd() {
             let (x, y) = lparam_xy(lp);
             let bounds = self.tray_popup.bounds();
@@ -2972,13 +3024,7 @@ impl Dock {
                     let inside = point.x >= bounds.left && point.x < bounds.right && point.y >= bounds.top && point.y < bounds.bottom;
                     if !inside && self.tray_drag.is_none() {
                         self.set_tray_hover(None, false);
-                        let x = (point.x - self.monitor.left) as f32;
-                        let y = (point.y - self.win_top()) as f32;
-                        let over_overflow = self.geo.hit(x, y, 0.0)
-                            .and_then(|i| self.items.get(i))
-                            .map(|item| item.kind == Kind::TrayOverflow)
-                            .unwrap_or(false);
-                        if !over_overflow { self.hide_tray_popup(); }
+                        if !self.mini_tray.contains(point.x, point.y) { self.hide_tray_popup(); }
                     }
                 }
                 WM_LBUTTONDOWN => {
@@ -3042,18 +3088,35 @@ impl Dock {
                     if self.control_center.clear_hover() { self.cc_render(); }
                 }
                 WM_LBUTTONDOWN => {
-                    self.cc_click(x, y);
-                    if self.control_center.dragging() {
-                        unsafe {
-                            SetCapture(hwnd);
-                        }
+                    let key = match self.control_center.at(x, y) {
+                        Some((crate::control_center::CAct::Do(crate::widgets::WAct::Tray(key)), _, _)) => Some(key),
+                        _ => None,
+                    };
+                    if let Some(key) = key {
+                        self.tray_press = Some(TrayPress { key, origin: TrayOrigin::ControlCenter, screen_x: 0, screen_y: 0 });
+                        unsafe { SetCapture(hwnd); }
+                    } else {
+                        self.cc_click(x, y);
+                        if self.control_center.dragging() { unsafe { SetCapture(hwnd); } }
                     }
                 }
                 WM_LBUTTONUP => {
+                    let pressed = self.tray_press.take().filter(|p| p.origin == TrayOrigin::ControlCenter).map(|p| p.key);
+                    let released = match self.control_center.at(x, y) {
+                        Some((crate::control_center::CAct::Do(crate::widgets::WAct::Tray(key)), _, _)) => Some(key),
+                        _ => None,
+                    };
                     self.control_center.end_drag();
-                    unsafe {
-                        let _ = ReleaseCapture();
+                    unsafe { let _ = ReleaseCapture(); }
+                    if let Some(key) = crate::tray_policy::matching_release(pressed, released) {
+                        self.tray_click(key, crate::tray::Click::Left);
                     }
+                }
+                WM_CAPTURECHANGED => {
+                    if self.tray_press.as_ref().is_some_and(|p| p.origin == TrayOrigin::ControlCenter) {
+                        self.tray_press = None;
+                    }
+                    self.control_center.end_drag();
                 }
                 WM_RBUTTONUP => {
                     // Right-click on a tray icon in the footer: the app's own menu, as on the
@@ -3584,6 +3647,25 @@ impl Dock {
         }
     }
 
+    /// Keep the strip above Windows' taskbar if it remains visible. The taskbar
+    /// watchdog still owns its visibility; this window never modifies Explorer.
+    fn mini_screen(&self) -> RECT {
+        if self.taskbar_hidden { return self.monitor; }
+        let p = POINT { x: self.monitor.right - 1, y: self.monitor.bottom - 1 };
+        let m = unsafe { MonitorFromPoint(p, MONITOR_DEFAULTTOPRIMARY) };
+        let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if unsafe { GetMonitorInfoW(m, &mut info) }.as_bool() { info.rcWork } else { self.monitor }
+    }
+
+    fn refresh_mini_tray(&mut self) {
+        let icons: Vec<_> = self.tray_bar_keys.iter().filter_map(|key| self.tray_items.iter().find(|i| i.key == *key).cloned()).collect();
+        let screen = self.mini_screen();
+        if let Err(error) = self.mini_tray.show(&self.compositor, &self.gfx, &self.backdrop, &icons,
+            !self.tray_overflow_keys.is_empty(), screen, self.scale) {
+            trace!("mini tray could not be drawn: {error:?}");
+        }
+    }
+
     fn tray_dock_rect(&self, index: usize) -> Option<RECT> {
         if index >= self.items.len() || index >= self.geo.left.len() { return None; }
         let amount = if self.hovering && self.tray_drag.is_none() { 1.0 } else { 0.0 };
@@ -3604,11 +3686,10 @@ impl Dock {
     }
 
     fn show_tray_popup(&mut self) {
-        let Some(index) = self.items.iter().position(|item| item.kind == Kind::TrayOverflow) else {
+        let Some(anchor) = self.mini_tray.overflow_rect() else {
             self.hide_tray_popup();
             return;
         };
-        let Some(anchor) = self.tray_dock_rect(index) else { return };
         let icons = self.tray_overflow_views();
         if icons.is_empty() {
             self.hide_tray_popup();
@@ -3627,7 +3708,7 @@ impl Dock {
             &icons,
             anchor,
             self.monitor,
-            self.panel_top,
+            false,
             self.scale,
             self.cfg.panel_shadow,
         );
@@ -3652,6 +3733,7 @@ impl Dock {
     fn set_tray_hover(&mut self, key: Option<u64>, in_popup: bool) {
         let next = key.map(|key| (key, in_popup));
         if self.tray_hover == next { return; }
+        self.mini_tray.hide_tip();
         if let Some(open_key) = self.tray_custom_popup {
             if next.map(|(next_key, _)| next_key) != Some(open_key) {
                 let mut point = POINT::default();
@@ -3704,6 +3786,14 @@ impl Dock {
         if standard_tip {
             if in_popup && self.tray_popup.open {
                 self.tray_popup.show_tip(&self.compositor, &self.gfx, key);
+            } else {
+                let mut point = POINT::default();
+                let _ = get_cursor_pos(&mut point);
+                if self.mini_tray.contains(point.x, point.y) {
+                    if let Some(icon) = self.tray_items.iter().find(|i| i.key == key) {
+                        let _ = self.mini_tray.show_tip(&self.compositor, &self.gfx, &self.backdrop, key, &icon.tip, self.monitor, self.scale);
+                    }
+                }
             }
         } else {
             let mut point = POINT::default();
@@ -3858,6 +3948,9 @@ impl Dock {
     /// Click a tray icon: Launchpad closes first so the app's window or menu can come up
     /// in front, at the pointer.
     fn tray_click(&mut self, key: u64, kind: crate::tray::Click) {
+        // While our activatable popup is still foreground, let its recipient display
+        // its own window or context menu; hiding the popup first can lose that right.
+        crate::tray::prepare_click(key);
         self.close_launchpad();
         // Pop-ups are topmost. Hide both before an app opens its own menu or flyout.
         self.close_control_center();
@@ -5372,7 +5465,7 @@ impl Dock {
         let _ = self.place_window();
         // Everything that hangs off the panel follows it.
         let anchor = self.cc_anchor();
-        self.control_center.reposition(self.monitor, anchor, self.panel_top);
+        self.control_center.reposition(self.monitor, anchor, false);
     }
 
     /// The hover label: a glass pill holding the label text, above everything else.
@@ -5465,7 +5558,11 @@ impl Dock {
         }
         crate::winkey::set_enabled(self.cfg.win_key_launchpad);
         if old.start_at_login != self.cfg.start_at_login && self.is_main_dock() {
-            crate::updater::set_start_at_login(self.cfg.start_at_login);
+            if let Err(error) = crate::startup::set(self.cfg.start_at_login) {
+                self.cfg.start_at_login = old.start_at_login;
+                if let Err(save_error) = self.cfg.save() { report_settings_error(self.hwnd, &save_error); }
+                self.notice(&["Не удалось изменить автозапуск Dock".into(), error]);
+            }
         }
         let turned_on = !old.check_updates && self.cfg.check_updates;
         if (turned_on || old.update_check_hours != self.cfg.update_check_hours) && self.is_main_dock() {
@@ -5507,6 +5604,7 @@ impl Dock {
             }
         }
         self.apply_system();
+        if self.is_main_dock() && !self.hidden_for_fullscreen { self.refresh_mini_tray(); }
     }
 
     /// The real dock on the main display (not a helper or test copy).
@@ -5515,6 +5613,7 @@ impl Dock {
     }
 
     fn shutdown(&mut self) {
+        self.mini_tray.hide();
         self.hub.shutdown();
         self.helpers.stop();
         // The desktop cards live in their own processes: they go with the panel.
@@ -6249,6 +6348,7 @@ impl Dock {
             }
             self.close_control_center();
             self.hide_tray_popup();
+            self.mini_tray.hide();
             self.set_tray_hover(None, false);
             self.menu.hide(false);
             self.menu_open = false;
@@ -6485,10 +6585,6 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             c
         }
     };
-    // AuraExplorer's own icon leads the panel, including for settings written by an older dock.
-    if apps::ensure_own_pin(&mut cfg) && Config::exists() {
-        if let Err(error) = cfg.save() { trace!("dock settings were not saved: {error}"); }
-    }
     // The control centre's own button: added once, and only if the panel never had it.
     if cfg.ensure_control_center_pin() && Config::exists() {
         if let Err(error) = cfg.save() { trace!("dock settings were not saved: {error}"); }
@@ -6557,6 +6653,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         let launchpad = Launchpad::new(&compositor)?;
         let control_center = crate::control_center::ControlCenter::new(&compositor)?;
         let tray_popup = crate::tray_strip::TrayPopup::new(&compositor)?;
+        let mini_tray = crate::tray_mini::MiniTray::new(&compositor)?;
 
         let mut dock = Dock {
             hwnd,
@@ -6582,6 +6679,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             tray_bar_keys: Vec::new(),
             tray_overflow_keys: Vec::new(),
             tray_popup,
+            mini_tray,
+            mini_press: None,
             tray_hover: None,
             tray_tip_open: None,
             tray_custom_popup: None,
@@ -6731,14 +6830,16 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             SetTimer(Some(hwnd), T_TRAY_RAISE, 1500, None);
             // Installed copies: match the sign-in switch to the Startup shortcut (never
             // created here, only from Settings), and look for updates once things settle.
-            if crate::updater::installed() {
-                let actual = crate::updater::sync_start_at_login(dock.cfg.start_at_login);
-                if actual != dock.cfg.start_at_login {
+            match crate::startup::current() {
+                Ok(actual) if actual != dock.cfg.start_at_login => {
                     dock.cfg.start_at_login = actual;
                     if let Err(error) = dock.cfg.save() { trace!("dock settings were not saved: {error}"); }
                 }
-                SetTimer(Some(hwnd), T_UPDATE_CHECK, 20_000, None);
+                Err(error) => trace!("could not read Dock startup entry: {error}"),
+                _ => {}
             }
+            if crate::updater::installed() { SetTimer(Some(hwnd), T_UPDATE_CHECK, 20_000, None); }
+            dock.refresh(true);
             trace!("AuraDock {}", crate::updater::version_label());
         }
         if let Some(pid) = opts.parent {

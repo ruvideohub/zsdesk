@@ -15,6 +15,89 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "aura-core"
+version = "0.3.23"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aura-dock"
+version = "0.3.23"
+dependencies = [
+ "aura-core",
+ "embed-resource",
+ "laminar-sys",
+ "serde",
+ "serde_json",
+ "windows",
+ "windows-core",
+ "windows-numerics",
+]
+
+[[package]]
+name = "aura-fences"
+version = "0.3.23"
+dependencies = [
+ "anyhow",
+ "aura-core",
+ "aura-fences-model",
+ "aura-ui",
+ "aura-windows",
+ "dirs",
+ "embed-resource",
+ "roxmltree 0.21.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
+name = "aura-fences-model"
+version = "0.3.23"
+dependencies = [
+ "aura-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "aura-platform"
+version = "0.3.23"
+dependencies = [
+ "aura-core",
+]
+
+[[package]]
+name = "aura-ui"
+version = "0.3.23"
+dependencies = [
+ "aura-core",
+ "zsui",
+]
+
+[[package]]
+name = "aura-windows"
+version = "0.3.23"
+dependencies = [
+ "anyhow",
+ "aura-core",
+ "aura-platform",
+ "cc",
+ "roxmltree 0.20.0",
+ "serde",
+ "serde_json",
+ "sha2",
+ "windows",
+ "windows-core",
+ "windows-numerics",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -388,12 +471,6 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
-
-[[package]]
-name = "pinyin"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b"
 
 [[package]]
 name = "png"
@@ -1038,135 +1115,6 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "aura-explorer"
-version = "0.3.23"
-dependencies = [
- "anyhow",
- "cc",
- "dirs",
- "embed-resource",
- "pinyin",
- "roxmltree 0.21.1",
- "serde",
- "serde_json",
- "sha2",
- "windows",
- "windows-core",
- "windows-sys 0.59.0",
- "aura-core",
- "aura-platform",
- "aura-ui",
- "aura-windows",
- "zsui",
-]
-
-[[package]]
-name = "aura-fences"
-version = "0.3.23"
-dependencies = [
- "anyhow",
- "dirs",
- "embed-resource",
- "roxmltree 0.21.1",
- "serde",
- "serde_json",
- "sha2",
- "windows",
- "windows-core",
- "aura-core",
- "aura-fences-model",
- "aura-ui",
- "aura-windows",
-]
-
-[[package]]
-name = "aura-fences-model"
-version = "0.3.23"
-dependencies = [
- "serde",
- "serde_json",
- "aura-core",
-]
-
-[[package]]
-name = "aura-arc"
-version = "0.3.23"
-dependencies = [
- "aura-windows",
- "crc32fast",
- "embed-resource",
- "flate2",
- "windows",
-]
-
-[[package]]
-name = "aura-core"
-version = "0.3.23"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "aura-dock"
-version = "0.3.23"
-dependencies = [
- "aura-core",
- "embed-resource",
- "laminar-sys",
- "serde",
- "serde_json",
- "windows",
- "windows-core",
- "windows-numerics",
-]
-
-[[package]]
-name = "aura-platform"
-version = "0.3.23"
-dependencies = [
- "aura-core",
-]
-
-[[package]]
-name = "aura-service"
-version = "0.3.23"
-dependencies = [
- "aura-core",
- "aura-windows",
- "embed-resource",
- "serde",
- "serde_json",
- "windows",
-]
-
-[[package]]
-name = "aura-ui"
-version = "0.3.23"
-dependencies = [
- "aura-core",
- "zsui",
-]
-
-[[package]]
-name = "aura-windows"
-version = "0.3.23"
-dependencies = [
- "anyhow",
- "cc",
- "roxmltree 0.20.0",
- "serde",
- "serde_json",
- "sha2",
- "windows",
- "windows-core",
- "windows-numerics",
- "windows-sys 0.59.0",
- "aura-core",
- "aura-platform",
-]
 
 [[package]]
 name = "zsui"

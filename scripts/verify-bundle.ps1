@@ -10,9 +10,7 @@
          копия, либо забытое описание: и то и другое надо решать, а не возить с собой);
       3. manifest.json совпадает с набором: та же версия, каждый файл посчитан и хеш
          сходится — то есть файлы не подменили после упаковки;
-      4. служба не называет программы, которой в наборе нет: иначе она будет искать
-         файл, который не установлен, и молча не запускать компонент;
-      5. install.ps1 знает про каждый exe набора — иначе установка его не скопирует.
+      4. install.ps1 знает про каждый exe набора — иначе установка его не скопирует.
 
     Скрипт ничего не меняет. Код возврата 1 — набор негоден, и в CI это красный шаг.
 
@@ -105,18 +103,6 @@ if (-not $SkipManifest) {
             if (-not $present.ContainsKey($recordedName)) { $problems.Add("manifest.json обещает $recordedName, а файла нет") }
         }
     }
-}
-
-# 4. Служба не ищет того, чего нет в наборе.
-$launch = Join-Path $root 'crates/aura-service/src/launch.rs'
-if (Test-Path -LiteralPath $launch -PathType Leaf) {
-    $named = [regex]::Matches((Get-Content -LiteralPath $launch -Raw -Encoding utf8), 'exe:\s*"([^"]+)"') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-    foreach ($exe in $named) {
-        $known = $false
-        foreach ($key in $present.Keys) { if ($key -eq $exe) { $known = $true; break } }
-        if (-not $known) { $problems.Add("служба запускает $exe, а в наборе такого файла нет") }
-    }
-    $notes.Add("служба называет: $($named -join ', ')")
 }
 
 # 5. Установщик знает про каждый exe.

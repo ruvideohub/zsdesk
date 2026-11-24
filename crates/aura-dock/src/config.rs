@@ -270,7 +270,7 @@ impl Default for Config {
             edge_highlight: 0.55,
             match_windows_theme: true,
             extra_blur: 0.0,
-            // Off until the user turns it on (see updater::sync_start_at_login).
+            // The installer controls the initial Run entry; read its actual state at startup.
             start_at_login: false,
             check_updates: false,
             update_check_hours: 24,

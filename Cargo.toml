@@ -5,12 +5,10 @@ members = [
     "crates/aura-platform",
     "crates/aura-fences-model",
     "crates/aura-fences",
-    "crates/aura-explorer",
     "crates/aura-ui",
     "crates/aura-windows",
     "crates/aura-dock",
     "crates/laminar-sys",
-    "crates/aura-service",
 ]
 
 [workspace.package]

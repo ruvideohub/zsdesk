@@ -1,13 +1,4 @@
-﻿; Установщик AuraUI для Inno Setup 6 (ISCC.exe).
-;
-; Собирается только из проверенного набора: scripts/package.ps1 сначала раскладывает папку,
-; пишет manifest.json и прогоняет scripts/verify-bundle.ps1, и лишь потом зовёт этот файл.
-; Поэтому здесь нет списка «изданий» и нет условий по редакциям: в AuraUI один набор, и он
-; описан в packaging/bundle.json. Если файла из набора нет, компилятор остановится ниже,
-; а не соберёт установщик без половины программ.
-;
-;   ISCC.exe /DSourceDir=<папка набора> /DOutputDir=<куда> /DMyAppVersion=<версия> aura.iss
-
+; AuraUI: Dock, desktop widgets and standalone Fences. The payload is verified by package.ps1.
 #ifndef SourceDir
 #error SourceDir must point to a verified AuraUI payload
 #endif
@@ -17,26 +8,20 @@
 #ifndef MyAppVersion
 #error MyAppVersion is required
 #endif
-
-#define ProductName "AuraUI"
-#define ProductDirectory "AuraUI"
-#define ProductAppId "{{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}"
-
-#if !FileExists(SourceDir + "\AuraExplorer.exe") || !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\auraservice.exe") || !FileExists(SourceDir + "\manifest.json")
-#error The verified AuraUI payload is incomplete: AuraExplorer.exe, AuraDock.exe, Fences.exe, widgets.exeand auraservice.exe and manifest.json are required
+#if !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\manifest.json")
+#error AuraDock.exe, Fences.exe, widgets.exe and manifest.json are required
 #endif
 
 [Setup]
-AppId={#ProductAppId}
-AppName={#ProductName}
+AppId={{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}
+AppName=AuraUI
 AppVersion={#MyAppVersion}
-AppVerName={#ProductName} {#MyAppVersion}
+AppVerName=AuraUI {#MyAppVersion}
 AppPublisher=AuraUI contributors
 AppPublisherURL=https://github.com/ruvideohub/zsdesk
 AppSupportURL=https://github.com/ruvideohub/zsdesk/issues
-AppUpdatesURL=https://github.com/ruvideohub/zsdesk/releases
-DefaultDirName={localappdata}\Programs\{#ProductDirectory}
-DefaultGroupName={#ProductName}
+DefaultDirName={localappdata}\Programs\AuraUI
+DefaultGroupName=AuraUI
 AllowNoIcons=yes
 UsePreviousAppDir=yes
 DisableProgramGroupPage=yes
@@ -50,13 +35,10 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.18362
-SetupIconFile=..\..\crates\aura-explorer\resources\aura.ico
-UninstallDisplayIcon={app}\AuraExplorer.exe
-VersionInfoDescription={#ProductName} {#MyAppVersion} Setup
-; Программы закрываются перед установкой штатным механизмом Windows (Restart Manager),
-; а не «поверх запущенных»: иначе exe занят и файл не заменится.
+SetupIconFile=..\..\crates\aura-dock\resources\aura-dock.ico
+UninstallDisplayIcon={app}\AuraDock.exe
 CloseApplications=yes
-CloseApplicationsFilter=AuraExplorer.exe,AuraDock.exe,Fences.exe,widgets.exe,auraservice.exe
+CloseApplicationsFilter=AuraDock.exe,Fences.exe,widgets.exe
 RestartApplications=no
 
 [Languages]
@@ -65,86 +47,88 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-; Одна запись автозапуска — служба; что именно она поднимает, решается в её окне настроек.
-Name: "autostart"; Description: "Запускать AuraUI при входе в Windows"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "autostart"; Description: "Start Dock when I sign in to Windows"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-; Программы: каждая — отдельный exe, все лежат рядом, потому что служба ищет их по имени.
-Source: "{#SourceDir}\AuraExplorer.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\AuraDock.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Fences.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\widgets.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\auraservice.exe"; DestDir: "{app}"; Flags: ignoreversion
-; Перехват окон проводника: имя с хешем, грузится по имени из папки программы.
-Source: "{#SourceDir}\AuraExplorerWindowHook-*.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Опечатка сборки и установка без установщика: ими проверяются и, при желании, копируются
-; файлы вручную — поэтому они тоже часть установленной папки.
 Source: "{#SourceDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\install-readme.txt"; DestDir: "{app}"; Flags: ignoreversion
-; Лицензии: комплект, а не один файл — по ним видно, из чего собраны зависимости.
 Source: "{#SourceDir}\LICENSE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"
-Name: "{group}\Fences — desktop grids"; Filename: "{app}\Fences.exe"
-Name: "{group}\AuraUI — настройки и запуск"; Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Comment: "Что запускать: компоненты, автозапуск, журнал"
-Name: "{group}\Удалить AuraUI"; Filename: "{uninstallexe}"; Comment: "Убирает программу, автозапуск, ярлыки и следы в реестре"
-Name: "{autodesktop}\AuraExplorer"; Filename: "{app}\AuraExplorer.exe"; Tasks: desktopicon
-
-[Registry]
-; Единственный писатель автозапуска — установщик и служба. Одна запись: `auraservice --run`.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraExplorer"; ValueData: """{app}\auraservice.exe"" --run"; Flags: uninsdeletevalue; Tasks: autostart
-; Прежние записи отдельных компонентов: их работу делает служба, а лишняя запись подняла бы
-; вторую панель или сетки без владельца.
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "AuraDock"; Flags: deletevalue
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraExplorer.Desktop"; Flags: deletevalue
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "AuraFences.Desktop"; Flags: deletevalue
+Name: "{group}\AuraDock"; Filename: "{app}\AuraDock.exe"
+Name: "{group}\AuraDock Settings"; Filename: "{app}\AuraDock.exe"; Parameters: "--settings"
+Name: "{group}\Fences"; Filename: "{app}\Fences.exe"
+Name: "{group}\Uninstall AuraUI"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\AuraDock"; Filename: "{app}\AuraDock.exe"; Tasks: desktopicon
 
 [Run]
-; В общей установке запуском Fences владеет служба, не отдельная запись Run.
-; Удаляем оставшийся запуск этой копии, если ранее включали standalone-autostart.
-Filename: "{app}\Fences.exe"; Parameters: "--uninstall-startup"; Flags: runhidden waituntilterminated
-; Служба поднимает включённые компоненты сразу, не дожидаясь следующего входа в Windows.
-Filename: "{app}\auraservice.exe"; Parameters: "--run"; Description: "Запустить AuraUI"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\auraservice.exe"; Parameters: "--settings"; Description: "Открыть настройки: что запускать"; Flags: nowait postinstall skipifsilent unchecked
-
-[UninstallRun]
-; Сначала — следы в системе, потом остановка процессов.
-;
-; Этот вызов идёт первым намеренно. Папки, диски и «Этот компьютер» открывались в
-; AuraExplorer через HKCU\Software\Classes, и убирает это только сама программа:
-; --uninstall-integration возвращает прежние значения по своей записи. Раньше здесь его
-; не было, поэтому удаление оставляло перехват в реестре — папки продолжали открываться
-; в удалённой программе, а записи, по которой можно было бы восстановиться, уже не
-; оставалось.
-;
-; Порядок важен и внутри: программа ещё должна лежать на месте, когда её зовут. Чистка
-; запускается до taskkill, но после того, как окна закрыты кооперативно — иначе
-; работающая копия вернёт свои значения обратно.
-Filename: "{app}\AuraExplorer.exe"; Parameters: "--shutdown-for-update ""{app}\AuraExplorer.exe"""; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIStopCooperative"
-Filename: "{app}\AuraExplorer.exe"; Parameters: "--uninstall-integration"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "AuraUIRemoveIntegration"
-; Служба останавливается последней: пока она жива, она поднимет то, что убрали.
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM auraservice.exe /IM AuraDock.exe /IM Fences.exe /IM widgets.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStop"
-Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AuraExplorer.exe"; Flags: runhidden skipifdoesntexist; RunOnceId: "AuraUIStopFiles"
+Filename: "{app}\AuraDock.exe"; Description: "Launch Dock"; Flags: nowait postinstall skipifsilent
 
 [Code]
-{ Перед установкой AuraExplorer кооперативно закрывает свои окна; Restart Manager закрывает
-  независимые программы, включая Fences и AuraService. Манифест проверен упаковщиком. }
+const RunKey = 'Software\Microsoft\Windows\CurrentVersion\Run';
+const RunName = 'AuraDock';
+
+function DockCommand: String;
+begin
+  Result := '"' + ExpandConstant('{app}\AuraDock.exe') + '"';
+end;
+
+function OwnDockEntry: Boolean;
+var Value: String;
+begin
+  Result := RegQueryStringValue(HKCU, RunKey, RunName, Value) and
+    (CompareText(Trim(Value), DockCommand) = 0);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
-var
-  ExitCode: Integer;
-  Helper: String;
+var Value: String;
 begin
   Result := '';
-  Helper := ExpandConstant('{app}\AuraExplorer.exe');
-  if not FileExists(Helper) then
+  { Previous Explorer versions could own folder-opening registry values. Never delete or
+    overwrite their binary before their own uninstaller has restored those associations. }
+  if FileExists(ExpandConstant('{app}\AuraExplorer.exe')) or
+     FileExists(ExpandConstant('{app}\auraservice.exe')) or
+     (RegQueryStringValue(HKCU, RunKey, 'AuraExplorer', Value) and
+       (Pos('auraservice.exe', Lowercase(Value)) > 0)) or
+     RegKeyExists(HKCU, 'Software\Classes\Directory\shell\AuraExplorer') or
+     RegKeyExists(HKCU, 'Software\Classes\Drive\shell\AuraExplorer') or
+     RegKeyExists(HKCU, 'Software\Classes\Directory\Background\shell\AuraExplorer') or
+     RegKeyExists(HKCU, 'Software\Classes\CLSID\{20D04FE0-3AEA-1069-A2D8-08002B30309D}\shell\AuraExplorer') then
+  begin
+    Result := 'Older AuraExplorer integration was found. Back up your profiles and restore folder integration using the old version. Verify Windows Explorer works before removing old files. Then uninstall the old version and retry.';
     exit;
-  if not Exec(Helper, '--shutdown-for-update "' + Helper + '"', ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ExitCode) then
-    Result := 'Не удалось закрыть запущенные программы AuraUI. Закрой их и повтори установку.'
-  else if ExitCode <> 0 then
-    Result := 'Программы AuraUI не закрылись. Закрой окна и повтори установку.';
+  end;
+  { Never overwrite a different installation's entry, even when autostart is unchecked. }
+  if RegValueExists(HKCU, RunKey, RunName) and not OwnDockEntry then
+    Result := 'The AuraDock startup entry belongs to another installation. It was not changed.';
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+  begin
+    if WizardIsTaskSelected('autostart') then
+    begin
+      if (RegValueExists(HKCU, RunKey, RunName) and not OwnDockEntry) or
+         not RegWriteStringValue(HKCU, RunKey, RunName, DockCommand) then
+        MsgBox('Could not configure Dock startup. The existing startup entry was not replaced.', mbError, MB_OK);
+    end
+    else if OwnDockEntry then
+      if not RegDeleteValue(HKCU, RunKey, RunName) then
+        MsgBox('Could not remove this Dock startup entry.', mbError, MB_OK);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usUninstall) and OwnDockEntry then
+    if not RegDeleteValue(HKCU, RunKey, RunName) then
+      MsgBox('Could not remove this Dock startup entry.', mbError, MB_OK);
 end;

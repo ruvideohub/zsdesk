@@ -1,10 +1,8 @@
-//! Updates belong to AuraExplorer.
+//! Updates are installed through the AuraUI installer.
 //!
 //! Upstream Laminar Dock updates itself through Velopack, because it ships alone.
-//! AuraExplorer ships the dock inside its own installer and updates it together with the
-//! file manager, so this module keeps the updater's interface — the dock menu, the
-//! Settings "About" rows and the timers still ask it things — and answers honestly:
-//! this copy is installed by AuraExplorer, not by Setup.exe, so it never updates itself.
+//! AuraUI ships the dock inside its installer; this module keeps the updater interface
+//! but does not perform automatic updates. Users update through the AuraUI installer.
 //!
 //! Dropping Velopack also keeps about ninety crates (a TLS stack, an HTTP client,
 //! ZIP) out of the build of a panel that only needs to draw itself.
@@ -14,12 +12,12 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 
 /// Where releases are published.
-pub const REPO: &str = "https://github.com/ruvideohub/aura";
+pub const REPO: &str = "https://github.com/ruvideohub/zsdesk";
 
 /// What the last update check found.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Status {
-    /// Shipped inside AuraExplorer, so there is nothing here to update.
+    /// Shipped inside AuraUI, so there is nothing here to update.
     NotInstalled,
     /// Not checked yet.
     Idle,
@@ -35,15 +33,15 @@ static STATUS: Mutex<Status> = Mutex::new(Status::NotInstalled);
 /// Nothing to do at startup: no installer hooks, no pending update to resume.
 pub fn startup() {}
 
-/// False: AuraExplorer's installer owns this copy. The dock menu and the About section
-/// read this to say "updates come with AuraExplorer" instead of offering an install.
+/// False: AuraUI's installer owns this copy. The dock menu and the About section
+/// read this to say "updates come with AuraUI" instead of offering an install.
 pub fn installed() -> bool {
     false
 }
 
-/// "0.2.9 (AuraExplorer build)".
+/// "0.2.9 (AuraUI build)".
 pub fn version_label() -> String {
-    format!("{} (AuraExplorer build)", env!("CARGO_PKG_VERSION"))
+    format!("{} (AuraUI build)", env!("CARGO_PKG_VERSION"))
 }
 
 pub fn status() -> Status {
@@ -56,7 +54,7 @@ fn set_status(status: Status) {
     }
 }
 
-/// "Check for updates" from the dock menu. AuraExplorer updates everything at once, so this
+/// "Check for updates" from the dock menu. AuraUI updates everything at once, so this
 /// reports the truth and posts `msg` back; the menu then shows the About text.
 pub fn check(hwnd: HWND, msg: u32) {
     set_status(Status::NotInstalled);
@@ -75,25 +73,16 @@ pub fn check_due(enabled: bool, hours: u32, last: u64, now: u64, first: bool) ->
         }
 }
 
-/// No half-installed version can exist here: AuraExplorer installs atomically.
+/// No updater-managed pending version exists.
 pub fn show_pending(_hwnd: HWND, _msg: u32) {}
 
 pub fn begin_install() -> Result<(), String> {
-    Err("AuraExplorer updates the panel together with the app: run the AuraExplorer installer.".into())
+    Err("Update AuraUI using the latest installer.".into())
 }
 
 /// Release notes page for a version.
 pub fn notes_url(version: &str) -> String {
     format!("{REPO}/releases/tag/v{version}")
-}
-
-/// Starting with Windows is AuraExplorer's job: it starts at login and brings the panel up
-/// with it, so the panel never writes a startup entry of its own.
-pub fn set_start_at_login(_on: bool) {}
-
-/// Reports back what is actually in place: nothing of the panel's own.
-pub fn sync_start_at_login(_wanted: bool) -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -124,6 +113,6 @@ mod tests {
         use super::{installed, status, Status};
         assert!(!installed());
         assert_eq!(status(), Status::NotInstalled);
-        assert!(super::version_label().ends_with("(AuraExplorer build)"));
+        assert!(super::version_label().ends_with("(AuraUI build)"));
     }
 }

@@ -52,7 +52,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "autostart"; Description: "{cm:FencesAutostart}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "autostart"; Description: "{cm:FencesAutostart}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
 Source: "{#SourceDir}\Fences.exe"; DestName: "Fences-update-helper.exe"; Flags: dontcopy

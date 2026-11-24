@@ -26,6 +26,29 @@ pub fn registration_uid(is_add: bool, has_guid: bool, current: u32, incoming: u3
     }
 }
 
+/// A partial icon learned from MODIFY must be allowed to complete registration; a
+/// GUID can also be claimed by a new owner after an application restart.
+pub fn accepts_readd(has_icon: bool, old_callback: u32, owner_changed: bool) -> bool {
+    has_icon && (old_callback == 0 || owner_changed)
+}
+
+/// Windows notification callback ABI: VERSION_4 uses screen coordinates in wParam
+/// and a 16-bit identifier in lParam; older versions use the full 32-bit ID.
+pub fn callback_words(version: u32, uid: u32, event: u32, x: i32, y: i32) -> (usize, isize) {
+    if version >= 4 {
+        let point = ((y as u16 as usize) << 16) | (x as u16 as usize);
+        let encoded = ((uid as usize & 0xffff) << 16) | (event as usize & 0xffff);
+        (point, encoded as isize)
+    } else {
+        (uid as usize, event as isize)
+    }
+}
+
+/// A control-centre click activates only when press and release match.
+pub fn matching_release(pressed: Option<u64>, released: Option<u64>) -> Option<u64> {
+    pressed.filter(|key| released == Some(*key))
+}
+
 /// A cached HWND identity is usable only while it belongs to the same process.
 pub fn reuse_identity(cached_pid: u32, current_pid: u32, app: &str) -> bool {
     current_pid != 0 && cached_pid == current_pid && !app.is_empty()
@@ -62,6 +85,29 @@ mod tests {
         assert_eq!(registration_uid(true, true, 1, 7), 7);
         assert_eq!(registration_uid(false, true, 7, 0), 7);
         assert_eq!(registration_uid(true, false, 7, 0), 7);
+    }
+    #[test]
+    fn callback_abi_preserves_legacy_ids_and_signed_monitor_coordinates() {
+        assert_eq!(callback_words(0, 0x1234_5678, 0x205, -10, 900), (0x1234_5678, 0x205));
+        let (wp, lp) = callback_words(4, 0x1234_5678, 0x7b, -10, -20);
+        assert_eq!((wp & 0xffff) as u16 as i16, -10);
+        assert_eq!(((wp >> 16) & 0xffff) as u16 as i16, -20);
+        assert_eq!(lp as usize & 0xffff, 0x7b);
+        assert_eq!((lp as usize >> 16) & 0xffff, 0x5678);
+    }
+    #[test]
+    fn partial_or_new_owner_may_register_but_normal_duplicate_is_rejected() {
+        assert!(!accepts_readd(false, 0, false));
+        assert!(!accepts_readd(true, 0x8050, false));
+        assert!(accepts_readd(true, 0, false));
+        assert!(accepts_readd(true, 0x8050, true));
+    }
+    #[test]
+    fn click_requires_release_on_the_pressed_icon() {
+        assert_eq!(matching_release(Some(12), Some(12)), Some(12));
+        assert_eq!(matching_release(Some(12), Some(13)), None);
+        assert_eq!(matching_release(Some(12), None), None);
+        assert_eq!(matching_release(None, Some(12)), None);
     }
     #[test]
     fn stale_or_unresolved_window_identity_is_not_reused() {

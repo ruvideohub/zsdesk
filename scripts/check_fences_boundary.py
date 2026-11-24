@@ -86,21 +86,10 @@ for path in (ROOT / "crates").rglob("*.rs"):
 if old_refs:
     fail("old model path remains: " + ", ".join(old_refs))
 
-# AuraExplorer may launch a separate Fences binary, but no longer owns its host or model.
-if (EXPLORER / "src" / "desktop").exists():
-    fail("legacy Fences host directory remains inside AuraExplorer")
-explorer_manifest = tomllib.loads(read(EXPLORER / "Cargo.toml"))
-explorer_dependencies = set(explorer_manifest.get("dependencies", {}))
-if "aura-fences-model" in explorer_dependencies:
-    fail("AuraExplorer still depends on aura-fences-model")
-if "desktop-box" in explorer_manifest.get("features", {}):
-    fail("desktop-box remains an AuraExplorer feature")
-explorer_source = "\n".join(read(path) for path in EXPLORER.rglob("*.rs"))
-if re.search(r"\bDESKTOP_ONLY\b|\bdesktop_only\b", explorer_source):
-    fail("AuraExplorer exposes the obsolete desktop-only build identity")
-app_source = read(EXPLORER / "src" / "app.rs")
-if 'Some("--desktop"' not in app_source or "legacy_desktop_host_arguments_are_rejected" not in app_source:
-    fail("AuraExplorer does not explicitly reject its legacy --desktop mode")
+# The removed applications must not be workspace members or source trees.
+for removed in ("aura-explorer", "aura-service"):
+    if (ROOT / "crates" / removed).exists() or f"crates/{removed}" in members:
+        fail(f"removed app remains: {removed}")
 
 lock = tomllib.loads(read(ROOT / "Cargo.lock"))
 packages = {(package["name"], package["version"]): package for package in lock["package"]}
@@ -108,9 +97,8 @@ if not any(name == "aura-fences" for name, _ in packages):
     fail("Cargo.lock has no aura-fences package entry")
 if not any(name == "aura-fences-model" for name, _ in packages):
     fail("Cargo.lock has no aura-fences-model package entry")
-explorer_lock = next((package for package in lock["package"] if package["name"] == "aura-explorer"), None)
-if explorer_lock is None or any(dep.split(" ")[0] == "aura-fences-model" for dep in explorer_lock["dependencies"]):
-    fail("Cargo.lock still connects AuraExplorer to aura-fences-model")
+if any(package["name"] in {"aura-explorer", "aura-service"} for package in lock["package"]):
+    fail("removed application remains in Cargo.lock")
 
 shell_handoff = read(FENCES / "src" / "system_shell.rs")
 if 'Command::new("explorer.exe")' not in shell_handoff:
@@ -120,7 +108,7 @@ for misleading in ("在 AuraFences 中打开", "打开 AuraFences 文件管理�
     if misleading in fences_host:
         fail(f"Fences menu promises an in-app target that is delegated elsewhere: {misleading}")
 
-# The integrated bundle builds Fences from its own Cargo package and the service starts that exact file.
+# The integrated bundle builds Fences from its own Cargo package.
 bundle = json.loads(read(ROOT / "packaging" / "bundle.json"))
 fences_entry = next((entry for entry in bundle["entries"] if entry["name"] == "Fences.exe"), None)
 if not fences_entry or not fences_entry.get("required"):
@@ -130,25 +118,14 @@ if fences_entry.get("source") != {"kind": "cargo", "package": "aura-fences", "bi
 package_script = read(ROOT / "scripts" / "package.ps1")
 if "source.kind -eq 'cargo'" not in package_script or "($bin + '.exe')" not in package_script:
     fail("the generic bundle packager does not build/copy Cargo binaries by bundle.json")
-launch = read(ROOT / "crates" / "aura-service" / "src" / "launch.rs")
-if not re.search(r'id:\s*"fences"[\s\S]*?exe:\s*"Fences\.exe"[\s\S]*?args:\s*&\["--tray"\]', launch):
-    fail("AuraService does not launch Fences.exe --tray")
-
 install_helper = read(ROOT / "packaging" / "windows" / "install.ps1")
-if "'Fences.exe'" not in install_helper or "FencesLink" not in install_helper:
+if "'Fences.exe'" not in install_helper or "'Fences.lnk'" not in install_helper:
     fail("suite install helper does not require and expose Fences.exe")
-if "Set-Autostart 'AuraExplorer'" not in install_helper or "Set-Autostart 'Fences'" in install_helper:
-    fail("suite autostart is not owned exclusively by AuraService")
-if re.search(r"Start-Process[^\n]*--desktop", install_helper):
-    fail("suite installer still starts the removed AuraExplorer desktop mode")
-
 aura_installer = read(ROOT / "packaging" / "windows" / "aura.iss")
 if 'Source: "{#SourceDir}\\Fences.exe"' not in aura_installer:
     fail("AuraUI Inno installer does not include Fences.exe")
-if 'Parameters: "--run"' not in aura_installer or 'Parameters: "--enable-startup"' in aura_installer:
-    fail("AuraUI Inno installer does not preserve service-owned startup")
-if 'Fences.exe"; Parameters: "--uninstall-startup"' not in aura_installer:
-    fail("AuraUI Inno installer does not clean this copy's former standalone startup")
+if 'Filename: "{app}\\Fences.exe"; Parameters: "--enable-startup"' in aura_installer:
+    fail("suite installer should not automatically enable Fences startup")
 
 # Standalone Fences retains its own optional sign-in setting, without requiring Explorer or the service.
 fences_package = read(ROOT / "scripts" / "package-fences.ps1")
@@ -163,13 +140,9 @@ for license_name in ("MPL-2.0.txt", "MinHook-LICENSE.txt", "ExplorerColumnView-M
     if license_name not in fences_package or not (ROOT / "packaging" / "licenses" / license_name).is_file():
         fail(f"standalone Fences package misses its applicable license text: {license_name}")
 
-# Both app menus open the same launch-settings window when AuraService is installed.
-explorer_settings = read(EXPLORER / "src" / "window" / "startup_settings.rs")
-fences_bridge = read(FENCES / "src" / "service_start.rs")
+# Fences offers its own optional startup rather than opening removed service settings.
 fences_menu = read(FENCES / "src" / "desktop" / "host.rs")
-if '"launch-settings" => crate::service_start::open_settings()' not in explorer_settings:
-    fail("AuraExplorer startup settings do not open AuraService settings")
-if 'command.arg("--settings")' not in fences_bridge or 'crate::service_start::available()' not in fences_menu:
-    fail("Fences does not bridge to the shared AuraService settings window")
+if 'crate::service_start' in fences_menu or (FENCES / "src" / "service_start.rs").exists():
+    fail("Fences still references the removed service")
 
 print("Fences boundary checks passed (static source/packaging checks only; no Cargo, Windows, or Inno build implied).")
