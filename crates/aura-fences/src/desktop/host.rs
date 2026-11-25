@@ -342,9 +342,10 @@ impl DesktopHost {
         self.add_tray();
         // A previous crash may have left icons hidden while organize mode is off.
         if self.config.settings.icons_hidden_by_aura && !self.config.settings.organize {
-            desktop::set_icons_visible(true);
-            self.config.settings.icons_hidden_by_aura = false;
-            self.save_now();
+            if desktop::set_icons_visible(true) {
+                self.config.settings.icons_hidden_by_aura = false;
+                self.save_now();
+            }
         }
         if self.config.settings.organize && !self.hide_icons() {
             self.config.settings.organize = false;
@@ -495,7 +496,14 @@ impl DesktopHost {
     fn hide_icons(&mut self) -> bool {
         if !self.start_guard() { return false; }
         self.config.settings.icons_hidden_by_aura = true;
-        self.save_now();
+        // Never hide the Explorer icons unless the watchdog can read the
+        // recovery marker after an unexpected process or UI-thread exit.
+        self.config.normalize();
+        if let Err(error) = save_config(&self.config_path, &self.config) {
+            self.config.settings.icons_hidden_by_aura = false;
+            self.notify_error(&aura_core::tr_format!("无法保存桌面格子布局：{error}", error=error));
+            return false;
+        }
         if desktop::set_icons_visible(false) {
             self.config.settings.icons_hidden_by_aura=false;self.save_now();return false;
         }

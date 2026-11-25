@@ -92,6 +92,7 @@ pub fn tr_owned(text: String) -> String {
 
 fn lookup(text: &str) -> Option<&'static str> {
     Some(match text {
+        "Right-click an app in All apps to pin it here" => "Чтобы закрепить приложение здесь, нажмите на него правой кнопкой в разделе «Все приложения»",
         // ------------------------------------------------- clock card (right-click it)
         "Desktop Clock" => "Часы на рабочем столе",
         "Corner: Top left" => "Угол: верхний левый",

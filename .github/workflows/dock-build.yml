@@ -202,6 +202,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-tray-policy-tests.exe
           exit $LASTEXITCODE
+      - name: Steam shortcuts and icon size policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/icon_bounds.rs -o target/dock-icon-bounds-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-icon-bounds-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition 2021 --test crates/laminar-sys/src/steam_shortcut.rs -o target/steam-shortcut-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/steam-shortcut-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Dock appbar policy tests
         shell: pwsh
         working-directory: aura

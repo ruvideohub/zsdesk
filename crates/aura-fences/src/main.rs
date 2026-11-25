@@ -181,7 +181,23 @@ fn run() -> Result<()> {
     }
 
     let _lifetime = ApplicationLifetime::new()?;
-    desktop::run(layout, settings, options.command.unwrap_or(DesktopCommand::Show))
+    desktop::run(layout, settings, initial_desktop_command(options.command))
+}
+
+#[cfg(windows)]
+fn initial_desktop_command(command: Option<DesktopCommand>) -> DesktopCommand {
+    command.unwrap_or(DesktopCommand::Organize)
+}
+
+#[cfg(all(windows, test))]
+mod startup_command_tests {
+    use super::*;
+    #[test] fn ordinary_launch_organizes_but_explicit_commands_are_preserved() {
+        assert_eq!(initial_desktop_command(None), DesktopCommand::Organize);
+        for command in [DesktopCommand::Show,DesktopCommand::Restore,DesktopCommand::Quit,DesktopCommand::Tray] {
+            assert_eq!(initial_desktop_command(Some(command.clone())), command);
+        }
+    }
 }
 
 #[cfg(windows)]

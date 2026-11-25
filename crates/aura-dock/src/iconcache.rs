@@ -63,7 +63,7 @@ impl IconCache {
     }
 
     fn file(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{:016x}.png", fnv(id)))
+        self.dir.join(format!("v2-{:016x}.png", fnv(id)))
     }
 
     /// Decode a cached icon without ever asking the shell (fast; for Launchpad tiles).
@@ -97,11 +97,7 @@ impl IconCache {
         }
         // Cache miss: ask the shell once, then save.
         let (name, hbmp) = apps::extract(id)?;
-        let result = unsafe {
-            let bmp = wic.CreateBitmapFromHBITMAP(hbmp, HPALETTE::default(), WICBitmapUseAlpha).ok();
-            let _ = DeleteObject(hbmp.into());
-            bmp
-        }?;
+        let result = icon_bitmap(wic, hbmp)?;
         let _ = encode(wic, &result, &file);
         self.names.insert(key, name.clone());
         self.dirty = true;
@@ -125,21 +121,39 @@ impl IconCache {
 /// Off the UI thread: ask the shell for an app's icon and save it into the cache folder.
 /// Returns the display name. Used by the background worker for Launchpad's many apps.
 pub fn extract_to_cache(wic: &IWICImagingFactory, dir: &std::path::Path, id: &str) -> Option<String> {
-    let file = dir.join(format!("{:016x}.png", fnv(id)));
+    let file = dir.join(format!("v2-{:016x}.png", fnv(id)));
     let (name, hbmp) = apps::extract(id)?;
     if !file.exists() {
-        let bmp = unsafe {
-            let b = wic.CreateBitmapFromHBITMAP(hbmp, HPALETTE::default(), WICBitmapUseAlpha).ok();
-            let _ = DeleteObject(hbmp.into());
-            b
-        }?;
-        let _ = encode(wic, &bmp, &file);
+        let bmp = icon_bitmap(wic, hbmp)?;
+        encode(wic, &bmp, &file).ok()?;
     } else {
         unsafe {
             let _ = DeleteObject(hbmp.into());
         }
     }
     Some(name)
+}
+
+/// Render a Shell bitmap, correcting only egregious transparent-canvas padding.
+fn icon_bitmap(wic: &IWICImagingFactory, hbmp: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<IWICBitmap> {
+    let result = unsafe { wic.CreateBitmapFromHBITMAP(hbmp, HPALETTE::default(), WICBitmapUseAlpha).ok() };
+    unsafe { let _ = DeleteObject(hbmp.into()); }
+    let bitmap = result?;
+    let normalized = (|| -> Result<IWICBitmap> {
+        let src = to_pbgra(wic, &bitmap.clone().into())?;
+        let (mut width, mut height)=(0u32,0u32);
+        unsafe { src.GetSize(&mut width, &mut height)?; }
+        if width == 0 || height == 0 || width>2048 || height>2048 { return Ok(bitmap.clone()); }
+        let mut bytes=vec![0u8;width as usize*height as usize*4];
+        unsafe { src.CopyPixels(std::ptr::null(), width*4, &mut bytes)?; }
+        let Some((x,y,w,h))=crate::icon_bounds::tiny_content_crop(width,height,&bytes) else {return Ok(bitmap.clone());};
+        unsafe {
+            let clip=wic.CreateBitmapClipper()?;
+            clip.Initialize(&src, &WICRect { X:x as i32,Y:y as i32,Width:w as i32,Height:h as i32 })?;
+            wic.CreateBitmapFromSource(&clip, WICBitmapCacheOnLoad)
+        }
+    })();
+    Some(normalized.unwrap_or(bitmap))
 }
 
 fn to_pbgra(wic: &IWICImagingFactory, src: &IWICBitmapSource) -> Result<IWICBitmapSource> {

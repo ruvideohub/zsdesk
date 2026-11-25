@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Gdi::HBITMAP;
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, CoUninitialize, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
     IShellItem, IShellItemImageFactory, SHCreateItemFromParsingName, SHGetKnownFolderPath, ShellExecuteW,
-    KF_FLAG_DEFAULT, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+    KF_FLAG_DEFAULT, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::Interface;
@@ -40,8 +40,21 @@ pub fn extract(id: &str) -> Option<(String, HBITMAP)> {
         let p = item.GetDisplayName(SIGDN_NORMALDISPLAY).ok()?;
         let name = p.to_string().unwrap_or_default();
         CoTaskMemFree(Some(p.0 as _));
-        let factory: IShellItemImageFactory = item.cast().ok()?;
-        let bmp = factory.GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()?;
+        // Steam .url shortcuts can render as a generic or tiny web shortcut. Prefer
+        // the local ICO specified by the shortcut itself; keep the Shell fallback.
+        let shortcut_path = if is_path(id) { Some(id.to_owned()) } else {
+            known_folder_path(id).or_else(|| item.GetDisplayName(SIGDN_FILESYSPATH).ok().and_then(|p| {
+                let path = p.to_string().ok();
+                CoTaskMemFree(Some(p.0 as _));
+                path
+            }))
+        };
+        let icon_item = shortcut_path.as_deref().and_then(|path| laminar_sys::steam_shortcut::read(std::path::Path::new(path)))
+            .and_then(|shortcut| laminar_sys::steam_shortcut::local_icon(&shortcut).map(|path|path.to_path_buf()))
+            .and_then(|path| SHCreateItemFromParsingName::<_, _, IShellItem>(&HSTRING::from(path.as_os_str()), None).ok());
+        let preferred = icon_item.and_then(|item|item.cast::<IShellItemImageFactory>().ok())
+            .and_then(|factory|factory.GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok());
+        let bmp = match preferred { Some(icon)=>icon, None=>item.cast::<IShellItemImageFactory>().ok()?.GetImage(SIZE { cx: 256, cy: 256 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK).ok()? };
         Some((name, bmp))
     }
 }

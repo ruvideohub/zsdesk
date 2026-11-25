@@ -181,7 +181,7 @@ pub struct Config {
     pub show_on_all_displays: bool,
     /// Each display's dock lists only the apps with windows on that display.
     pub per_display_windows: bool,
-    /// Apps shown under "Pinned" in Launchpad (empty: use the dock's pinned apps).
+    /// Apps shown under "Pinned" in Launchpad; independent of Dock pins (may be empty).
     pub launchpad_pins: Vec<String>,
     /// Explicit app category overrides; missing entries use automatic classification.
     pub launchpad_categories: std::collections::BTreeMap<String, String>,
@@ -528,6 +528,21 @@ mod tests {
         assert_eq!(restored.launchpad_custom_categories, cfg.launchpad_custom_categories);
         assert_eq!(restored.launchpad_category_apps, cfg.launchpad_category_apps);
         assert_eq!(restored.launchpad_category_excluded, cfg.launchpad_category_excluded);
+    }
+
+    #[test]
+    fn launchpad_pins_are_independent_and_empty_stays_empty() {
+        let mut cfg: Config = serde_json::from_str(r#"{"pins":["dock-only"],"launchpad_pins":[]}"#).unwrap();
+        assert!(cfg.launchpad_pins.is_empty());
+        cfg.launchpad_pins.push("launchpad-only".into());
+        let saved=serde_json::to_string(&cfg).unwrap();
+        let restored: Config=serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.launchpad_pins,["launchpad-only"]);
+        assert_eq!(restored.pins[0].app(),Some("dock-only"));
+        cfg.launchpad_pins.clear();
+        let restored: Config=serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(restored.launchpad_pins.is_empty());
+        assert_eq!(restored.pins[0].app(),Some("dock-only"));
     }
 
     #[test]

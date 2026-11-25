@@ -3624,20 +3624,7 @@ impl Dock {
 
     /// Apps listed under "Pinned" in Launchpad.
     fn lp_pinned(&self) -> Vec<String> {
-        if !self.cfg.launchpad_pins.is_empty() {
-            return self.cfg.launchpad_pins.clone();
-        }
-        let mut v: Vec<String> = Vec::new();
-        for p in &self.cfg.pins {
-            match p {
-                Pin::Id(id) if id != SEPARATOR => v.push(id.clone()),
-                Pin::Stack { apps, .. } => v.extend(apps.iter().cloned()),
-                _ => {}
-            }
-        }
-        v.dedup();
-        v.truncate(24);
-        v
+        self.cfg.launchpad_pins.clone()
     }
 
     /// Make sure icon brushes exist for these app ids, using only the on-disk cache;

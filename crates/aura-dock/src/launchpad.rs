@@ -816,7 +816,10 @@ impl Launchpad {
                 self.hit(PanelId::Center, (ox + x, oy + yy, cell_w, cell_h - 4.0 * s), Act::App(id.clone()), 16.0 * s, true, true);
             }
             let rows = d.pinned.len().div_ceil(cols);
-            y += rows as f32 * cell_h + 10.0 * s;
+            if d.pinned.is_empty() {
+                Self::txt(c, gfx, inner, "Right-click an app in All apps to pin it here", TextStyle { px: 12.0*s, color: theme::text_2(), max_w: Some((pw-2.0*pad).max(1.0)), ..Default::default() }, pad, y+10.0*s)?;
+                y += 38.0*s;
+            } else { y += rows as f32 * cell_h + 10.0 * s; }
         }
 
         if self.category >= 2 {

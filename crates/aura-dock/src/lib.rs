@@ -29,6 +29,7 @@ mod filedrop;
 mod gfx;
 mod host;
 mod iconcache;
+mod icon_bounds;
 mod launchpad;
 mod launchpad_input;
 mod launchpad_categories;
