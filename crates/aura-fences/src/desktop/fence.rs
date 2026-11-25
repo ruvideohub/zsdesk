@@ -16,8 +16,7 @@ use aura_windows::{desktop::ShellEntry, gfx::{Align, Canvas, Color, Gfx, RectF, 
 pub const EDGE: i32 = 6;
 
 thread_local! {
-    /// Frosted glass is on: fence windows are clipped to their rounded shape so
-    /// the blur behind them does not show in the transparent corners.
+    /// Frosted glass is enabled for fence surfaces.
     static BLUR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CORNER_RADIUS: std::cell::Cell<u8> = const { std::cell::Cell::new(24) };
 }
@@ -32,17 +31,18 @@ pub fn apply_glass(hwnd: HWND) {
     shape_window(hwnd);
 }
 
-/// Keeps the window region in step with the painted 10-DIP corners (after every resize).
+/// Keeps the blur region in step with the painted corners (after every resize).
 pub fn shape_window(hwnd: HWND) {
     if hwnd.0.is_null() { return; }
-    if !BLUR.with(std::cell::Cell::get) || is_desktop_item(hwnd) {
+    if is_desktop_item(hwnd) || CORNER_RADIUS.with(std::cell::Cell::get) == 0 {
         let _ = unsafe { SetWindowRgn(hwnd, None, true) };
         return;
     }
     let mut r = RECT::default();
     if unsafe { GetWindowRect(hwnd, &mut r) }.is_err(){return;}
     let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) }.max(96);
-    let diameter = scale(i32::from(CORNER_RADIUS.with(std::cell::Cell::get)) * 2, dpi).max(1);
+    let diameter = scale(i32::from(CORNER_RADIUS.with(std::cell::Cell::get)) * 2, dpi)
+        .min((r.right-r.left).min(r.bottom-r.top)).max(1);
     // The system owns the region after SetWindowRgn succeeds.
     let region = unsafe { CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, diameter, diameter) };
     if region.0.is_null(){return;}
@@ -613,6 +613,15 @@ impl FenceWin {
             if !self.standalone { cv.stroke_round(outer, radius, border, if highlight { sf(2.0) } else { 1.0 }); }
         });
         if drawn.is_err() { return false; }
+        if !self.standalone && !surface.bits.is_null() {
+            if let Some(len) = (w as usize).checked_mul(h as usize).and_then(|n| n.checked_mul(4)) {
+                // D2D EndDraw has completed and this Surface exclusively owns the
+                // top-down, 32-bit DIB. Keep colour premultiplied while clipping.
+                let pixels = unsafe { std::slice::from_raw_parts_mut(surface.bits, len) };
+                super::rounded_mask::apply_bgra(pixels, w as usize, h as usize,
+                    sf(f32::from(CORNER_RADIUS.with(std::cell::Cell::get))));
+            }
+        }
         let screen = unsafe { GetDC(None) };
         let alpha = if self.ghost { 150 } else { 255 };
         let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: alpha, AlphaFormat: AC_SRC_ALPHA as u8 };

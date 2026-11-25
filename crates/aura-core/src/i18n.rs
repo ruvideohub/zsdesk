@@ -26,6 +26,12 @@ include!(concat!(env!("OUT_DIR"),"/translations.rs"));
         let _scope=Scope::english(true);assert_eq!(text("用户自己的文件名.txt"),"用户自己的文件名.txt");
         assert!(is_english());{let _chinese=Scope::english(false);assert!(!is_english());}assert!(is_english());
     }
+    #[test]fn fence_colour_labels_are_present_in_the_shipped_russian_catalog(){
+        let _scope=Scope::english(true);
+        for (key, expected) in [("颜色","Цвет"),("无","Нет"),("蓝色","Синий"),("绿色","Зелёный"),("琥珀色","Янтарный"),("红色","Красный"),("紫色","Фиолетовый")] {
+            assert_eq!(text(key), expected, "missing fence colour translation: {key}");
+        }
+    }
     #[test]fn preferences_round_trip_without_changing_legacy_defaults(){
         assert_eq!(LanguagePreference::default(),LanguagePreference::System);
         for value in [LanguagePreference::System,LanguagePreference::Chinese,LanguagePreference::English]{

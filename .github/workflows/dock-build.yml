@@ -214,6 +214,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/steam-shortcut-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Fences rounded corner mask tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-fences/src/desktop/rounded_mask.rs -o target/fences-rounded-mask-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/fences-rounded-mask-tests.exe
+          exit $LASTEXITCODE
       - name: Dock appbar policy tests
         shell: pwsh
         working-directory: aura
