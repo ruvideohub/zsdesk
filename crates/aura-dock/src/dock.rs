@@ -44,6 +44,16 @@ use crate::taskbar;
 use crate::tracker::{self, Tracker, Win};
 use crate::{metrics, Options};
 
+/// Ask before replacing another installation's startup entry. Never hide or truncate a
+/// command in this decision: an unusually long or control-character value needs manual review.
+fn confirm_startup_replacement(hwnd: HWND, current: &str, replacement: &str) -> std::result::Result<bool, String> {
+    let safe_to_show = |s: &str| s.chars().count() <= 500 && !s.chars().any(|c| c.is_control() || matches!(c as u32, 0x202A..=0x202E | 0x2066..=0x2069));
+    if !safe_to_show(current) || !safe_to_show(replacement) { return Err("Команда слишком длинная или содержит управляющие символы; проверьте запись автозапуска вручную".into()); }
+    let message = format!("В автозапуске уже есть другая команда AuraDock:\n\n{current}\n\nЗаменить её на эту копию Dock?\n\n{replacement}\n\nСтарая команда больше не будет запускаться. Если сомневаетесь, нажмите «Нет».");
+    let wide: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+    Ok(unsafe { MessageBoxW(Some(hwnd), windows::core::PCWSTR(wide.as_ptr()), w!("Автозапуск Dock"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2).0 == 6 })
+}
+
 fn report_settings_error(hwnd: HWND, error: &std::io::Error) {
     eprintln!("dock settings were not saved: {error}");
     let message: Vec<u16> = format!("Не удалось сохранить настройки панели. Существующий файл не изменён.\n\n{}", error)
@@ -5728,10 +5738,25 @@ impl Dock {
         }
         crate::winkey::set_enabled(self.cfg.win_key_launchpad);
         if old.start_at_login != self.cfg.start_at_login && self.is_main_dock() {
-            if let Err(error) = crate::startup::set(self.cfg.start_at_login) {
+            let result = match crate::startup::set(self.cfg.start_at_login) {
+                Ok(()) => Ok(true),
+                Err(crate::startup::Error::Other(error)) => Err(error),
+                Err(crate::startup::Error::Conflict { current, replacement }) => {
+                    if !self.cfg.start_at_login {
+                        Err("Запись AuraDock указывает на другую команду и не изменена".into())
+                    } else {
+                        match confirm_startup_replacement(self.hwnd, &current, &replacement) {
+                            Ok(true) => crate::startup::replace_confirmed(&current, &replacement).map(|()| true),
+                            Ok(false) => Ok(false),
+                            Err(error) => Err(error),
+                        }
+                    }
+                }
+            };
+            if !matches!(result, Ok(true)) {
                 self.cfg.start_at_login = old.start_at_login;
                 if let Err(save_error) = self.cfg.save() { report_settings_error(self.hwnd, &save_error); }
-                self.notice(&["Не удалось изменить автозапуск Dock".into(), error]);
+                if let Err(error) = result { self.notice(&["Не удалось изменить автозапуск Dock".into(), error]); }
             }
         }
         let turned_on = !old.check_updates && self.cfg.check_updates;
