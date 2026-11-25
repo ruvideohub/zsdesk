@@ -123,6 +123,34 @@ struct ClockState {
     drag: Option<(i32, i32)>,
 }
 
+/// One of the panel's own windows (the card, the dock, its pop-ups).
+fn is_own(h: HWND) -> bool {
+    let mut pid = 0u32;
+    unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+    pid == std::process::id()
+}
+
+/// The desktop's own windows: the icon view, the wallpaper host, the taskbar, Start.
+fn is_shell(h: HWND) -> bool {
+    let mut name = [0u16; 64];
+    let n = unsafe { GetClassNameW(h, &mut name) }.max(0) as usize;
+    let class = String::from_utf16_lossy(&name[..n.min(name.len())]);
+    matches!(class.as_str(), "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow" | "SysShadow")
+}
+
+/// The app window that is in front, if any. The card belongs to the desktop, so it goes
+/// under that window and never over it.
+pub(crate) fn app_in_front() -> Option<HWND> {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_invalid() || is_own(fg) || is_shell(fg) {
+            None
+        } else {
+            Some(fg)
+        }
+    }
+}
+
 impl ClockState {
     /// Screen pixels per logical pixel: the display's scale times the card's own size.
     fn k(&self) -> f32 {

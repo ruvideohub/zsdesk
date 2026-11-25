@@ -1,7 +1,8 @@
 //! Keep desktop cards below *all* visible normal windows, not just the foreground one.
 //! Explorer's desktop hosts are excluded so the cards remain above the desktop. Windows
 //! controls Show Desktop and shell ordering; this remains best effort for shell transitions.
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM};
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM};
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowLongPtrW,
     IsWindowVisible, SetWindowPos, GWL_EXSTYLE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
