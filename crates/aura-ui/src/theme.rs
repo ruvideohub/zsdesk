@@ -183,6 +183,16 @@ impl FencePalette {
         self
     }
 
+    /// Tint the entire surface, preserving opacity and text contrast. Do not override
+    /// the system palette in high-contrast mode.
+    pub fn with_surface_tint(mut self, mode: Mode, tint: Option<[u8; 3]>) -> Self {
+        let Some([r, g, b]) = tint else { return self };
+        if high_contrast_palette(mode).is_some() { return self; }
+        let blend = |base: u8, tint: u8| ((u16::from(base) * 55 + u16::from(tint) * 45) / 100) as u8;
+        self.background = Color::rgba(blend(self.background.r, r), blend(self.background.g, g), blend(self.background.b, b), self.background.a);
+        self
+    }
+
     /// `opacity` is the background opacity in percent (10–100).
     pub fn new(mode: Mode, opacity: u8) -> Self {
         if let Some(native)=high_contrast_palette(mode){
@@ -321,6 +331,19 @@ mod tests {
     fn fence_opacity_is_clamped() {
         assert_eq!(FencePalette::configured(Mode::Dark, 0).background.a, 25);
         assert_eq!(FencePalette::configured(Mode::Dark, 200).background.a, 255);
+    }
+    #[test]
+    fn fence_surface_tint_changes_fill_without_changing_opacity() {
+        // Test the deterministic blending; the public method respects Windows
+        // high-contrast mode, so it may intentionally keep the system colours.
+        let base = FencePalette::configured(Mode::Dark, 55);
+        let tinted = base.with_surface_tint(Mode::Dark, Some([240, 40, 30]));
+        if high_contrast_palette(Mode::Dark).is_none() {
+            assert_ne!(base.background.r, tinted.background.r);
+            assert_eq!(base.background.a, tinted.background.a);
+            assert_eq!(base.text, tinted.text);
+        }
+        assert_eq!(base.with_surface_tint(Mode::Dark, None), base);
     }
     #[test]
     fn zsui_glyphs_are_private_use_code_points() {

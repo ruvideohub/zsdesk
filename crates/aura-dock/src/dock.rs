@@ -365,7 +365,7 @@ impl Geo {
         let sep_w = 13.0 * scale + g;
         let shelf_h = b + 2.0 * p;
         let r = (cfg.corner_radius * scale).min(shelf_h / 2.0);
-        let margin = 8.0 * scale;
+        let margin = (if top { cfg.top_edge_gap } else { cfg.bottom_edge_gap }) * scale;
         let label_room = 40.0 * scale;
         let win_h = ((m - b) + shelf_h + margin + label_room).ceil();
         let k = m / b - 1.0;
@@ -5465,7 +5465,7 @@ impl Dock {
     // ---------------------------------------------------------------- settings & system
 
     fn reserve_height(&self) -> i32 {
-        crate::appbar_policy::shelf_reservation(self.geo.shelf_h, self.geo.margin)
+        crate::appbar_policy::shelf_reservation_with_gap(self.geo.shelf_h, self.geo.margin, self.cfg.window_gap * self.scale)
     }
 
     /// Give control back before stopping the guard. A crash before the guard is

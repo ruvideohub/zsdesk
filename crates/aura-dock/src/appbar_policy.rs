@@ -13,6 +13,11 @@ pub fn shelf_reservation(shelf_height: f32, outer_margin: f32) -> i32 {
     (shelf_height.max(0.0) + outer_margin.max(0.0)).ceil() as i32
 }
 
+/// Optional breathing room between the shelf's inner edge and maximized windows.
+pub fn shelf_reservation_with_gap(shelf_height: f32, outer_margin: f32, window_gap: f32) -> i32 {
+    shelf_reservation(shelf_height, outer_margin) + window_gap.max(0.0).ceil() as i32
+}
+
 /// Skip redundant ABM_SETPOS calls (which trigger ABN_POSCHANGED). Keep the
 /// Shell's actual assigned rectangle, which can differ from our proposal.
 pub fn cached_assignment(last: Option<Position>, proposed: [i32; 4]) -> Option<[i32; 4]> {
@@ -39,6 +44,13 @@ mod tests {
     fn reservation_does_not_include_magnification_or_label_headroom() {
         assert_eq!(shelf_reservation(70.0, 8.0), 78);
         assert_eq!(shelf_reservation(-1.0, -1.0), 0);
+    }
+    #[test]
+    fn additional_window_gap_is_independent_of_edge_gap() {
+        assert_eq!(shelf_reservation_with_gap(70.0, 8.0, 0.0), 78);
+        assert_eq!(shelf_reservation_with_gap(70.0, 3.0, 12.0), 85);
+        assert_eq!(shelf_reservation_with_gap(70.0, 20.0, 12.0), 102);
+        assert_eq!(shelf_reservation_with_gap(70.0, 8.0, -1.0), 78);
     }
     #[test]
     fn first_registration_must_be_announced() {

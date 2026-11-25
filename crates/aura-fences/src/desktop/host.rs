@@ -333,6 +333,7 @@ impl DesktopHost {
             merge_target: None, tab_hover: None };
         host.update_palette();
         super::fence::set_blur(host.config.settings.blur);
+        super::fence::set_corner_radius(host.config.settings.corner_radius);
         host
     }
 
@@ -1191,7 +1192,12 @@ impl DesktopHost {
                 self.cut_paths.contains(&super::clipboard::path_key(entry.path.as_ref()?)).then(||entry.key.clone())
             }));
         }
-        let palette = self.palette;
+        let mode = if self.fence_dark() { Mode::Dark } else { Mode::Light };
+        let mut palette = if let Some(opacity) = fence.surface_opacity {
+            FencePalette::new(mode, opacity)
+        } else { self.palette };
+        if let Some(accent) = aura_windows::theme::system_accent(mode == Mode::Dark) { palette = palette.with_accent(accent); }
+        palette = palette.with_surface_tint(mode, fence.accent.rgb());
         let show_counts = self.config.settings.show_counts;
         let generation = self.gfx.generation();
         self.icon_clock = self.icon_clock.wrapping_add(1);
@@ -2298,7 +2304,14 @@ impl DesktopHost {
         accents.extend(FenceAccent::ALL.iter().map(|accent| {
             entry(aura_core::i18n::text(accent.label()), accent.verb(), true, fence.accent == *accent)
         }));
-        items.push(submenu(aura_core::i18n::text("外观"), accents));
+        let mut appearance = vec![submenu(aura_core::i18n::text("颜色"), accents)];
+        let mut opacity = vec![entry(aura_core::i18n::text("使用全局外观"), "fence-opacity-default", true, fence.surface_opacity.is_none()), MenuItemSpec::Separator];
+        for value in [100u8, 85, 70, 55, 45, 30, 15] {
+            let label = if value == 100 { aura_core::i18n::text("不透明").to_string() } else { aura_core::tr_format!("透明度 {}%", 100 - u32::from(value)) };
+            opacity.push(entry(&label, &format!("fence-opacity-{value}"), true, fence.surface_opacity == Some(value)));
+        }
+        appearance.push(submenu(aura_core::i18n::text("透明度"), opacity));
+        items.push(submenu(aura_core::i18n::text("外观"), appearance));
         items.push(entry(aura_core::i18n::text("相同大小"), "same-size", true, false));
         items.push(entry(aura_core::i18n::text("复制格子"), "duplicate", true, false));
         if fence.is_desktop() {
@@ -2353,6 +2366,9 @@ impl DesktopHost {
                 entry(aura_core::i18n::text("跟随系统"), "theme-system", true, s.theme == FenceTheme::System),
                 MenuItemSpec::Separator,
                 entry(aura_core::i18n::text("毛玻璃效果"), "blur", true, s.blur),
+                submenu(aura_core::i18n::text("圆角"), [0u8, 10, 18, 24, 32, 40].into_iter().map(|radius| {
+                    entry(&format!("{radius} px"), &format!("corner-{radius}"), true, s.corner_radius == radius)
+                }).collect()),
                 MenuItemSpec::Separator,
                 // The setting stores the background opacity; the menu shows transparency.
                 transparency(100), transparency(85), transparency(70), transparency(55),
@@ -2465,6 +2481,18 @@ impl DesktopHost {
             id if id.starts_with("accent-") => {
                 let accent = FenceAccent::ALL.iter().copied().find(|a| a.verb() == id).unwrap_or(FenceAccent::Neutral);
                 if let Some(fence) = self.config.fence_mut(fid) { fence.accent = accent; }
+                self.schedule_save();
+                self.render(fid);
+            }
+            id if id.starts_with("corner-") => {
+                self.config.settings.corner_radius = id[7..].parse::<u8>().unwrap_or(24).min(40);
+                super::fence::set_corner_radius(self.config.settings.corner_radius);
+                for window in &self.fences { super::fence::shape_window(window.hwnd); }
+                self.schedule_save(); self.render_all();
+            }
+            id if id.starts_with("fence-opacity-") => {
+                let opacity = id.strip_prefix("fence-opacity-").and_then(|value| value.parse::<u8>().ok()).map(|v|v.clamp(10,100));
+                if let Some(fence) = self.config.fence_mut(fid) { fence.surface_opacity = opacity; }
                 self.schedule_save();
                 self.render(fid);
             }

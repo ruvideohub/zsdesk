@@ -92,6 +92,12 @@ pub fn tr_owned(text: String) -> String {
 
 fn lookup(text: &str) -> Option<&'static str> {
     Some(match text {
+        "Top screen edge gap" => "Отступ от верхнего края экрана",
+        "Distance to the top edge when the dock is at the top." => "Расстояние до края экрана, когда панель расположена сверху.",
+        "Bottom screen edge gap" => "Отступ от нижнего края экрана",
+        "Distance to the bottom edge when the dock is at the bottom." => "Расстояние до края экрана, когда панель расположена снизу.",
+        "Gap to maximized windows" => "Зазор до развёрнутых окон",
+        "Extra reserved space between windows and the dock; ignored when auto-hide is on." => "Дополнительное место между окнами и панелью; не применяется при автоскрытии.",
         "Right-click an app in All apps to pin it here" => "Чтобы закрепить приложение здесь, нажмите на него правой кнопкой в разделе «Все приложения»",
         // ------------------------------------------------- clock card (right-click it)
         "Desktop Clock" => "Часы на рабочем столе",

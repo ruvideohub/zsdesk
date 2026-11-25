@@ -19,9 +19,11 @@ thread_local! {
     /// Frosted glass is on: fence windows are clipped to their rounded shape so
     /// the blur behind them does not show in the transparent corners.
     static BLUR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static CORNER_RADIUS: std::cell::Cell<u8> = const { std::cell::Cell::new(24) };
 }
 
 pub fn set_blur(on: bool) { BLUR.with(|b| b.set(on)); }
+pub fn set_corner_radius(radius: u8) { CORNER_RADIUS.with(|r| r.set(radius.min(40))); }
 
 /// Applies or removes the frosted-glass blur and the matching rounded window region.
 pub fn apply_glass(hwnd: HWND) {
@@ -40,7 +42,7 @@ pub fn shape_window(hwnd: HWND) {
     let mut r = RECT::default();
     if unsafe { GetWindowRect(hwnd, &mut r) }.is_err(){return;}
     let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(hwnd) }.max(96);
-    let diameter = scale(20, dpi);
+    let diameter = scale(i32::from(CORNER_RADIUS.with(std::cell::Cell::get)) * 2, dpi).max(1);
     // The system owns the region after SetWindowRgn succeeds.
     let region = unsafe { CreateRoundRectRgn(0, 0, r.right - r.left + 1, r.bottom - r.top + 1, diameter, diameter) };
     if region.0.is_null(){return;}
@@ -444,7 +446,7 @@ impl FenceWin {
         let col = |c: aura_ui::theme::Color| Color::rgba8(c.r, c.g, c.b, c.a);
         let drawn = gfx.draw(surface, |cv: &Canvas| {
             let outer = RectF::new(0.5, 0.5, w as f32 - 1.0, h as f32 - 1.0);
-            let radius = sf(10.0);
+            let radius = sf(f32::from(CORNER_RADIUS.with(std::cell::Cell::get))).min(w.min(h) as f32 / 2.0);
             let drop_all = self.drop_hover == Some(usize::MAX);
             let hovered = !matches!(self.hover, FenceHit::None);
             if !self.standalone {
@@ -454,16 +456,6 @@ impl FenceWin {
             cv.push_clip(title);
             cv.round(outer, radius, col(palette.title));
             cv.pop_clip();
-            // A fence's own accent: one stripe along the bottom of the title bar. It sits inside
-            // the title clip so a rounded corner cannot shear it, and it is the only per-fence
-            // colour — the rest of the panel keeps the shared theme.
-            if let Some([r, g, b]) = fence.accent.rgb() {
-                cv.push_clip(title);
-                let stripe = RectF::new(outer.x + sf(8.0), title.bottom() - sf(3.0),
-                    (outer.w - sf(16.0)).max(0.0), sf(3.0));
-                cv.round(stripe, sf(1.5), Color::rgba8(r, g, b, 255));
-                cv.pop_clip();
-            }
             let renaming_title = matches!(self.rename, Some((_, RenameTarget::Title)));
             if self.merge_hover.is_some() {
                 cv.push_clip(title);

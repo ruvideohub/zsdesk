@@ -115,12 +115,13 @@ pub struct Fence {
     #[serde(default)] pub group: u64,
     /// 组内当前显示的标签。
     #[serde(default)] pub tab_active: bool,
-    /// 格子标题栏下方的强调色条；`Neutral` 表示不画。
+    /// Per-fence surface tint; Neutral inherits the shared theme.
     #[serde(default)] pub accent: FenceAccent,
+    /// Optional per-fence background opacity; None follows global appearance.
+    #[serde(default)] pub surface_opacity: Option<u8>,
 }
 
-/// A fence's accent colour: one stripe under its title, so a fence can be recognised at a
-/// glance among its neighbours without recolouring the whole panel.
+/// A fence's optional surface tint. Neutral follows the shared appearance.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FenceAccent {
@@ -135,7 +136,7 @@ pub enum FenceAccent {
 impl FenceAccent {
     /// The colours offered by the menu, in menu order (the "no accent" entry is separate).
     pub const ALL: [Self; 5] = [Self::Blue, Self::Green, Self::Amber, Self::Red, Self::Violet];
-    /// The stripe colour; `None` when the fence keeps the shared look.
+    /// Surface tint; `None` when the fence keeps the shared look.
     pub fn rgb(self) -> Option<[u8; 3]> {
         Some(match self {
             Self::Neutral => return None,
@@ -175,7 +176,7 @@ impl Fence {
         let sort = if source == FenceSource::Desktop { FenceSort::Manual } else { FenceSort::Name };
         Self { id, title: title.into(), source, placement, collapsed: false, locked: false, view: FenceView::Icons,
             icon_size: IconSize::Medium, sort, descending: false, members: Vec::new(), rule: None, catch_all: false, auto_released:false, browse: None,
-            group: 0, tab_active: false, accent: FenceAccent::Neutral }
+            group: 0, tab_active: false, accent: FenceAccent::Neutral, surface_opacity: None }
     }
     /// An inactive tab: its window stays hidden behind the group's active tab.
     pub fn is_hidden_tab(&self) -> bool { self.group != 0 && !self.tab_active }
@@ -198,6 +199,9 @@ pub struct DesktopSettings {
     pub double_click_toggle: bool,
     pub theme: FenceTheme,
     pub opacity: u8,
+    /// Rounded surface corners in DIP, shared by all fences.
+    #[serde(default = "default_corner_radius")]
+    pub corner_radius: u8,
     /// 文件夹格子内双击子文件夹时在格子内打开。
     pub browse_inside: bool,
     /// 鼠标悬停时临时展开折叠的格子，移开后自动收起。
@@ -215,11 +219,12 @@ pub struct DesktopSettings {
 }
 
 fn default_true() -> bool { true }
+fn default_corner_radius() -> u8 { 24 }
 
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self { organize: false, icons_hidden_by_aura: false, hidden: false, double_click_toggle: true,
-            theme: FenceTheme::Dark, opacity: 55, browse_inside: true, hover_expand: true, hide_tray: false, show_counts: false,
+            theme: FenceTheme::Dark, opacity: 55, corner_radius: default_corner_radius(), browse_inside: true, hover_expand: true, hide_tray: false, show_counts: false,
             blur: false }
     }
 }
@@ -249,6 +254,7 @@ impl DesktopConfig {
         for fence in self.fences.iter_mut().chain(self.stash.iter_mut()) {
             fence.placement.width = fence.placement.width.max(MIN_FENCE_W);
             fence.placement.height = fence.placement.height.max(MIN_FENCE_H);
+            fence.surface_opacity = fence.surface_opacity.map(|v| v.clamp(10, 100));
             fence.members.dedup();
             fence.members.truncate(5000);
         }
@@ -265,6 +271,7 @@ impl DesktopConfig {
             item.placement.height = item.placement.height.clamp(84, 224);
         }
         self.settings.opacity = self.settings.opacity.clamp(10, 100);
+        self.settings.corner_radius = self.settings.corner_radius.clamp(0, 40);
     }
     pub fn fence(&self, id: u64) -> Option<&Fence> { self.fences.iter().chain(&self.released_items).find(|f| f.id == id) }
     pub fn fence_mut(&mut self, id: u64) -> Option<&mut Fence> { self.fences.iter_mut().chain(&mut self.released_items).find(|f| f.id == id) }
@@ -765,6 +772,18 @@ mod tests {
         let name = key.rsplit('\\').next().unwrap().to_string();
         ItemInfo { key: key.into(), category: categorize(&name, folder, true), name, is_folder: folder, size: None, modified: None }
     }
+    #[test]
+    fn per_fence_appearance_is_optional_and_round_trips() {
+        let old = r#"{"id":1,"title":"one","source":"Desktop","placement":{"monitor":"","x":0,"y":0,"width":240,"height":160}}"#;
+        let mut fence: Fence = serde_json::from_str(old).unwrap();
+        assert_eq!(fence.surface_opacity, None);
+        fence.surface_opacity = Some(30);
+        fence.accent = FenceAccent::Blue;
+        let restored: Fence = serde_json::from_str(&serde_json::to_string(&fence).unwrap()).unwrap();
+        assert_eq!(restored.surface_opacity, Some(30));
+        assert_eq!(restored.accent, FenceAccent::Blue);
+    }
+
     fn fence(id: u64, rule: Option<Category>, catch_all: bool) -> Fence {
         let mut f = Fence::new(id, "f", FenceSource::Desktop, Placement::default());
         f.rule = rule; f.catch_all = catch_all; f

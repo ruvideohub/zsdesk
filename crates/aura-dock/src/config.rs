@@ -136,6 +136,11 @@ pub struct Config {
     pub magnify_range: f32,
     pub icon_spacing: f32,
     pub padding: f32,
+    /// Distance from the screen edge to the panel on each edge, in DIP.
+    pub top_edge_gap: f32,
+    pub bottom_edge_gap: f32,
+    /// Extra gap between the visible panel and maximized windows, in DIP.
+    pub window_gap: f32,
     pub corner_radius: f32,
     /// 0–0.8 opacity of the dark tint over the blurred desktop.
     pub glass_tint: f32,
@@ -286,6 +291,9 @@ impl Default for Config {
             magnify_range: 2.6,
             icon_spacing: 8.0,
             padding: 8.0,
+            top_edge_gap: 8.0,
+            bottom_edge_gap: 8.0,
+            window_gap: 0.0,
             corner_radius: 24.0,
             glass_tint: 0.24,
             edge_highlight: 0.55,
@@ -421,6 +429,9 @@ impl Config {
         self.magnify_range = self.magnify_range.clamp(1.0, 8.0);
         self.icon_spacing = self.icon_spacing.clamp(0.0, 32.0);
         self.padding = self.padding.clamp(2.0, 24.0);
+        self.top_edge_gap = self.top_edge_gap.clamp(0.0, 96.0);
+        self.bottom_edge_gap = self.bottom_edge_gap.clamp(0.0, 96.0);
+        self.window_gap = self.window_gap.clamp(0.0, 96.0);
         self.corner_radius = self.corner_radius.clamp(0.0, 64.0);
         self.glass_tint = self.glass_tint.clamp(0.0, 0.9);
         self.edge_highlight = self.edge_highlight.clamp(0.0, 1.0);
@@ -495,6 +506,9 @@ impl Config {
             || self.magnify_range != o.magnify_range
             || self.icon_spacing != o.icon_spacing
             || self.padding != o.padding
+            || self.top_edge_gap != o.top_edge_gap
+            || self.bottom_edge_gap != o.bottom_edge_gap
+            || self.window_gap != o.window_gap
             || self.corner_radius != o.corner_radius
             || self.glass_tint != o.glass_tint
             || self.edge_highlight != o.edge_highlight
@@ -543,6 +557,16 @@ mod tests {
         let restored: Config=serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
         assert!(restored.launchpad_pins.is_empty());
         assert_eq!(restored.pins[0].app(),Some("dock-only"));
+    }
+
+    #[test]
+    fn dock_gaps_keep_old_defaults_and_save_independently() {
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!((cfg.top_edge_gap, cfg.bottom_edge_gap, cfg.window_gap), (8.0, 8.0, 0.0));
+        cfg.top_edge_gap=2.0; cfg.bottom_edge_gap=25.0; cfg.window_gap=11.0;
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!((restored.top_edge_gap, restored.bottom_edge_gap, restored.window_gap), (2.0, 25.0, 11.0));
+        assert!(Config::default().visuals_differ(&restored));
     }
 
     #[test]

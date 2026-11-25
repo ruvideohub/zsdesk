@@ -953,7 +953,7 @@ fn tab_popup(fence: u64, point: POINT, spec: impl FnOnce(&DesktopHost) -> MenuSp
 /// Appearance and behaviour switches of the tray menu: applied in place while
 /// the menu stays open. Everything else (windows, dialogs, quit) closes it.
 fn tray_toggle(id: &str) -> bool {
-    id.starts_with("theme-") || id.starts_with("opacity-") || matches!(id, "blur" | "browse-inside" | "hover-expand" | "autostart")
+    id.starts_with("theme-") || id.starts_with("opacity-") || id.starts_with("corner-") || matches!(id, "blur" | "browse-inside" | "hover-expand" | "autostart")
 }
 
 fn tray_menu(point: POINT) {
