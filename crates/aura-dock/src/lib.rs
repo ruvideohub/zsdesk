@@ -20,6 +20,7 @@ mod desktop_clock;
 mod desktop_layer;
 mod desktop_layer_policy;
 mod desktop_retry;
+mod desktop_style;
 mod desktop_system;
 mod displays;
 mod dock;

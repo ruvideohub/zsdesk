@@ -5709,6 +5709,8 @@ impl Dock {
         self.restart_clock();
         // The cards bake their colours when they draw: a theme flip has to start them again.
         self.restart_system();
+        self.restart_extra(0);
+        self.restart_extra(1);
         if self.launchpad.open {
             // Panels take their glass tint when they open: reopen with the new tint,
             // keeping the Launchpad Settings section the user was on.

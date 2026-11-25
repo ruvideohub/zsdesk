@@ -27,7 +27,7 @@ use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
-    GetWindowThreadProcessId, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE, SWP_NOMOVE,
+    GetWindowThreadProcessId, RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE,
     SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WM_CONTEXTMENU, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP,
     WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -111,6 +111,7 @@ impl Prefs {
 struct ClockState {
     hwnd: HWND,
     root: ContainerVisual,
+    backdrop: Option<CompositionBrush>,
     _target: DesktopWindowTarget,
     /// The panel's window: where the card posts its menu and drag requests.
     dock: HWND,
@@ -287,6 +288,7 @@ impl DesktopClock {
             let state = Box::new(ClockState {
                 hwnd,
                 root,
+                backdrop: crate::desktop_style::backdrop(c),
                 _target: target,
                 dock,
                 monitor,
@@ -344,52 +346,30 @@ impl DesktopClock {
         let root = &self.state.root;
         root.Children()?.RemoveAll()?;
 
-        // Glass, the same surface the panel and Launchpad use.
-        // Layered rim and translucent surface echo Dock and Launchpad, in either theme.
-        let (rim, _, _) = ui::rounded(c, card_w, card_h, 26.0 * k, theme::ink(0.18))?;
-        root.Children()?.InsertAtTop(&rim)?;
-        let (bg, _, _) = ui::rounded(c, card_w - 2.0 * k, card_h - 2.0 * k, 25.0 * k, theme::surface(0.82))?;
-        bg.SetOffset(v3(k, k, 0.0))?;
-        root.Children()?.InsertAtTop(&bg)?;
+        crate::desktop_style::surface(c, root, self.state.backdrop.as_ref(), card_w, card_h, k)?;
 
-        // Seconds and AM/PM both make the digits wider; step the type down to fit.
-        let crowded = self.state.prefs.seconds || !suffix.is_empty();
-        let time_px = if crowded { 42.0 } else { 54.0 } * k;
-        let top = if self.state.prefs.date { 18.0 } else { 16.0 } * k;
-        let (time_card, time_w, _) = ui::text(
-            c,
-            gfx,
-            &time,
-            &TextStyle { px: time_px, weight: 300, display: true, ..Default::default() },
-        )?;
-        time_card.SetOffset(v3(24.0 * k, top, 0.0))?;
+        // A quiet kicker gives the clock context without competing with the time.
+        let (dot, _, _) = ui::rounded(c, 6.0*k, 6.0*k, 3.0*k, theme::accent())?;
+        dot.SetOffset(v3(22.0*k, 19.0*k, 0.0))?;
+        root.Children()?.InsertAtTop(&dot)?;
+        crate::desktop_style::text(c, gfx, root, "СЕЙЧАС", 35.0*k, 13.0*k, 160.0*k, 10.5*k, 600, theme::text_2(), false, false)?;
+
+        // Reserve space for AM/PM and use a smaller optical size for seconds. The clock
+        // stays legible at every supported card scale without clipping its suffix.
+        let time_px = if self.state.prefs.seconds { 36.0 } else { 49.0 } * k;
+        let available = if suffix.is_empty() { 224.0 } else { 182.0 } * k;
+        let (time_card, time_w, _) = ui::text(c, gfx, &time,
+            &TextStyle { px: time_px, weight: 400, display: true, max_w: Some(available), ..Default::default() })?;
+        time_card.SetOffset(v3(21.0*k, 31.0*k, 0.0))?;
         root.Children()?.InsertAtTop(&time_card)?;
-
         if !suffix.is_empty() {
-            let (suffix_card, _, _) = ui::text(
-                c,
-                gfx,
-                &suffix,
-                &TextStyle { px: 16.0 * k, weight: 500, color: theme::text_2(), ..Default::default() },
-            )?;
-            suffix_card.SetOffset(v3(24.0 * k + time_w + 8.0 * k, top + 26.0 * k, 0.0))?;
-            root.Children()?.InsertAtTop(&suffix_card)?;
+            crate::desktop_style::text(c, gfx, root, &suffix, 23.0*k + time_w, 54.0*k,
+                36.0*k, 12.0*k, 600, theme::text_2(), false, false)?;
         }
-
         if self.state.prefs.date {
-            // A hairline under the time, like a printed card.
-            let (rule, _, _) = ui::rounded(c, card_w - 48.0 * k, 1.0 * k, 0.0, theme::ink(0.12))?;
-            rule.SetOffset(v3(24.0 * k, 82.0 * k, 0.0))?;
-            root.Children()?.InsertAtTop(&rule)?;
-
-            let (date_card, _, _) = ui::text(
-                c,
-                gfx,
-                &date,
-                &TextStyle { px: 14.0 * k, weight: 500, color: theme::text_2(), ..Default::default() },
-            )?;
-            date_card.SetOffset(v3(26.0 * k, 90.0 * k, 0.0))?;
-            root.Children()?.InsertAtTop(&date_card)?;
+            crate::desktop_style::rect(c, root, 21.0*k, 96.0*k, card_w - 42.0*k, k.max(1.0), 0.0, theme::hair())?;
+            crate::desktop_style::text(c, gfx, root, &date, 22.0*k, 103.0*k, 224.0*k,
+                12.0*k, 500, theme::text_2(), false, false)?;
         }
 
         self.state.drawn = key;

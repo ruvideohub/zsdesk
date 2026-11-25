@@ -22,7 +22,7 @@ use windows::Win32::System::WinRT::Composition::ICompositorDesktopInterop;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetWindowLongPtrW, GetWindowRect,
-    RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE, SWP_NOMOVE,
+    RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE,
     SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WM_CONTEXTMENU, WM_LBUTTONDOWN, WM_LBUTTONUP,
     WM_MOUSEMOVE, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
 };
@@ -44,8 +44,8 @@ impl Kind {
     }
 }
 
-use crate::gfx::{Gfx, TextStyle};
-use crate::ui::{self, theme, v3};
+use crate::gfx::Gfx;
+use crate::ui::theme;
 
 /// The card at its normal size, in device-independent pixels.
 const CARD_W: f32 = 268.0;
@@ -53,8 +53,12 @@ const CARD_H: f32 = 168.0;
 /// Distance from the corner of the screen.
 const MARGIN: f32 = 24.0;
 /// Where the three rows sit, and how tall a meter bar is.
-const ROWS: [f32; 3] = [46.0, 90.0, 134.0];
-const BAR_H: f32 = 6.0;
+const ROWS: [f32; 3] = [62.0, 94.0, 126.0];
+const BAR_H: f32 = 4.0;
+const NETWORK_TILE_X: [f32; 2] = [18.0, 137.0];
+const NETWORK_TILE_W: f32 = 113.0;
+const NETWORK_TILE_Y: f32 = 62.0;
+const NETWORK_TILE_H: f32 = 84.0;
 
 const CLASS: windows::core::PCWSTR = w!("AuraExplorerDesktopSystem");
 
@@ -117,6 +121,7 @@ fn decimal(value: f32) -> String {
 struct SystemState {
     hwnd: HWND,
     root: ContainerVisual,
+    backdrop: Option<CompositionBrush>,
     _target: DesktopWindowTarget,
     /// The panel's window: where the card posts its menu and drag requests.
     dock: HWND,
@@ -285,6 +290,7 @@ impl DesktopSystem {
             let state = Box::new(SystemState {
                 hwnd,
                 root,
+                backdrop: crate::desktop_style::backdrop(c),
                 _target: target,
                 dock,
                 monitor,
@@ -341,55 +347,55 @@ impl DesktopSystem {
         let root = &self.state.root;
         root.Children()?.RemoveAll()?;
 
-        // Layered rim and translucent surface echo Dock and Launchpad, in either theme.
-        let (rim, _, _) = ui::rounded(c, card_w, card_h, 26.0 * k, theme::ink(0.18))?;
-        root.Children()?.InsertAtTop(&rim)?;
-        let (bg, _, _) = ui::rounded(c, card_w - 2.0 * k, card_h - 2.0 * k, 25.0 * k, theme::surface(0.82))?;
-        bg.SetOffset(v3(k, k, 0.0))?;
-        root.Children()?.InsertAtTop(&bg)?;
+        use crate::desktop_style as style;
+        style::surface(c, root, self.state.backdrop.as_ref(), card_w, card_h, k)?;
+        let (subtitle, glyph) = match self.state.kind {
+            Kind::System => ("НАГРУЗКА УСТРОЙСТВА", "\u{E7F4}"),
+            Kind::Network => ("СКОРОСТЬ СОЕДИНЕНИЯ", "\u{E701}"),
+            Kind::Battery => ("ПИТАНИЕ УСТРОЙСТВА", "\u{E83E}"),
+        };
+        style::header(c, gfx, root, self.state.kind.title(), subtitle, glyph, k)?;
 
-        let (title, _, _) = ui::text(
-            c,
-            gfx,
-            self.state.kind.title(),
-            &TextStyle { px: 13.0 * k, weight: 600, color: theme::text_2(), ..Default::default() },
-        )?;
-        title.SetOffset(v3(24.0 * k, 16.0 * k, 0.0))?;
-        root.Children()?.InsertAtTop(&title)?;
-
-        let bar_w = card_w - 48.0 * k;
-        for (index, meter) in meters.iter().enumerate() {
-            let y = ROWS[index] * k;
-            let (label, label_w, _) = ui::text(
-                c,
-                gfx,
-                meter.label,
-                &TextStyle { px: 13.0 * k, weight: 500, ..Default::default() },
-            )?;
-            label.SetOffset(v3(24.0 * k, y, 0.0))?;
-            root.Children()?.InsertAtTop(&label)?;
-
-            // The number sits to the left of the bar's right end, out of the label's way.
-            let (value, value_w, _) = ui::text(
-                c,
-                gfx,
-                &meter.text,
-                &TextStyle { px: 12.5 * k, weight: 500, color: theme::text_2(), ..Default::default() },
-            )?;
-            let value_x = (24.0 * k + label_w + 8.0 * k).min(24.0 * k + bar_w - value_w);
-            value.SetOffset(v3(value_x, y, 0.0))?;
-            root.Children()?.InsertAtTop(&value)?;
-
-            // The track, then the fill on top of it.
-            let (track, _, _) = ui::rounded(c, bar_w, BAR_H * k, BAR_H * k / 2.0, theme::ink(0.12))?;
-            track.SetOffset(v3(24.0 * k, y + 20.0 * k, 0.0))?;
-            root.Children()?.InsertAtTop(&track)?;
-            let filled = (bar_w * meter.fill).max(BAR_H * k);
-            if meter.fill > 0.0 {
-                // A nearly full card stays readable: red only when the meter is really full.
-                let (fill, _, _) = ui::rounded(c, filled, BAR_H * k, BAR_H * k / 2.0, theme::accent())?;
-                fill.SetOffset(v3(24.0 * k, y + 20.0 * k, 0.0))?;
-                root.Children()?.InsertAtTop(&fill)?;
+        match self.state.kind {
+            Kind::System => {
+                for (index, meter) in meters.iter().enumerate() {
+                    let y = ROWS[index] * k;
+                    style::text(c, gfx, root, meter.label, 21.0*k, y, 74.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
+                    style::text(c, gfx, root, &meter.text, 100.0*k, y, 147.0*k, 11.0*k, 600, theme::text(), false, true)?;
+                    style::rect(c, root, 21.0*k, y + 19.0*k, 226.0*k, BAR_H*k, 2.0*k, theme::ink(0.11))?;
+                    if meter.fill > 0.0 {
+                        style::rect(c, root, 21.0*k, y + 19.0*k, (226.0*k*meter.fill).max(4.0*k), BAR_H*k, 2.0*k, theme::accent())?;
+                    }
+                }
+            }
+            Kind::Network => {
+                // Throughput has no honest 0–100% scale: use two equal value tiles,
+                // not empty progress bars that would suggest a connection limit.
+                for (i, meter) in meters.iter().enumerate() {
+                    let x = NETWORK_TILE_X[i] * k;
+                    style::rect(c, root, x, NETWORK_TILE_Y*k, NETWORK_TILE_W*k, NETWORK_TILE_H*k, 16.0*k, theme::ink(0.065))?;
+                    let label = if i == 0 { "↓  ПОЛУЧЕНИЕ" } else { "↑  ОТПРАВКА" };
+                    style::text(c, gfx, root, label, x + 12.0*k, 73.0*k, 91.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
+                    style::fitted_text(c, gfx, root, &meter.text, x + 12.0*k, 101.0*k, 91.0*k, 15.0*k, 600, theme::text(), true)?;
+                }
+            }
+            Kind::Battery => {
+                if let Some(charge) = meters.first() {
+                    let has_details = meters.len() == 3;
+                    style::text(c, gfx, root, &charge.text, 21.0*k, 63.0*k, 118.0*k,
+                        if has_details { 29.0*k } else { 15.0*k }, 600, theme::text(), true, false)?;
+                    if has_details {
+                        style::text(c, gfx, root, &meters[1].text, 22.0*k, 103.0*k, 116.0*k,
+                            11.0*k, 500, theme::text_2(), false, false)?;
+                        style::rect(c, root, 151.0*k, 65.0*k, 97.0*k, 55.0*k, 15.0*k, theme::ink(0.065))?;
+                        style::text(c, gfx, root, "ОСТАЛОСЬ", 162.0*k, 72.0*k, 76.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
+                        style::text(c, gfx, root, &meters[2].text, 162.0*k, 91.0*k, 76.0*k, 12.0*k, 600, theme::text(), false, false)?;
+                        style::rect(c, root, 21.0*k, 138.0*k, 226.0*k, 5.0*k, 2.5*k, theme::ink(0.11))?;
+                        if charge.fill > 0.0 {
+                            style::rect(c, root, 21.0*k, 138.0*k, (226.0*k*charge.fill).max(5.0*k), 5.0*k, 2.5*k, theme::accent())?;
+                        }
+                    }
+                }
             }
         }
 
@@ -530,6 +536,17 @@ mod tests {
         assert!(CARD_W / CARD_H < 2.5);
         // Three rows fit inside the card with the title above them.
         assert!(ROWS[2] + 26.0 < CARD_H);
+    }
+
+    #[test]
+    fn network_tiles_stay_inside_card_and_do_not_overlap_at_supported_scales() {
+        for scale in [0.75_f32, 1.0, 1.25, 1.5, 2.0] {
+            let left_end = (NETWORK_TILE_X[0] + NETWORK_TILE_W) * scale;
+            let right_start = NETWORK_TILE_X[1] * scale;
+            assert!(left_end < right_start);
+            assert!((NETWORK_TILE_X[1] + NETWORK_TILE_W) * scale <= CARD_W * scale);
+            assert!((NETWORK_TILE_Y + NETWORK_TILE_H) * scale <= CARD_H * scale);
+        }
     }
 
     #[test]
