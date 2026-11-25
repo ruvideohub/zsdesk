@@ -3,8 +3,10 @@
 Installs or removes the standalone Fences app for the current Windows user.
 .PARAMETER Dir
 Install folder. Defaults to %LOCALAPPDATA%\Programs\Fences.
+.PARAMETER Autostart
+Explicitly enable Fences at sign-in. By default the existing setting is not changed.
 .PARAMETER NoAutostart
-Do not enable Fences at sign-in (and remove this install's existing entry).
+Explicitly disable this install's Fences sign-in entry.
 .PARAMETER DesktopShortcut
 Create a desktop shortcut in addition to the Start menu shortcut.
 .PARAMETER NoStart
@@ -16,12 +18,13 @@ Stop Fences, remove its owned sign-in entry and shortcuts, then remove the app f
 param(
     [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\Fences'),
     [switch]$NoAutostart,
+    [switch]$Autostart,
     [switch]$DesktopShortcut,
     [switch]$NoStart,
     [switch]$Remove
 )
 $ErrorActionPreference = 'Stop'
-$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+if ($Autostart -and $NoAutostart) { throw 'Choose only one of -Autostart and -NoAutostart.' }
 $Source = $PSScriptRoot
 if (-not $Source) { $Source = (Get-Location).Path }
 if (-not $Dir) { throw 'No install directory was supplied and LOCALAPPDATA is empty.' }
@@ -57,18 +60,6 @@ function Invoke-Fences([string]$Argument) {
     if (-not (Test-Path -LiteralPath $Exe -PathType Leaf)) { return }
     $process = Start-Process -FilePath $Exe -ArgumentList $Argument -Wait -PassThru -ErrorAction Stop
     if ($process.ExitCode -ne 0) { throw "Fences $Argument failed with exit code $($process.ExitCode)." }
-}
-
-function Remove-LegacyDesktopStartup {
-    foreach ($name in @('AuraExplorer','AuraExplorer.Desktop','AuraExplorer.Theme.Desktop','AuraExplorer.DesktopBox.Desktop')) {
-        $entry = Get-ItemProperty -Path $RunKey -Name $name -ErrorAction SilentlyContinue
-        if ($entry) {
-            $value = [string]$entry.$name
-            if ($value -match '(?i)auraexplorer\.exe' -and $value -match '(?i)--desktop') {
-                Remove-ItemProperty -Path $RunKey -Name $name -Force -ErrorAction SilentlyContinue
-            }
-        }
-    }
 }
 
 function Remove-Shortcut([string]$Path) {
@@ -116,11 +107,11 @@ foreach ($name in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
 try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
 New-Shortcut $StartMenu $Exe
 if ($DesktopShortcut) { New-Shortcut $DesktopLink $Exe }
-Remove-LegacyDesktopStartup
 
 if ($NoAutostart) { Invoke-Fences '--disable-startup' }
-else { Invoke-Fences '--enable-startup' }
+elseif ($Autostart) { Invoke-Fences '--enable-startup' }
 if (-not $NoStart) { Start-Process -FilePath $Exe -WorkingDirectory $Dir }
 Write-Host "Fences is installed in $Dir." -ForegroundColor Green
 if ($NoAutostart) { Write-Host 'Sign-in startup is disabled.' }
-else { Write-Host 'Fences will start when you sign in to Windows.' }
+elseif ($Autostart) { Write-Host 'Fences will start when you sign in to Windows.' }
+else { Write-Host 'Fences sign-in startup was not changed.' }

@@ -263,7 +263,7 @@ fn perform(shared:&Shared,state:&WindowState,owner:HWND,request:&Request,timing:
     timing.settings_cache_hit=cache_hit;
     timing.settings_microseconds=micros(stage.elapsed());let stage=Instant::now();
     let(pidls,folder,intercept,mode)=match &request.target{
-        Target::Items{pidls,key}=>(pidls.clone(),None,MenuInterceptions{rename:key.is_some(),open:pidls.len()==1&&key.is_some(),file_actions:pidls.iter().all(|pidl|
+        Target::Items{pidls,key}=>(pidls.clone(),None,MenuInterceptions{rename:key.is_some(),open:pidls.len()==1&&key.is_some(),open_containing:pidls.len()==1&&key.is_some()&&crate::shortcut_location::is_shortcut_pidl(&pidls[0]),file_actions:pidls.iter().all(|pidl|
             aura_windows::shell::pidl::item_from_pidl(pidl).is_ok_and(|item|unsafe{item.GetAttributes(windows::Win32::System::SystemServices::SFGAO_FILESYSTEM)}.is_ok_and(|value|value.0&windows::Win32::System::SystemServices::SFGAO_FILESYSTEM.0!=0)))},request.mode),
         Target::Background{folder:Some(folder)} if request.mode==crate::context_menu_process::Mode::Paste=>(Vec::new(),Some(folder.clone()),MenuInterceptions::default(),request.mode),
         Target::Background{folder:Some(folder)}=>{

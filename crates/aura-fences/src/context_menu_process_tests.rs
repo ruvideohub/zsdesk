@@ -725,7 +725,7 @@ fn native_modern_nested_extension_menu_executes_exact_selection_once()->Result<(
                 let _marker=Environment::set("AURA_TEST_COMMAND_MARKER",&marker);
                 let pidls=paths.iter().map(|path|aura_windows::shell::pidl::location_pidl(&aura_core::model::explorer::ShellLocation::Path(path.clone())).context("selected fixture PIDL")).collect::<Result<Vec<_>>>()?;
                 let mut client=Client::spawn(owner.0,POINT{x:70,y:100},pidls,None,ContextMenuOptions{modern:true,..Default::default()},
-                    MenuInterceptions{rename:true,open:true,file_actions:true},Mode::More)?;
+                    MenuInterceptions{rename:true,open:true,file_actions:true,..Default::default()},Mode::More)?;
                 let pid=client.pid().context("nested worker PID")?;let stop=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));let signal=stop.clone();
                 let(tx,rx)=std::sync::mpsc::channel();
                 let ui=thread::spawn(move||{let result=drive_nested_extension_ui(pid,raw,deep,signal).map_err(|error|format!("{error:#}"));let _=tx.send(result);});
@@ -801,7 +801,7 @@ fn exercise_fence_properties(modern:bool,extension:bool)->Result<()>{
             let _marker=Environment::set("AURA_TEST_COMMAND_MARKER",&marker);
             let pidl=aura_windows::shell::pidl::location_pidl(&aura_core::model::explorer::ShellLocation::Path(path.clone())).context("fixture PIDL")?;
             let mut client=Client::spawn(owner.0,POINT{x:70,y:100},vec![pidl],None,ContextMenuOptions{modern,..Default::default()},
-                MenuInterceptions{rename:true,open:true,file_actions:true},Mode::More)?;
+                MenuInterceptions{rename:true,open:true,file_actions:true,..Default::default()},Mode::More)?;
             struct Dialogs{pid:u32,seen:std::collections::HashSet<usize>,popups:Vec<HWND>,windows:Vec<String>}
             unsafe extern "system" fn close_properties(window:HWND,data:LPARAM)->windows::core::BOOL{
                 let state=unsafe{&mut*(data.0 as*mut Dialogs)};let mut pid=0;unsafe{GetWindowThreadProcessId(window,Some(&mut pid));}

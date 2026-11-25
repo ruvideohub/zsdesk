@@ -222,6 +222,7 @@ struct Request{
     #[serde(default)]english:Option<bool>,
     options:ContextMenuOptions,rename:bool,open:bool,mode:Mode,extended:bool,
     #[serde(default)]file_actions:bool,
+    #[serde(default)]open_containing:bool,
     #[serde(default)]layout:Option<ShellViewState>,
     #[serde(default)]view_context:Option<MenuViewContext>,
     #[cfg(test)]probe:Option<String>,
@@ -434,7 +435,7 @@ impl Client{
         let mut owner_name=[0u16;128];let owner_length=unsafe{GetClassNameW(owner,&mut owner_name)}.max(0)as usize;
         let owner_class=String::from_utf16_lossy(&owner_name[..owner_length]);
         let request=Request{english:Some(aura_core::i18n::is_english()),token:token.clone(),session:session.clone(),ordinal,parent:std::process::id(),parent_created,owner:owner.0 as isize,
-            point:[point.x,point.y],pidls,folder,options,rename:intercept.rename,open:intercept.open,file_actions:intercept.file_actions,mode,extended,layout:origin.layout,view_context:origin.view_context,
+            point:[point.x,point.y],pidls,folder,options,rename:intercept.rename,open:intercept.open,file_actions:intercept.file_actions,open_containing:intercept.open_containing,mode,extended,layout:origin.layout,view_context:origin.view_context,
             #[cfg(test)]probe:origin.probe,};
         let write_started=Instant::now();
         if let Err(error)=validate(&request).and_then(|_|write(&workspace.join("request.json"),&request)){
@@ -1041,10 +1042,10 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
             // Windows 11 presenter for nothing, so the count travels only with the rows.
             else if request.pidls.is_empty(){menu.track_folder_background_with_interceptions(window,point,request.folder.as_deref().unwrap(),application_count,MenuInterceptions{file_actions,..Default::default()},&mut||state.allow(true))?}
             else if let (Some(host),true)=(&background_view,application_group){menu.track_selected_in_view_at(window,point,&request.pidls,application_count,&host.browser,
-                MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?}
+                MenuInterceptions{rename:request.rename,open:request.open,file_actions,open_containing:request.open_containing},&mut||state.allow(true))?}
             else if let Some(host)=&background_view{menu.track_selected_in_view_before(window,point,&request.pidls,&host.browser,
-                MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?}
-            else{menu.track_selected_at(window,point,&request.pidls,application_count,MenuInterceptions{rename:request.rename,open:request.open,file_actions},&mut||state.allow(true))?};
+                MenuInterceptions{rename:request.rename,open:request.open,file_actions,open_containing:request.open_containing},&mut||state.allow(true))?}
+            else{menu.track_selected_at(window,point,&request.pidls,application_count,MenuInterceptions{rename:request.rename,open:request.open,file_actions,open_containing:request.open_containing},&mut||state.allow(true))?};
         let outcome=if let MenuOutcome::Application(command)=outcome{
             let index=command.checked_sub(aura_windows::shell::menu::APP_FIRST).map(|offset|offset as usize);
             match index.and_then(|index|application_rows.get(index)){
@@ -1101,7 +1102,7 @@ fn run_request(path:&Path,request:Request,events:&EventSet,com_us:u64,fault_repo
         }
     };
     let host_action=matches!(state.status.outcome,Some(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|
-        MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}));
+        MenuOutcome::Explore|MenuOutcome::OpenContaining|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}));
     if state.status.before_invoke&&!host_action{
         // Property sheets and similar command UI appear asynchronously; let
         // them become visible before deciding whether this process is idle.
@@ -1235,7 +1236,7 @@ pub fn run_worker_if_requested()->Option<Result<()>>{
     }
     #[test]fn menu_protocol_rejects_unbounded_or_path_like_sessions(){
         let mut request=Request{english:None,token:"request-1".into(),session:"session-1".into(),ordinal:1,parent:1,parent_created:1,owner:1,
-            point:[0,0],pidls:vec![vec![0,0]],folder:None,options:Default::default(),rename:false,open:false,file_actions:false,mode:Mode::More,extended:false,layout:None,view_context:None,probe:None};
+            point:[0,0],pidls:vec![vec![0,0]],folder:None,options:Default::default(),rename:false,open:false,file_actions:false,open_containing:false,mode:Mode::More,extended:false,layout:None,view_context:None,probe:None};
         assert!(validate(&request).is_ok());
         for value in ["",r"..\escape","bad/session","bad\0session"]{request.session=value.into();assert!(validate(&request).is_err());}
         request.session="session-1".into();for ordinal in [0,MAX_SESSION_REQUESTS+1]{request.ordinal=ordinal;assert!(validate(&request).is_err());}
@@ -1243,7 +1244,7 @@ pub fn run_worker_if_requested()->Option<Result<()>>{
     #[test]fn filesystem_action_interception_is_opt_in_on_the_wire()->Result<()>{
         let request=Request{english:None,token:"request-1".into(),session:"session-1".into(),ordinal:1,parent:1,parent_created:1,owner:1,
             point:[0,0],pidls:Vec::new(),folder:Some(PathBuf::from(r"E:\destination")),options:Default::default(),rename:false,open:false,
-            file_actions:true,mode:Mode::Paste,extended:false,layout:None,view_context:None,probe:None};
+            file_actions:true,open_containing:false,mode:Mode::Paste,extended:false,layout:None,view_context:None,probe:None};
         ensure!(validate(&request).is_ok(),"background paste target rejected");
         let mut json=serde_json::to_value(&request)?;let restored:Request=serde_json::from_value(json.clone())?;assert!(restored.file_actions);
         json.as_object_mut().unwrap().remove("file_actions");let legacy:Request=serde_json::from_value(json)?;assert!(!legacy.file_actions);

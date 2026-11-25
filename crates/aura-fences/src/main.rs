@@ -6,6 +6,8 @@ fn main() {}
 #[cfg(windows)]
 mod system_shell;
 #[cfg(windows)]
+mod shortcut_location;
+#[cfg(windows)]
 mod context_menu_process;
 #[cfg(windows)]
 #[cfg(windows)]

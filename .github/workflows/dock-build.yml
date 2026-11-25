@@ -68,6 +68,34 @@ jobs:
           cargo build --locked --release -p aura-dock --bins
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           exit $LASTEXITCODE
+      - name: Package standalone Fences
+        working-directory: aura
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path -LiteralPath $iscc)) { throw "Inno Setup not found: $iscc" }
+          pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package-fences.ps1 -SkipBuild -BinaryPath (Join-Path (Get-Location) 'target/release/Fences.exe') -OutputDir (Join-Path (Get-Location) 'fences-release') -InnoCompiler $iscc
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (@(Get-ChildItem fences-release/Fences-*-x64.zip).Count -ne 1 -or @(Get-ChildItem fences-release/Fences-*-x64-setup.exe).Count -ne 1) { throw 'Standalone Fences archive or installer missing' }
+      - name: Smoke-test standalone Fences installer
+        working-directory: aura
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem fences-release/Fences-*-x64-setup.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'Fences standalone smoke'
+          $process = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$dir`"",'/TASKS=') -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Fences setup failed: $($process.ExitCode)" }
+          if (-not (Test-Path "$dir/Fences.exe")) { throw 'Installed Fences.exe is missing' }
+          foreach ($name in @('AuraExplorer.exe','AuraDock.exe','AuraService.exe','widgets.exe')) {
+            if (Test-Path (Join-Path $dir $name)) { throw "Standalone installer included $name" }
+          }
+          $uninstall = Start-Process -FilePath (Join-Path $dir 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0 -or (Test-Path "$dir/Fences.exe")) { throw 'Fences uninstall failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fences-standalone-windows-x64
+          path: aura/fences-release/*
+          if-no-files-found: error
       - name: Lay out the bundle and verify it
         working-directory: aura
         shell: pwsh
@@ -130,6 +158,18 @@ jobs:
       # not load, because "STATUS_ENTRYPOINT_NOT_FOUND" on its own says nothing.
       # Dock's library tests are run explicitly below; watchdog startup and timeout
       # are also exercised independently without GUI fixtures.
+      - name: Fences shortcut dispatch and resolution regression tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          $dispatch = cargo test --locked --release -p aura-windows open_containing_is_explicitly_intercepted -- --list
+          if ($LASTEXITCODE -ne 0 -or -not ($dispatch | Select-String -SimpleMatch 'open_containing_is_explicitly_intercepted_in_classic_and_native_dispatch')) { throw 'Shell dispatch regression test not discovered' }
+          cargo test --locked --release -p aura-windows open_containing_is_explicitly_intercepted
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $resolution = cargo test --locked --release -p aura-fences --bin Fences shortcut_target_resolves_unicode_target -- --list
+          if ($LASTEXITCODE -ne 0 -or -not ($resolution | Select-String -SimpleMatch 'shortcut_target_resolves_unicode_target_and_rejects_missing_or_non_links')) { throw 'Shortcut resolution regression test not discovered' }
+          cargo test --locked --release -p aura-fences --bin Fences shortcut_target_resolves_unicode_target
+          exit $LASTEXITCODE
       - name: Dock startup policy tests
         shell: pwsh
         working-directory: aura

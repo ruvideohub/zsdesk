@@ -156,7 +156,7 @@ extern "C" { fn zs_menu_shared_host(enabled:i32); fn zs_menu_set_working_directo
 const CMIC_MASK_UNICODE: u32 = 0x4000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, ShellInvoked, NativeHandled, Copy, Cut, Paste, Delete{permanent:bool},
+pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, OpenContaining, ShellInvoked, NativeHandled, Copy, Cut, Paste, Delete{permanent:bool},
     /// Short-page commands that never need a Shell extension.
     CopyPath, NewFolder, Refresh,
     /// The built-in ZIP writer in `aura-core`. There is no archiver program: packing is
@@ -164,8 +164,8 @@ pub enum MenuOutcome { Dismissed, Application(u32), Rename, Open, Explore, Shell
     Compress }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct MenuInterceptions { pub rename: bool, pub open: bool, pub file_actions:bool }
-impl MenuInterceptions { fn bits(self) -> u32 { u32::from(self.rename) | (u32::from(self.open) << 1) | (u32::from(self.file_actions)<<2) } }
+pub struct MenuInterceptions { pub rename: bool, pub open: bool, pub file_actions:bool, pub open_containing:bool }
+impl MenuInterceptions { fn bits(self) -> u32 { u32::from(self.rename) | (u32::from(self.open) << 1) | (u32::from(self.file_actions)<<2) | (u32::from(self.open_containing)<<3) } }
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -185,6 +185,7 @@ fn intercepted_verb(verb: Option<&str>, intercept: MenuInterceptions,shift:bool)
         Some(verb) if intercept.rename && verb.eq_ignore_ascii_case("rename") => Some(MenuOutcome::Rename),
         Some(verb) if intercept.open && verb.eq_ignore_ascii_case("open") => Some(MenuOutcome::Open),
         Some(verb) if intercept.open && verb.eq_ignore_ascii_case("explore") => Some(MenuOutcome::Explore),
+        Some(verb) if intercept.open_containing && verb.eq_ignore_ascii_case("opencontaining") => Some(MenuOutcome::OpenContaining),
         Some(verb) if intercept.file_actions&&(verb.eq_ignore_ascii_case("copy")||verb.eq_ignore_ascii_case("windows.copy"))=>Some(MenuOutcome::Copy),
         Some(verb) if intercept.file_actions&&(verb.eq_ignore_ascii_case("cut")||verb.eq_ignore_ascii_case("windows.cut"))=>Some(MenuOutcome::Cut),
         Some(verb) if intercept.file_actions&&(verb.eq_ignore_ascii_case("paste")||verb.eq_ignore_ascii_case("windows.paste"))=>Some(MenuOutcome::Paste),
@@ -206,6 +207,7 @@ fn decode_native_result(result: NativeMenuResult, applications: &[u32]) -> Resul
         7 => Some(MenuOutcome::NativeHandled),
         8 => Some(MenuOutcome::Copy),9=>Some(MenuOutcome::Cut),10=>Some(MenuOutcome::Paste),
         11=>Some(MenuOutcome::Delete{permanent:false}),12=>Some(MenuOutcome::Delete{permanent:true}),
+        13=>Some(MenuOutcome::OpenContaining),
         _ => return Err(windows::core::Error::from_hresult(windows::core::HRESULT(0x8000ffffu32 as i32))),
     })
 }
@@ -1119,6 +1121,26 @@ mod policy_tests {
             unsafe{zs_menu_test_pending_callback(context.as_raw(),Some(allow),(&permitted as*const Cell<usize>).cast_mut().cast(),late,&mut outcome)}.ok()?;
             assert_eq!(permitted.get(),late as usize+1);assert_eq!(invoked.get(),late as usize+1);assert_eq!(outcome.kind,5);assert_eq!(outcome.command,1);assert_eq!(outcome.status,0);
         }Ok(())
+    }
+
+    #[test]fn open_containing_is_explicitly_intercepted_in_classic_and_native_dispatch()->Result<()>{
+        for enabled in [false,true] {
+            let invoked=Rc::new(Cell::new(0));let context:IContextMenu=FileActionProbe{verb:"opencontaining",invoked:invoked.clone()}.into();
+            let menu=ShellMenu::new(context.clone())?;let before=Cell::new(0);
+            let intercept=MenuInterceptions{open_containing:enabled,..Default::default()};
+            let expected=if enabled{MenuOutcome::OpenContaining}else{MenuOutcome::ShellInvoked};
+            assert_eq!(menu.dispatch_shell_command(HWND::default(),1,None,intercept,false,false,&mut||{before.set(before.get()+1);Ok(())})?,expected);
+            assert_eq!(invoked.get(),usize::from(!enabled));assert_eq!(before.get(),usize::from(!enabled));
+            #[cfg(all(target_arch="x86_64",target_env="msvc"))]{
+                invoked.set(0);before.set(0);let mut callback=||{before.set(before.get()+1);Ok(())};
+                let mut observer=BeforeShell{callback:&mut callback};let mut native=NativeMenuResult::default();
+                unsafe{zs_menu_test_dispatch(context.as_raw(),intercept.bits(),0,Some(before_shell),(&mut observer as*mut BeforeShell<'_>).cast(),&mut native)}.ok()?;
+                assert_eq!(decode_native_result(native,&[])?,Some(expected));
+                assert_eq!(invoked.get(),usize::from(!enabled));assert_eq!(before.get(),usize::from(!enabled));
+            }
+        }
+        assert_eq!(intercepted_verb(Some("opencontaining-other"),MenuInterceptions{open_containing:true,..Default::default()},false),None);
+        Ok(())
     }
 
     #[test]fn file_action_interceptions_return_before_any_shell_invoke()->Result<()>{

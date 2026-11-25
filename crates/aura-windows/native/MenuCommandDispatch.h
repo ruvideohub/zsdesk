@@ -9,8 +9,8 @@
 
 namespace menu_dispatch {
 enum Kind : uint32_t { Dismissed=0, Application=1, Rename=2, Open=3, Explore=4, Invoked=5, Expanded=6, NativeHandled=7,
-    Copy=8,Cut=9,Paste=10,Delete=11,DeletePermanent=12 };
-enum Intercept : uint32_t { InterceptRename=1, InterceptOpen=2,InterceptFileActions=4 };
+    Copy=8,Cut=9,Paste=10,Delete=11,DeletePermanent=12,OpenContaining=13 };
+enum Intercept : uint32_t { InterceptRename=1, InterceptOpen=2,InterceptFileActions=4,InterceptOpenContaining=8 };
 enum Phase : uint32_t { BeforePresentation=0, Presented=1, Executing=2 };
 struct Result { uint32_t kind=Dismissed,command=0;HRESULT status=S_OK;uint32_t phase=BeforePresentation; };
 static_assert(sizeof(Result)==16,"Menu result ABI");
@@ -54,6 +54,7 @@ inline Result Dispatch(IContextMenu* menu,HWND owner,UINT command,UINT first,POI
             if(!_wcsicmp(verb,L"open")){result.kind=Open;return result;}
             if(!_wcsicmp(verb,L"explore")){result.kind=Explore;return result;}
         }
+        if((intercept&InterceptOpenContaining)&&!_wcsicmp(verb,L"opencontaining")){result.kind=OpenContaining;return result;}
         if(intercept&InterceptFileActions){
             if(!_wcsicmp(verb,L"copy")||!_wcsicmp(verb,L"Windows.Copy")){result.kind=Copy;return result;}
             if(!_wcsicmp(verb,L"cut")||!_wcsicmp(verb,L"Windows.Cut")){result.kind=Cut;return result;}

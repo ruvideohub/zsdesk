@@ -835,7 +835,7 @@ fn finish_menu_work(){
             let owner=HWND(request.owner as*mut _);
             // Shell commands already ran against their captured PIDLs. Only
             // application actions require the current selection to still match.
-            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress));
+            let actionable=matches!(&outcome,Ok(MenuOutcome::Application(_)|MenuOutcome::Rename|MenuOutcome::Open|MenuOutcome::Explore|MenuOutcome::OpenContaining|MenuOutcome::Copy|MenuOutcome::Cut|MenuOutcome::Paste|MenuOutcome::Delete{..}|MenuOutcome::CopyPath|MenuOutcome::Compress));
             // A superseded construction can fail after another menu was
             // requested. Its error must not interrupt the newer interaction.
             if outcome.is_err()&&!menu_request_current(request.generation){continue;}
@@ -900,6 +900,13 @@ fn finish_menu(fence:u64,hwnd:HWND,point:POINT,target_key:Option<String>,ids:&[S
             } else {
                 open_with_verb(fence, index, action == MenuOutcome::Explore, Some(if action == MenuOutcome::Explore { "explore" } else { "open" }));
             }
+        }
+        Ok(MenuOutcome::OpenContaining) => {
+            let entry = target_key.as_ref().and_then(|key| with_host(|h| h.win_index(fence)
+                .and_then(|i| h.fences[i].entries.iter().find(|entry| &entry.key == key).cloned())).flatten());
+            let result = entry.and_then(|entry| entry.path).ok_or_else(|| windows::core::Error::from_hresult(windows::core::HRESULT(0x80070490u32 as i32)))
+                .and_then(|path| crate::shortcut_location::open_shortcut_location(&path));
+            if let Err(error) = result { file_action_error(hwnd, &error); }
         }
         Ok(MenuOutcome::CopyPath) => {},
         Ok(MenuOutcome::NewFolder) => run_verb(fence, "NewFolder", true),

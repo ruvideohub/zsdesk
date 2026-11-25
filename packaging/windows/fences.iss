@@ -106,32 +106,6 @@ begin
   end;
 end;
 
-procedure RemoveLegacyDesktopStartup;
-var
-  Names: array[0..3] of String;
-  I: Integer;
-  Value, LowerValue: String;
-begin
-  Names[0] := 'AuraExplorer';
-  Names[1] := 'AuraExplorer.Desktop';
-  Names[2] := 'AuraExplorer.Theme.Desktop';
-  Names[3] := 'AuraExplorer.DesktopBox.Desktop';
-  for I := 0 to 3 do
-  begin
-    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', Names[I], Value) then
-    begin
-      LowerValue := Lowercase(Value);
-      if (Pos('auraexplorer.exe', LowerValue) > 0) and (Pos('--desktop', LowerValue) > 0) then
-        RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', Names[I]);
-    end;
-  end;
-end;
-
-procedure CurStepChanged(CurStep: TSetupStep);
-begin
-  if CurStep = ssPostInstall then RemoveLegacyDesktopStartup;
-end;
-
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   ExitCode: Integer;

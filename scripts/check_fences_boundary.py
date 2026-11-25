@@ -136,6 +136,16 @@ if 'CloseApplicationsFilter=Fences.exe' not in fences_installer or 'CloseApplica
     fail("standalone Fences installer closes or depends on AuraExplorer")
 if '--enable-startup' not in fences_installer:
     fail("standalone Fences installer does not configure its own optional startup")
+standalone_install = read(ROOT / "packaging" / "windows" / "install-fences.ps1")
+if "Remove-LegacyDesktopStartup" in standalone_install or "RemoveLegacyDesktopStartup" in fences_installer:
+    fail("standalone Fences installer must not delete another application's startup entries")
+if "elseif ($Autostart) { Invoke-Fences '--enable-startup' }" not in standalone_install:
+    fail("standalone script must make Fences startup explicit and opt-in")
+if 'Name: "autostart"' not in fences_installer or 'Flags: unchecked' not in fences_installer:
+    fail("standalone installer must keep startup unchecked by default")
+workflow = read(ROOT / ".github" / "workflows" / "dock-build.yml")
+if "package-fences.ps1" not in workflow or "fences-standalone-windows-x64" not in workflow:
+    fail("Windows CI must publish the separate standalone Fences package")
 for license_name in ("MPL-2.0.txt", "MinHook-LICENSE.txt", "ExplorerColumnView-MIT.txt"):
     if license_name not in fences_package or not (ROOT / "packaging" / "licenses" / license_name).is_file():
         fail(f"standalone Fences package misses its applicable license text: {license_name}")

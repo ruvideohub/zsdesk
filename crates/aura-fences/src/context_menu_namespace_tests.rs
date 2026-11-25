@@ -33,7 +33,7 @@ fn exercise(root:&Path)->Result<Vec<serde_json::Value>>{
         let pidl=aura_windows::shell::pidl::location_pidl(&location).with_context(||format!("{name} PIDL"))?;
         let item=aura_windows::shell::pidl::item_from_pidl(&pidl)?;
         let request=Request{english:None,token:token.clone(),session:token.clone(),ordinal:1,parent:std::process::id(),parent_created:created(std::process::id()).unwrap(),owner:owner.0 as isize,
-            point:[0,0],pidls:vec![pidl],folder:location.as_path().map(PathBuf::from),options:Default::default(),rename:false,open:false,file_actions:false,mode:Mode::Background,extended:false,layout:None,view_context:None,probe:None};
+            point:[0,0],pidls:vec![pidl],folder:location.as_path().map(PathBuf::from),options:Default::default(),rename:false,open:false,file_actions:false,open_containing:false,mode:Mode::Background,extended:false,layout:None,view_context:None,probe:None};
         let view=background_view::BackgroundView::create(&item,&request,&events).with_context(||format!("{name} view"))?;
         let menu=ShellMenu::for_view(&view.view,false).with_context(||format!("{name} menu"))?;menu.populate(false,false)?;
         let count=unsafe{GetMenuItemCount(Some(menu.hmenu()))};ensure!(count>0,"{name} has no commands");
