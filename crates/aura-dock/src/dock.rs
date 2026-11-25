@@ -5745,7 +5745,10 @@ impl Dock {
                     if !self.cfg.start_at_login {
                         Err("Запись AuraDock указывает на другую команду и не изменена".into())
                     } else {
-                        match confirm_startup_replacement(self.hwnd, &current, &replacement) {
+                        // Settings is a topmost Launchpad popup; own the confirmation by it
+                        // so the dialog cannot be hidden behind the transparent click catcher.
+                        let owner = if self.launchpad.open { self.launchpad.hwnd() } else { self.hwnd };
+                        match confirm_startup_replacement(owner, &current, &replacement) {
                             Ok(true) => crate::startup::replace_confirmed(&current, &replacement).map(|()| true),
                             Ok(false) => Ok(false),
                             Err(error) => Err(error),
