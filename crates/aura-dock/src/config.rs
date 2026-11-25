@@ -256,6 +256,14 @@ pub struct Config {
     #[serde(default)]
     pub system_locked: bool,
 
+    /// Optional, independently positioned desktop cards.
+    pub desktop_network: bool,
+    pub network_pos: Option<[i32; 2]>,
+    pub network_locked: bool,
+    pub desktop_battery: bool,
+    pub battery_pos: Option<[i32; 2]>,
+    pub battery_locked: bool,
+
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
     #[serde(default)]
@@ -332,6 +340,12 @@ impl Default for Config {
             system_scale: 1.0,
             system_pos: None,
             system_locked: false,
+            desktop_network: false,
+            network_pos: None,
+            network_locked: false,
+            desktop_battery: false,
+            battery_pos: None,
+            battery_locked: false,
             cc_pin_added: false,
             tray_order: Vec::new(),
             tray_hidden: Vec::new(),

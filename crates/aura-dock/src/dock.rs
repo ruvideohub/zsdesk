@@ -93,6 +93,10 @@ pub const WM_APP_CLOCK_MOVED: u32 = WM_APP + 13;
 pub const WM_APP_SYSTEM_MENU: u32 = WM_APP + 14;
 /// Where the load card was let go, in physical px (wparam = x, lparam = y).
 pub const WM_APP_SYSTEM_MOVED: u32 = WM_APP + 15;
+pub const WM_APP_NETWORK_MENU: u32 = WM_APP + 16;
+pub const WM_APP_NETWORK_MOVED: u32 = WM_APP + 17;
+pub const WM_APP_BATTERY_MENU: u32 = WM_APP + 18;
+pub const WM_APP_BATTERY_MOVED: u32 = WM_APP + 19;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
 /// The tray icons changed (see tray.rs).
@@ -216,6 +220,12 @@ const CMD_SYSTEM_CORNER_BASE: usize = 3640;
 const CMD_SYSTEM_SCALE_BASE: usize = 3650;
 const CMD_SYSTEM_LOCK: usize = 3660;
 const CMD_SYSTEM_HIDE: usize = 3661;
+const CMD_NETWORK_DESKTOP: usize = 3662;
+const CMD_BATTERY_DESKTOP: usize = 3663;
+const CMD_NETWORK_LOCK: usize = 3664;
+const CMD_BATTERY_LOCK: usize = 3665;
+const CMD_NETWORK_HIDE: usize = 3666;
+const CMD_BATTERY_HIDE: usize = 3667;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -762,6 +772,8 @@ struct Dock {
     system_host: Option<std::process::Child>,
     /// When the load card may be started again after it died.
     system_retry_at: Instant,
+    extra_hosts: [Option<std::process::Child>; 2],
+    extra_retry_at: [Instant; 2],
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -2325,6 +2337,8 @@ impl Dock {
         m.push(MenuItem::item("Hide the Windows Taskbar", CMD_TASKBAR).checked(self.cfg.hide_windows_taskbar));
         m.push(MenuItem::item("Clock on the Desktop", CMD_CLOCK_DESKTOP).checked(self.cfg.desktop_clock));
         m.push(MenuItem::item("Карточка нагрузки на рабочем столе", CMD_SYSTEM_DESKTOP).checked(self.cfg.desktop_system));
+        m.push(MenuItem::item("Сеть на рабочем столе", CMD_NETWORK_DESKTOP).checked(self.cfg.desktop_network));
+        m.push(MenuItem::item("Батарея на рабочем столе", CMD_BATTERY_DESKTOP).checked(self.cfg.desktop_battery));
         m.push(MenuItem::sep());
         // Widgets: the everyday ones are one click away, the rest live in the gallery.
         m.push(MenuItem::header("Widgets on the Panel"));
@@ -2718,6 +2732,12 @@ impl Dock {
                 });
             }
             CMD_CLOCK_LOCK => self.save_and_apply(|c| c.clock_locked = !c.clock_locked),
+            CMD_NETWORK_DESKTOP => self.save_and_apply(|c| c.desktop_network = !c.desktop_network),
+            CMD_BATTERY_DESKTOP => self.save_and_apply(|c| c.desktop_battery = !c.desktop_battery),
+            CMD_NETWORK_HIDE => self.save_and_apply(|c| c.desktop_network = false),
+            CMD_BATTERY_HIDE => self.save_and_apply(|c| c.desktop_battery = false),
+            CMD_NETWORK_LOCK => self.save_and_apply(|c| c.network_locked = !c.network_locked),
+            CMD_BATTERY_LOCK => self.save_and_apply(|c| c.battery_locked = !c.battery_locked),
             CMD_SYSTEM_DESKTOP => self.save_and_apply(|c| c.desktop_system = !c.desktop_system),
             CMD_SYSTEM_HIDE => self.save_and_apply(|c| c.desktop_system = false),
             CMD_SYSTEM_LOCK => self.save_and_apply(|c| c.system_locked = !c.system_locked),
@@ -5733,6 +5753,12 @@ impl Dock {
         if old.per_display_windows != self.cfg.per_display_windows {
             self.rescan();
         }
+        if old.desktop_network != self.cfg.desktop_network || old.network_pos != self.cfg.network_pos || old.network_locked != self.cfg.network_locked {
+            self.restart_extra(0);
+        }
+        if old.desktop_battery != self.cfg.desktop_battery || old.battery_pos != self.cfg.battery_pos || old.battery_locked != self.cfg.battery_locked {
+            self.restart_extra(1);
+        }
         if old.desktop_system != self.cfg.desktop_system
             || old.system_corner != self.cfg.system_corner
             || (old.system_scale - self.cfg.system_scale).abs() > f32::EPSILON
@@ -5767,7 +5793,7 @@ impl Dock {
         self.hub.shutdown();
         self.helpers.stop();
         // The desktop cards live in their own processes: they go with the panel.
-        for host in [self.clock_host.take(), self.system_host.take()].into_iter().flatten() {
+        for host in [self.clock_host.take(), self.system_host.take(), self.extra_hosts[0].take(), self.extra_hosts[1].take()].into_iter().flatten() {
             let mut child = host;
             let _ = child.kill();
             let _ = child.wait();
@@ -6033,6 +6059,24 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
             // The card posts the corner it was let go in, in physical px.
             let (x, y) = (wp.0 as i32, lp.0 as i32);
             with_dock(|d| d.save_and_apply(|c| c.clock_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_NETWORK_MENU => {
+            with_dock(|d| d.extra_menu(0));
+            return LRESULT(0);
+        }
+        WM_APP_BATTERY_MENU => {
+            with_dock(|d| d.extra_menu(1));
+            return LRESULT(0);
+        }
+        WM_APP_NETWORK_MOVED => {
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.network_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_BATTERY_MOVED => {
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.battery_pos = Some([x, y])));
             return LRESULT(0);
         }
         WM_APP_SYSTEM_MENU => {
@@ -6646,6 +6690,52 @@ impl Dock {
         self.restart_system();
     }
 
+    /// Independent desktop network/battery cards, hosted exactly like the load card.
+    fn restart_extra(&mut self, index: usize) {
+        use std::os::windows::process::CommandExt;
+        if !self.is_main_dock() { return; }
+        if let Some(mut child) = self.extra_hosts[index].take() { let _ = child.kill(); let _ = child.wait(); }
+        let enabled = if index == 0 { self.cfg.desktop_network } else { self.cfg.desktop_battery };
+        if !enabled { return; }
+        let Ok(panel) = std::env::current_exe() else { return };
+        let exe = panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()).unwrap_or(panel);
+        let component = if index == 0 { "network" } else { "battery" };
+        match std::process::Command::new(exe).arg("--component").arg(component)
+            .arg("--dock").arg(format!("{:#x}", self.hwnd.0 as isize))
+            .arg("--parent").arg(std::process::id().to_string())
+            .creation_flags(0x0800_0000).spawn() {
+            Ok(child) => self.extra_hosts[index] = Some(child),
+            Err(error) => trace!("desktop {component} card unavailable: {error:?}"),
+        }
+    }
+
+    pub(super) fn supervise_extras(&mut self) {
+        if !self.is_main_dock() { return; }
+        for i in 0..2 {
+            let enabled = if i == 0 { self.cfg.desktop_network } else { self.cfg.desktop_battery };
+            if !enabled { continue; }
+            let running = self.extra_hosts[i].as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
+            let now = Instant::now();
+            if crate::desktop_retry::due(running, now, self.extra_retry_at[i]) {
+                self.extra_retry_at[i] = now + crate::desktop_retry::BACKOFF;
+                self.restart_extra(i);
+            }
+        }
+    }
+
+    fn extra_menu(&mut self, index: usize) {
+        let (enabled, locked, title, lock, hide) = if index == 0 {
+            (self.cfg.desktop_network, self.cfg.network_locked, "Сеть", CMD_NETWORK_LOCK, CMD_NETWORK_HIDE)
+        } else {
+            (self.cfg.desktop_battery, self.cfg.battery_locked, "Батарея", CMD_BATTERY_LOCK, CMD_BATTERY_HIDE)
+        };
+        if enabled {
+            self.open_menu_at_cursor(vec![MenuItem::header(title),
+                MenuItem::item("Закрепить положение", lock).checked(locked),
+                MenuItem::item("Скрыть карточку", hide).danger()]);
+        }
+    }
+
     /// The load card's menu: where it sits, how big it is, and how to get rid of it.
     fn system_menu(&mut self) {
         if !self.cfg.desktop_system {
@@ -6925,6 +7015,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             clock_retry_at: Instant::now(),
             system_host: None,
             system_retry_at: Instant::now(),
+            extra_hosts: [None, None],
+            extra_retry_at: [Instant::now(), Instant::now()],
             floor_y: 0,
             panel_top: false,
             band_topmost: false,

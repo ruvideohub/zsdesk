@@ -52,10 +52,11 @@ fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) ->
     card.repaint(compositor, gfx)?;
     let window = card.hwnd();
     unsafe {
-        SetTimer(Some(window), TIMER_TICK, 1000, None);
+        SetTimer(Some(window), TIMER_TICK, 250, None);
     }
     let mut msg = MSG::default();
     let mut seen = Instant::now();
+    let mut sampled = Instant::now();
     loop {
         let got = unsafe { GetMessageW(&mut msg, None, 0, 0) };
         if !got.as_bool() {
@@ -68,7 +69,11 @@ fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) ->
             if !unsafe { IsWindow(Some(dock)) }.as_bool() { break; }
         }
         if msg.message == WM_TIMER && msg.hwnd == window {
-            let _ = card.tick(compositor, gfx);
+            crate::desktop_layer::keep_below_windows(window);
+            if sampled.elapsed() >= Duration::from_secs(1) {
+                sampled = Instant::now();
+                let _ = card.tick(compositor, gfx);
+            }
             continue;
         }
         unsafe {
@@ -117,14 +122,14 @@ fn prepare(dock: Option<HWND>) -> Result<Option<(Compositor, Gfx, windows::Win32
 }
 
 /// Draw the desktop load card until the panel it belongs to is gone.
-pub fn run_system(dock: Option<HWND>) -> Result<()> {
+pub fn run_system(dock: Option<HWND>, kind: crate::desktop_system::Kind) -> Result<()> {
     let Some((compositor, gfx, monitor, dpi, dock)) = prepare(dock)? else {
         eprintln!("widgets: no --dock <hwnd>: the desktop load card needs the panel it reports to");
         return Ok(());
     };
     let cfg = crate::config::Config::load().unwrap_or_default();
-    let prefs = crate::desktop_system::Prefs::from_config(&cfg);
-    let card = DesktopSystem::new(&compositor, monitor, dpi, prefs, dock)?;
+    let prefs = crate::desktop_system::Prefs::for_kind(&cfg, kind);
+    let card = DesktopSystem::new(&compositor, monitor, dpi, prefs, dock, kind)?;
     pump(dock, card, &compositor, &gfx)
 }
 

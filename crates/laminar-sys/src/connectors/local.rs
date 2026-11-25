@@ -318,6 +318,7 @@ pub fn battery() -> Result<Feed, FeedError> {
     let mut extra = BTreeMap::new();
     extra.insert("charging".into(), charging.to_string());
     extra.insert("plugged_in".into(), (s.ACLineStatus == 1).to_string());
+    extra.insert("power_known".into(), (s.ACLineStatus != 255).to_string());
     extra.insert("time_left".into(), time_left);
     Ok(Feed { value: Some(pct), unit: "%".into(), caption: "Battery".into(), frac: Some((pct / 100.0) as f32), extra, ..Default::default() })
 }

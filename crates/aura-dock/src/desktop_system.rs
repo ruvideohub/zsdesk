@@ -28,7 +28,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::config::ClockCorner;
-use crate::desktop_clock::app_in_front;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind { System, Network, Battery }
+
+impl Kind {
+    fn title(self) -> &'static str {
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея" }
+    }
+    fn menu_message(self) -> u32 {
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU }
+    }
+    fn moved_message(self) -> u32 {
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED }
+    }
+}
+
 use crate::gfx::{Gfx, TextStyle};
 use crate::ui::{self, theme, v3};
 
@@ -62,6 +77,14 @@ impl Prefs {
             scale: cfg.system_scale,
             pos: cfg.system_pos.map(|[x, y]| (x, y)),
             locked: cfg.system_locked,
+        }
+    }
+
+    pub fn for_kind(cfg: &crate::config::Config, kind: Kind) -> Self {
+        match kind {
+            Kind::System => Self::from_config(cfg),
+            Kind::Network => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.network_pos.map(|[x,y]| (x,y)), locked: cfg.network_locked },
+            Kind::Battery => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.battery_pos.map(|[x,y]| (x,y)), locked: cfg.battery_locked },
         }
     }
 
@@ -100,6 +123,7 @@ struct SystemState {
     monitor: RECT,
     dpi: f32,
     prefs: Prefs,
+    kind: Kind,
     /// The meters last drawn, so a tick that changes nothing costs nothing.
     drawn: Vec<Meter>,
     /// The shared system sampler: the same numbers the panel's monitor widget shows.
@@ -108,8 +132,6 @@ struct SystemState {
     sampled: bool,
     /// Pointer offset inside the card while dragging.
     drag: Option<(i32, i32)>,
-    /// The app window the card was last pushed under (0: none).
-    below: isize,
 }
 
 impl SystemState {
@@ -136,32 +158,10 @@ impl SystemState {
             None => corner_origin(self.prefs.corner, self.monitor, w, h, margin),
         };
         unsafe {
-            // Like the clock: under the app in front, never over it.
-            match app_in_front() {
-                Some(front) => {
-                    let _ = SetWindowPos(self.hwnd, Some(front), x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-                }
-                None => {
-                    let _ = SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER);
-                }
-            }
+            let _ = SetWindowPos(self.hwnd, None, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOZORDER);
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
         }
-    }
-
-    /// Keep the card under the app in front of it (once a second, while it is visible).
-    fn keep_below(&mut self) {
-        let Some(front) = app_in_front() else {
-            self.below = 0;
-            return;
-        };
-        if self.below == front.0 as isize {
-            return;
-        }
-        unsafe {
-            let _ = SetWindowPos(self.hwnd, Some(front), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        }
-        self.below = front.0 as isize;
+        crate::desktop_layer::keep_below_windows(self.hwnd);
     }
 
     /// Read the three numbers. The processor needs two samples, so the first tick draws it
@@ -170,7 +170,11 @@ impl SystemState {
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
-        meters(&stats, first)
+        match self.kind {
+            Kind::System => meters(&stats, first),
+            Kind::Network => network_meters(&stats, first),
+            Kind::Battery => battery_meters(),
+        }
     }
 }
 
@@ -198,6 +202,35 @@ fn meters(stats: &laminar_sys::stats::Stats, first: bool) -> Vec<Meter> {
 
 }
 
+fn rate(bytes: f64) -> String {
+    if bytes >= 1_000_000.0 { format!("{:.1} МБ/с", bytes / 1_000_000.0) }
+    else if bytes >= 1_000.0 { format!("{:.0} КБ/с", bytes / 1_000.0) }
+    else { format!("{:.0} Б/с", bytes.max(0.0)) }
+}
+
+fn network_meters(stats: &laminar_sys::stats::Stats, first: bool) -> Vec<Meter> {
+    let display = |n| if !first && stats.net_valid { rate(n) } else { "нет данных".to_string() };
+    vec![Meter { label: "Получение", fill: 0.0, text: display(stats.net_down_bps) },
+         Meter { label: "Отправка", fill: 0.0, text: display(stats.net_up_bps) }]
+}
+
+fn battery_meters() -> Vec<Meter> {
+    let feed = match laminar_sys::connectors::local::battery() {
+        Ok(feed) => feed,
+        Err(laminar_sys::feed::FeedError::NeedsSetup(_)) => return vec![Meter { label: "Батарея", fill: 0.0, text: "нет батареи".into() }],
+        Err(_) => return vec![Meter { label: "Батарея", fill: 0.0, text: "нет данных".into() }],
+    };
+    let fill = feed.frac.unwrap_or(0.0).clamp(0.0, 1.0);
+    let status = if feed.extra.get("charging").map(String::as_str) == Some("true") { "заряжается" }
+        else if feed.extra.get("plugged_in").map(String::as_str) == Some("true") { "от сети" }
+        else if feed.extra.get("power_known").map(String::as_str) == Some("true") { "от батареи" }
+        else { "неизвестно" };
+    let left = feed.extra.get("time_left").filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| "—".into());
+    vec![Meter { label: "Заряд", fill, text: percent(fill) },
+         Meter { label: "Питание", fill: 0.0, text: status.into() },
+         Meter { label: "Осталось", fill: 0.0, text: left }]
+}
+
 /// Top-left of a card of `w`×`h` in `corner` of `monitor`, `margin` px from the edges.
 fn corner_origin(corner: ClockCorner, monitor: RECT, w: i32, h: i32, margin: i32) -> (i32, i32) {
     let left = monitor.left + margin;
@@ -219,7 +252,7 @@ pub struct DesktopSystem {
 impl DesktopSystem {
     /// Create the card on `monitor`, or return an error the caller can simply ignore:
     /// a desktop without this card is fine, a desktop that fails to start is not.
-    pub fn new(c: &Compositor, monitor: RECT, dpi: f32, prefs: Prefs, dock: HWND) -> Result<Self> {
+    pub fn new(c: &Compositor, monitor: RECT, dpi: f32, prefs: Prefs, dock: HWND, kind: Kind) -> Result<Self> {
         unsafe {
             let instance = GetModuleHandleW(None)?;
             let class = WNDCLASSW {
@@ -257,11 +290,11 @@ impl DesktopSystem {
                 monitor,
                 dpi,
                 prefs,
+                kind,
                 drawn: Vec::new(),
                 sampler: laminar_sys::stats::Sampler::new(),
                 sampled: false,
                 drag: None,
-                below: 0,
             });
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*state as *const SystemState as isize);
             let card = Self { state };
@@ -297,7 +330,7 @@ impl DesktopSystem {
 
     /// Draw the card. Called on a one-second timer; redraws only when a number changed.
     pub fn tick(&mut self, c: &Compositor, gfx: &Gfx) -> Result<()> {
-        self.state.keep_below();
+        crate::desktop_layer::keep_below_windows(self.state.hwnd);
         let meters = self.state.measure();
         if meters == self.state.drawn {
             return Ok(());
@@ -308,13 +341,17 @@ impl DesktopSystem {
         let root = &self.state.root;
         root.Children()?.RemoveAll()?;
 
-        let (bg, _, _) = ui::rounded(c, card_w, card_h, 26.0 * k, theme::surface(0.55))?;
+        // Layered rim and translucent surface echo Dock and Launchpad, in either theme.
+        let (rim, _, _) = ui::rounded(c, card_w, card_h, 26.0 * k, theme::ink(0.18))?;
+        root.Children()?.InsertAtTop(&rim)?;
+        let (bg, _, _) = ui::rounded(c, card_w - 2.0 * k, card_h - 2.0 * k, 25.0 * k, theme::surface(0.82))?;
+        bg.SetOffset(v3(k, k, 0.0))?;
         root.Children()?.InsertAtTop(&bg)?;
 
         let (title, _, _) = ui::text(
             c,
             gfx,
-            "Система",
+            self.state.kind.title(),
             &TextStyle { px: 13.0 * k, weight: 600, color: theme::text_2(), ..Default::default() },
         )?;
         title.SetOffset(v3(24.0 * k, 16.0 * k, 0.0))?;
@@ -389,7 +426,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                 let _ = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                         Some(state.dock),
-                        crate::dock::WM_APP_SYSTEM_MENU,
+                        state.kind.menu_message(),
                         WPARAM(0),
                         LPARAM(0),
                     )
@@ -444,7 +481,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                     unsafe {
                         let _ = windows::Win32::UI::WindowsAndMessaging::PostMessageW(
                             Some(state.dock),
-                            crate::dock::WM_APP_SYSTEM_MOVED,
+                            state.kind.moved_message(),
                             WPARAM(rect.left as isize as usize),
                             LPARAM(rect.top as isize),
                         );
@@ -460,6 +497,17 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn network_readings_distinguish_unknown_from_idle() {
+        let mut s = laminar_sys::stats::Stats::default();
+        assert_eq!(network_meters(&s, false)[0].text, "нет данных");
+        s.net_valid = true;
+        assert_eq!(network_meters(&s, true)[0].text, "нет данных");
+        assert_eq!(network_meters(&s, false)[0].text, "0 Б/с");
+        s.net_down_bps = 2_000_000.0;
+        assert_eq!(network_meters(&s, false)[0].text, "2.0 МБ/с");
+    }
 
     #[test]
     fn meters_distinguish_unavailable_from_a_real_zero() {

@@ -138,6 +138,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-startup-policy-tests.exe
           exit $LASTEXITCODE
+      - name: Desktop widget layer policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/desktop_layer_policy.rs -o target/dock-desktop-layer-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/dock-desktop-layer-tests.exe
+          exit $LASTEXITCODE
       - name: Dock watchdog protocol tests
         shell: pwsh
         working-directory: aura

@@ -17,6 +17,8 @@ mod apps;
 mod config;
 mod control_center;
 mod desktop_clock;
+mod desktop_layer;
+mod desktop_layer_policy;
 mod desktop_retry;
 mod desktop_system;
 mod displays;
@@ -138,7 +140,9 @@ pub fn run() -> Result<()> {
     if let Some(component) = component_arg(&args) {
         return match component.as_str() {
             "clock" => host::run_clock(dock_arg(&args)),
-            "system" => host::run_system(dock_arg(&args)),
+            "system" => host::run_system(dock_arg(&args), desktop_system::Kind::System),
+            "network" => host::run_system(dock_arg(&args), desktop_system::Kind::Network),
+            "battery" => host::run_system(dock_arg(&args), desktop_system::Kind::Battery),
             other => {
                 eprintln!("unknown component: {other}");
                 Ok(())
@@ -269,7 +273,9 @@ pub fn run_widgets() -> Result<()> {
         std::mem::forget(mutex);
     }
     match component.as_str() {
-        "system" => host::run_system(dock),
+        "system" => host::run_system(dock, desktop_system::Kind::System),
+        "network" => host::run_system(dock, desktop_system::Kind::Network),
+        "battery" => host::run_system(dock, desktop_system::Kind::Battery),
         _ => host::run_clock(dock),
     }
 }

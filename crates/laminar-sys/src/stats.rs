@@ -35,6 +35,9 @@ pub struct Stats {
     pub net_down_bps: f64,
     /// Bytes per second sent since the previous sample.
     pub net_up_bps: f64,
+    /// True only after two successful network counter readings.
+    #[serde(default)]
+    pub net_valid: bool,
 }
 
 /// Holds the previous counters so each `sample()` reports rates since the last call.
@@ -124,9 +127,12 @@ impl Sampler {
                 if secs > 0.0 {
                     s.net_down_bps = rx.saturating_sub(lr) as f64 / secs;
                     s.net_up_bps = tx.saturating_sub(lt) as f64 / secs;
+                    s.net_valid = rx >= lr && tx >= lt;
                 }
             }
             self.last_net = Some((rx, tx, now));
+        } else {
+            self.last_net = None;
         }
         s
     }

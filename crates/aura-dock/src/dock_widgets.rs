@@ -275,6 +275,7 @@ impl Dock {
         // The desktop clock is a process of its own (`widgets.exe`): keep it alive.
         self.supervise_clock();
         self.supervise_system();
+        self.supervise_extras();
         let fg_app = self.windows.iter().find(|w| w.hwnd == self.fg).map(|w| {
             self.names.get(&w.app).cloned().unwrap_or_else(|| {
                 let base = w.exe.rsplit('\\').next().unwrap_or(&w.exe);
