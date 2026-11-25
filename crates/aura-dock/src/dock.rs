@@ -5478,7 +5478,7 @@ impl Dock {
     // ---------------------------------------------------------------- settings & system
 
     fn reserve_height(&self) -> i32 {
-        (self.geo.shelf_h + 2.0 * self.geo.margin).ceil() as i32
+        crate::appbar_policy::shelf_reservation(self.geo.shelf_h, self.geo.margin)
     }
 
     /// Give control back before stopping the guard. A crash before the guard is
@@ -5528,15 +5528,20 @@ impl Dock {
         // reservation behind — the empty strip at the top the user saw afterwards.
         if !self.helper {
             if self.cfg.hide_windows_taskbar && !self.taskbar_hidden {
-                let state = taskbar::tray_state();
-                let original = taskbar::original_state(state);
-                match taskbar::spawn_watchdog(original) {
-                    Ok(guard) => {
-                        self.taskbar_watchdog = Some(guard);
-                        self.tray_original = taskbar::take_over(state);
-                        self.taskbar_hidden = true;
+                if let Some(state) = taskbar::tray_state() {
+                    let original = taskbar::original_state(state);
+                    match taskbar::spawn_watchdog(original) {
+                        Ok(guard) => {
+                            self.taskbar_watchdog = Some(guard);
+                            match taskbar::take_over(state) {
+                                Ok(original) => { self.tray_original = original; self.taskbar_hidden = true; }
+                                Err(error) => self.fail_taskbar_takeover(error),
+                            }
+                        }
+                        Err(error) => self.fail_taskbar_takeover(&error.to_string()),
                     }
-                    Err(error) => self.fail_taskbar_takeover(&error.to_string()),
+                } else {
+                    self.fail_taskbar_takeover("could not reach the Windows taskbar to read its state");
                 }
             } else if !self.cfg.hide_windows_taskbar && self.taskbar_hidden {
                 self.release_taskbar();

@@ -57,34 +57,34 @@ fn abd(hwnd: Option<HWND>) -> APPBARDATA {
 }
 
 /// Explorer taskbar state bits (ABS_AUTOHIDE etc).
-pub fn tray_state() -> u32 {
+pub fn tray_state() -> Option<u32> {
+    let _explorer_first = crate::tray::explorer_first()?;
     let mut d = abd(trays().first().copied());
-    unsafe { SHAppBarMessage(ABM_GETSTATE, &mut d) as u32 }
+    Some(unsafe { SHAppBarMessage(ABM_GETSTATE, &mut d) as u32 })
 }
 
-pub fn set_tray_state(state: u32) {
+pub fn set_tray_state(state: u32) -> bool {
+    let Some(_explorer_first) = crate::tray::explorer_first() else { return false };
     let mut d = abd(trays().first().copied());
     d.lParam = LPARAM(state as isize);
-    unsafe {
-        SHAppBarMessage(ABM_SETSTATE, &mut d);
-    }
+    unsafe { SHAppBarMessage(ABM_SETSTATE, &mut d) != 0 }
 }
 
 /// Hide the taskbar after the watchdog has acknowledged that it can observe us.
 /// Returns the state to restore, if we changed auto-hide ourselves.
-pub fn take_over(state: u32) -> Option<u32> {
+pub fn take_over(state: u32) -> Result<Option<u32>, &'static str> {
     let changed = if state & ABS_AUTOHIDE == 0 {
-        set_tray_state(state | ABS_AUTOHIDE);
+        if !set_tray_state(state | ABS_AUTOHIDE) { return Err("could not set the Windows taskbar auto-hide state"); }
         Some(state)
     } else {
         None
     };
     set_visible(false);
-    changed
+    Ok(changed)
 }
 
 pub fn restore(original_state: Option<u32>) {
-    if let Some(s) = original_state { set_tray_state(s); }
+    if let Some(s) = original_state { let _ = set_tray_state(s); }
     set_visible(true);
 }
 
@@ -127,6 +127,7 @@ pub fn original_state(state: u32) -> Option<u32> {
 /// `registered` remembers which edge currently holds our reservation (`Some(true)` = top),
 /// because moving between edges needs a remove-and-register, not just a new position.
 pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: bool, registered: &mut Option<bool>, last: &mut Option<crate::appbar_policy::Position>) -> Option<RECT> {
+    let _explorer_first = crate::tray::explorer_first()?;
     let mut d = abd(Some(hwnd));
     d.uCallbackMessage = WM_APP_APPBAR;
     d.uEdge = if at_top { ABE_TOP } else { ABE_BOTTOM };
@@ -174,7 +175,10 @@ pub fn appbar(hwnd: HWND, monitor: RECT, height: i32, reserve: bool, at_top: boo
             if let Some(assigned) = crate::appbar_policy::cached_assignment(*last, proposed) {
                 return Some(RECT { left: assigned[0], top: assigned[1], right: assigned[2], bottom: assigned[3] });
             }
-            SHAppBarMessage(ABM_SETPOS, &mut d);
+            if SHAppBarMessage(ABM_SETPOS, &mut d) == 0 {
+                *last = None;
+                return None;
+            }
             *last = Some(crate::appbar_policy::Position {
                 proposed,
                 assigned: [d.rc.left, d.rc.top, d.rc.right, d.rc.bottom],

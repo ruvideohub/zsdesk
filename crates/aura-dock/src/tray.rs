@@ -208,6 +208,41 @@ pub fn is_laminar_window(h: HWND) -> bool {
     }
 }
 
+/// Temporarily put the real Explorer taskbar first for this process's synchronous
+/// SHAppBarMessage calls. Shell32 may otherwise address its shared data to our
+/// same-process tray stand-in, which cannot safely forward that data to Explorer.
+/// Only our stand-ins are moved; the real taskbar and tray appearance are unchanged.
+pub(crate) struct ExplorerFirst { moved: Vec<HWND> }
+impl Drop for ExplorerFirst {
+    fn drop(&mut self) {
+        for hwnd in self.moved.drain(..) {
+            unsafe { let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE); }
+        }
+    }
+}
+pub(crate) fn explorer_first() -> Option<ExplorerFirst> {
+    let explorer = explorer_tray()?;
+    let mut guard = ExplorerFirst { moved: Vec::new() };
+    let mut previous = None;
+    let mut candidates = Vec::new();
+    unsafe {
+        while let Ok(hwnd) = FindWindowExW(None, previous, w!("Shell_TrayWnd"), None) {
+            previous = Some(hwnd);
+            if hwnd != explorer && is_laminar_window(hwnd) { candidates.push(hwnd); }
+        }
+        for hwnd in candidates {
+            if SetWindowPos(hwnd, Some(explorer), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE).is_ok() {
+                guard.moved.push(hwnd);
+            }
+        }
+        if FindWindowW(w!("Shell_TrayWnd"), None).unwrap_or_default() != explorer {
+            ttrace!("cannot safely address Explorer for AppBar request");
+            return None;
+        }
+    }
+    Some(guard)
+}
+
 /// Start hosting. `notify` gets `notify_msg` (debounced) whenever the icons change.
 pub fn start(notify: HWND, notify_msg: u32) {
     if active() { return; }
