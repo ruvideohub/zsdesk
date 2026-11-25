@@ -74,7 +74,7 @@ mod tests {
         let bytes=shortcut_target(&shortcut)?;let item=aura_windows::shell::pidl::item_from_pidl(&bytes)?;
         let value=unsafe{item.GetDisplayName(SIGDN_FILESYSPATH)}?;
         let actual=unsafe{value.to_hstring()};unsafe{CoTaskMemFree(Some(value.0.cast()))};
-        assert_eq!(PathBuf::from(std::ffi::OsString::from_wide(&actual)),target);
+        assert_eq!(std::fs::canonicalize(PathBuf::from(std::ffi::OsString::from_wide(&actual))).unwrap(), std::fs::canonicalize(&target).unwrap());
         assert!(shortcut_target(&target).is_err());std::fs::remove_file(&target).unwrap();assert!(shortcut_target(&shortcut).is_err());
         std::fs::remove_file(&shortcut).unwrap();std::fs::remove_dir(root.join("назначение")).unwrap();std::fs::remove_dir(&root).unwrap();Ok(())
     }

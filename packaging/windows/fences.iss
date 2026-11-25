@@ -47,7 +47,7 @@ LanguageDetectionMethod=uilanguage
 VersionInfoDescription=Fences Setup
 
 [Languages]
-Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
+Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
@@ -70,13 +70,13 @@ Filename: "{app}\Fences.exe"; Parameters: "--enable-startup"; Flags: runhidden w
 Filename: "{app}\Fences.exe"; Description: "{cm:LaunchFences}"; Flags: nowait postinstall skipifsilent
 
 [CustomMessages]
-chinesesimp.FencesAutostart=登录 Windows 时启动 Fences
+russian.FencesAutostart=Запускать Fences при входе в Windows
 english.FencesAutostart=Start Fences when I sign in to Windows
-chinesesimp.LaunchFences=启动 Fences
+russian.LaunchFences=Запустить Fences
 english.LaunchFences=Launch Fences
-chinesesimp.CloseFailed=Fences 仍在运行，请退出后重试安装。
+russian.CloseFailed=Fences всё ещё работает. Закройте программу и повторите установку.
 english.CloseFailed=Fences is still running. Exit it and retry setup.
-chinesesimp.StartupFailed=无法清理 Fences 登录启动设置；卸载已停止。
+russian.StartupFailed=Не удалось удалить настройки автозапуска Fences; удаление остановлено.
 english.StartupFailed=Fences startup settings could not be removed; uninstall was stopped.
 
 [Code]
