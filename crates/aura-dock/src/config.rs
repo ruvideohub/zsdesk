@@ -278,6 +278,9 @@ pub struct Config {
     pub desktop_weather: bool,
     pub desktop_weather_pos: Option<[i32; 2]>,
     pub desktop_weather_locked: bool,
+    pub desktop_radio: bool,
+    pub desktop_radio_pos: Option<[i32; 2]>,
+    pub desktop_radio_locked: bool,
 
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
@@ -373,6 +376,9 @@ impl Default for Config {
             desktop_weather: false,
             desktop_weather_pos: None,
             desktop_weather_locked: false,
+            desktop_radio: false,
+            desktop_radio_pos: None,
+            desktop_radio_locked: false,
             cc_pin_added: false,
             tray_order: Vec::new(),
             tray_hidden: Vec::new(),
@@ -628,6 +634,19 @@ mod tests {
         assert_eq!(restored.desktop_weather_pos, Some([-100, 250]));
         assert_eq!(restored.weather_city, "Berlin");
         assert_eq!((restored.weather_lat, restored.weather_lon), (52.5, 13.4));
+    }
+
+    #[test]
+    fn desktop_radio_is_opt_in_and_keeps_its_position() {
+        let mut cfg: Config = serde_json::from_str(r#"{"pins":["app"]}"#).unwrap();
+        assert!(!cfg.desktop_radio && !cfg.desktop_radio_locked && cfg.desktop_radio_pos.is_none());
+        cfg.desktop_radio = true;
+        cfg.desktop_radio_locked = true;
+        cfg.desktop_radio_pos = Some([-500, 60]);
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(restored.desktop_radio && restored.desktop_radio_locked);
+        assert_eq!(restored.desktop_radio_pos, Some([-500, 60]));
+        assert_eq!(restored.pins[0].app(), Some("app"));
     }
 
     #[test]

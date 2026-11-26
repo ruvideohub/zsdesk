@@ -24,23 +24,23 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GetCursorPos, GetWindowLongPtrW, GetWindowRect,
     RegisterClassW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWLP_USERDATA, SWP_NOACTIVATE,
     SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOWNOACTIVATE, WM_CONTEXTMENU, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WM_RBUTTONUP, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_MOUSEMOVE, WM_RBUTTONUP, WM_COPYDATA, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 use crate::config::ClockCorner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { System, Network, Battery, Calendar, Notes, Weather }
+pub enum Kind { System, Network, Battery, Calendar, Notes, Weather, Radio }
 
 impl Kind {
     fn title(self) -> &'static str {
-        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" }, Self::Weather => if crate::strings::russian() { "Погода" } else { "Weather" } }
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" }, Self::Weather => if crate::strings::russian() { "Погода" } else { "Weather" }, Self::Radio => if crate::strings::russian() { "Радио" } else { "Radio" } }
     }
     fn menu_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU, Self::Weather => crate::dock::WM_APP_WEATHER_MENU }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU, Self::Weather => crate::dock::WM_APP_WEATHER_MENU, Self::Radio => crate::dock::WM_APP_RADIO_MENU }
     }
     fn moved_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED, Self::Weather => crate::dock::WM_APP_WEATHER_MOVED }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED, Self::Weather => crate::dock::WM_APP_WEATHER_MOVED, Self::Radio => crate::dock::WM_APP_RADIO_MOVED }
     }
 }
 
@@ -98,6 +98,7 @@ impl Prefs {
             Kind::Calendar => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.calendar_pos.map(|[x,y]| (x,y)), locked: cfg.calendar_locked },
             Kind::Notes => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.notes_pos.map(|[x,y]| (x,y)), locked: cfg.notes_locked },
             Kind::Weather => Self { corner: ClockCorner::BottomRight, scale: 1.0, pos: cfg.desktop_weather_pos.map(|[x,y]| (x,y)), locked: cfg.desktop_weather_locked },
+            Kind::Radio => Self { corner: ClockCorner::TopRight, scale: 1.0, pos: cfg.desktop_radio_pos.map(|[x,y]| (x,y)), locked: cfg.desktop_radio_locked },
         }
     }
 
@@ -147,6 +148,8 @@ struct SystemState {
     /// Weather requests are kept in the card process, never on its UI thread.
     weather: Option<crate::desktop_weather::Worker>,
     weather_city: String,
+    radio_view: Option<crate::desktop_radio::View>,
+    radio_seen: Option<std::time::Instant>,
     /// Pointer offset inside the card while dragging.
     drag: Option<(i32, i32)>,
 }
@@ -209,6 +212,15 @@ impl SystemState {
             }
             return result;
         }
+        if self.kind == Kind::Radio {
+            crate::desktop_radio::request(self.dock, self.hwnd, crate::desktop_radio::QUERY);
+            let current = self.radio_seen.is_some_and(|at| at.elapsed() < std::time::Duration::from_secs(5));
+            if let Some(view) = self.radio_view.as_ref().filter(|_| current) {
+                return vec![Meter { label: if view.playing { "playing" } else { "paused" }, fill: 0.0, text: view.name.clone() },
+                    Meter { label: "caption", fill: 0.0, text: view.caption.clone() }];
+            }
+            return vec![Meter { label: "waiting", fill: 0.0, text: String::new() }];
+        }
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
@@ -216,7 +228,7 @@ impl SystemState {
             Kind::System => meters(&stats, first),
             Kind::Network => network_meters(&stats, first),
             Kind::Battery => battery_meters(),
-            Kind::Calendar | Kind::Notes | Kind::Weather => unreachable!("other cards return before sampling"),
+            Kind::Calendar | Kind::Notes | Kind::Weather | Kind::Radio => unreachable!("other cards return before sampling"),
         }
     }
 }
@@ -343,6 +355,8 @@ impl DesktopSystem {
                 sampled: false,
                 weather,
                 weather_city,
+                radio_view: None,
+                radio_seen: None,
                 drag: None,
             });
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*state as *const SystemState as isize);
@@ -399,10 +413,23 @@ impl DesktopSystem {
             Kind::Calendar => (if crate::strings::russian() { "ТЕКУЩИЙ МЕСЯЦ" } else { "THIS MONTH" }, "\u{E787}"),
             Kind::Notes => (if crate::strings::russian() { "ЗАМЕТКИ НА РАБОЧЕМ СТОЛЕ" } else { "DESKTOP NOTES" }, "\u{E70B}"),
             Kind::Weather => (if crate::strings::russian() { "ТЕКУЩАЯ ПОГОДА" } else { "CURRENT WEATHER" }, "\u{E706}"),
+            Kind::Radio => (if crate::strings::russian() { "ОНЛАЙН-РАДИО" } else { "ONLINE RADIO" }, "\u{E189}"),
         };
         style::header(c, gfx, root, self.state.kind.title(), subtitle, glyph, k)?;
 
         match self.state.kind {
+            Kind::Radio => {
+                let waiting = meters[0].label == "waiting";
+                let title = if waiting { if crate::strings::russian() { "Связь с проигрывателем…" } else { "Connecting to player…" } } else { &meters[0].text };
+                style::fitted_text(c, gfx, root, title, 22.0*k, 61.0*k, 224.0*k, 14.0*k, 600, theme::text(), false)?;
+                if !waiting { style::text(c, gfx, root, &meters[1].text, 22.0*k, 87.0*k, 224.0*k, 11.0*k, 500, theme::text_2(), false, false)?; }
+                for (index, x) in [52.0_f32, 112.0, 172.0].into_iter().enumerate() {
+                    style::tile(c, root, x*k, 117.0*k, 44.0*k, 30.0*k, 10.0*k, k)?;
+                    let glyph = match index { 0 => "◀", 1 if meters[0].label == "playing" => "Ⅱ", 1 => "▶", _ => "▶▶" };
+                    style::text(c, gfx, root, glyph, (x + if index == 2 { 9.0 } else { 15.0 })*k, 122.0*k,
+                        32.0*k, 13.0*k, 600, theme::text(), false, false)?;
+                }
+            }
             Kind::Weather => {
                 let russian = crate::strings::russian();
                 let city = &meters[0];
@@ -541,8 +568,29 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             }
             LRESULT(0)
         }
+        WM_COPYDATA => {
+            if let Some(state) = state_of(hwnd) {
+                if state.kind == Kind::Radio && wparam.0 == state.dock.0 as usize {
+                    if let Some(view) = unsafe { crate::desktop_radio::receive(lparam.0) } {
+                        state.radio_view = Some(view);
+                        state.radio_seen = Some(std::time::Instant::now());
+                        return LRESULT(1);
+                    }
+                }
+            }
+            LRESULT(0)
+        }
         WM_LBUTTONDOWN => {
             if let Some(state) = state_of(hwnd) {
+                if state.kind == Kind::Radio {
+                    let mut point = POINT::default();
+                    let mut rect = RECT::default();
+                    unsafe { let _ = GetCursorPos(&mut point); let _ = GetWindowRect(hwnd, &mut rect); }
+                    if let Some(action) = crate::desktop_radio::hit((point.x - rect.left) as f32 / state.k(), (point.y - rect.top) as f32 / state.k()) {
+                        crate::desktop_radio::request(state.dock, hwnd, action);
+                        return LRESULT(0);
+                    }
+                }
                 if state.prefs.locked {
                     return LRESULT(0);
                 }

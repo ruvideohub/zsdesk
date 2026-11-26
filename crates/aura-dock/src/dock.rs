@@ -113,6 +113,9 @@ pub const WM_APP_NOTES_MENU: u32 = WM_APP + 44;
 pub const WM_APP_NOTES_MOVED: u32 = WM_APP + 45;
 pub const WM_APP_WEATHER_MENU: u32 = WM_APP + 46;
 pub const WM_APP_WEATHER_MOVED: u32 = WM_APP + 47;
+pub const WM_APP_RADIO_MENU: u32 = WM_APP + 48;
+pub const WM_APP_RADIO_MOVED: u32 = WM_APP + 49;
+pub const WM_APP_RADIO_REQUEST: u32 = WM_APP + 50;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
 /// The tray icons changed (see tray.rs).
@@ -253,6 +256,12 @@ const CMD_WEATHER_DESKTOP: usize = 3675;
 const CMD_WEATHER_LOCK: usize = 3676;
 const CMD_WEATHER_HIDE: usize = 3677;
 const CMD_WEATHER_LOCATION: usize = 3678;
+const CMD_RADIO_DESKTOP: usize = 3679;
+const CMD_RADIO_LOCK: usize = 3680;
+const CMD_RADIO_HIDE: usize = 3681;
+const CMD_RADIO_PREV: usize = 3682;
+const CMD_RADIO_TOGGLE: usize = 3683;
+const CMD_RADIO_NEXT: usize = 3684;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -799,8 +808,8 @@ struct Dock {
     system_host: Option<std::process::Child>,
     /// When the load card may be started again after it died.
     system_retry_at: Instant,
-    extra_hosts: [Option<std::process::Child>; 5],
-    extra_retry_at: [Instant; 5],
+    extra_hosts: [Option<std::process::Child>; 6],
+    extra_retry_at: [Instant; 6],
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -2370,6 +2379,7 @@ impl Dock {
             MenuItem::item("Edit notes…", CMD_NOTES_EDIT),
             MenuItem::item("Weather", CMD_WEATHER_DESKTOP).checked(self.cfg.desktop_weather),
             MenuItem::item("Change Location…", CMD_WEATHER_LOCATION),
+            MenuItem::item("Online Radio", CMD_RADIO_DESKTOP).checked(self.cfg.desktop_radio),
         ]));
         let mut dock_widgets = Vec::new();
         for (index, id) in DOCK_WIDGETS.iter().enumerate() {
@@ -2770,6 +2780,12 @@ impl Dock {
             CMD_CALENDAR_DESKTOP => self.save_and_apply(|c| c.desktop_calendar = !c.desktop_calendar),
             CMD_CALENDAR_HIDE => self.save_and_apply(|c| c.desktop_calendar = false),
             CMD_CALENDAR_LOCK => self.save_and_apply(|c| c.calendar_locked = !c.calendar_locked),
+            CMD_RADIO_DESKTOP => self.save_and_apply(|c| c.desktop_radio = !c.desktop_radio),
+            CMD_RADIO_HIDE => self.save_and_apply(|c| c.desktop_radio = false),
+            CMD_RADIO_LOCK => self.save_and_apply(|c| c.desktop_radio_locked = !c.desktop_radio_locked),
+            CMD_RADIO_PREV => self.hub.radio.next(false),
+            CMD_RADIO_TOGGLE => self.hub.radio_toggle(),
+            CMD_RADIO_NEXT => self.hub.radio.next(true),
             CMD_WEATHER_DESKTOP => self.save_and_apply(|c| c.desktop_weather = !c.desktop_weather),
             CMD_WEATHER_HIDE => self.save_and_apply(|c| c.desktop_weather = false),
             CMD_WEATHER_LOCK => self.save_and_apply(|c| c.desktop_weather_locked = !c.desktop_weather_locked),
@@ -5757,6 +5773,7 @@ impl Dock {
         self.restart_extra(2);
         self.restart_extra(3);
         self.restart_extra(4);
+        self.restart_extra(5);
         if self.launchpad.open {
             // Panels take their glass tint when they open: reopen with the new tint,
             // keeping the Launchpad Settings section the user was on.
@@ -5844,6 +5861,9 @@ impl Dock {
         if old.desktop_weather != self.cfg.desktop_weather || old.desktop_weather_pos != self.cfg.desktop_weather_pos || old.desktop_weather_locked != self.cfg.desktop_weather_locked || old.language != self.cfg.language || old.weather_city != self.cfg.weather_city || old.weather_lat.to_bits() != self.cfg.weather_lat.to_bits() || old.weather_lon.to_bits() != self.cfg.weather_lon.to_bits() {
             self.restart_extra(4);
         }
+        if old.desktop_radio != self.cfg.desktop_radio || old.desktop_radio_pos != self.cfg.desktop_radio_pos || old.desktop_radio_locked != self.cfg.desktop_radio_locked || old.language != self.cfg.language {
+            self.restart_extra(5);
+        }
         if old.desktop_system != self.cfg.desktop_system
             || old.system_corner != self.cfg.system_corner
             || (old.system_scale - self.cfg.system_scale).abs() > f32::EPSILON
@@ -5878,7 +5898,7 @@ impl Dock {
         self.hub.shutdown();
         self.helpers.stop();
         // The desktop cards live in their own processes: they go with the panel.
-        for host in [self.clock_host.take(), self.system_host.take(), self.extra_hosts[0].take(), self.extra_hosts[1].take(), self.extra_hosts[2].take(), self.extra_hosts[3].take(), self.extra_hosts[4].take()].into_iter().flatten() {
+        for host in [self.clock_host.take(), self.system_host.take(), self.extra_hosts[0].take(), self.extra_hosts[1].take(), self.extra_hosts[2].take(), self.extra_hosts[3].take(), self.extra_hosts[4].take(), self.extra_hosts[5].take()].into_iter().flatten() {
             let mut child = host;
             let _ = child.kill();
             let _ = child.wait();
@@ -6189,6 +6209,20 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_APP_WEATHER_MOVED => {
             let (x, y) = (wp.0 as i32, lp.0 as i32);
             with_dock(|d| d.save_and_apply(|c| c.desktop_weather_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_RADIO_MENU => {
+            with_dock(|d| d.extra_menu(5));
+            return LRESULT(0);
+        }
+        WM_APP_RADIO_MOVED => {
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.desktop_radio_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_RADIO_REQUEST => {
+            let child = HWND(wp.0 as *mut _);
+            with_dock(|d| d.desktop_radio_request(child, lp.0));
             return LRESULT(0);
         }
         WM_APP_SYSTEM_MENU => {
@@ -6807,11 +6841,11 @@ impl Dock {
         use std::os::windows::process::CommandExt;
         if !self.is_main_dock() { return; }
         if let Some(mut child) = self.extra_hosts[index].take() { let _ = child.kill(); let _ = child.wait(); }
-        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, _ => false };
+        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
         if !enabled { return; }
         let Ok(panel) = std::env::current_exe() else { return };
         let exe = panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()).unwrap_or(panel);
-        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", 3 => "notes", 4 => "weather", _ => return };
+        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", 3 => "notes", 4 => "weather", 5 => "radio", _ => return };
         match std::process::Command::new(exe).arg("--component").arg(component)
             .arg("--dock").arg(format!("{:#x}", self.hwnd.0 as isize))
             .arg("--parent").arg(std::process::id().to_string())
@@ -6823,8 +6857,8 @@ impl Dock {
 
     pub(super) fn supervise_extras(&mut self) {
         if !self.is_main_dock() { return; }
-        for i in 0..5 {
-            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, _ => false };
+        for i in 0..6 {
+            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
             if !enabled { continue; }
             let running = self.extra_hosts[i].as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
             let now = Instant::now();
@@ -6835,6 +6869,26 @@ impl Dock {
         }
     }
 
+    /// Reply only to a window belonging to the radio child we started. As with other
+    /// WM_APP messages this is not an authentication boundary against local processes.
+    fn desktop_radio_request(&mut self, child: HWND, action: isize) {
+        let mut pid = 0;
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(child, Some(&mut pid)); }
+        if pid == 0 || self.extra_hosts[5].as_ref().map(|c| c.id()) != Some(pid) { return; }
+        match action {
+            crate::desktop_radio::QUERY => {},
+            crate::desktop_radio::PREVIOUS => self.hub.radio.next(false),
+            crate::desktop_radio::TOGGLE => self.hub.radio_toggle(),
+            crate::desktop_radio::NEXT => self.hub.radio.next(true),
+            _ => return,
+        }
+        let radio = &self.hub.radio;
+        let name = if radio.stations.is_empty() { crate::strings::tr("Online Radio") } else { radio.name().chars().take(256).collect() };
+        let caption = crate::strings::tr(radio.caption());
+        let playing = radio.loading || matches!(radio.state(), crate::radio_player::State::Playing | crate::radio_player::State::Opening);
+        crate::desktop_radio::send_view(child, self.hwnd, &crate::desktop_radio::View { name, caption, playing });
+    }
+
     fn extra_menu(&mut self, index: usize) {
         let (enabled, locked, title, lock, hide) = match index {
             0 => (self.cfg.desktop_network, self.cfg.network_locked, "Сеть", CMD_NETWORK_LOCK, CMD_NETWORK_HIDE),
@@ -6842,6 +6896,7 @@ impl Dock {
             2 => (self.cfg.desktop_calendar, self.cfg.calendar_locked, if crate::strings::russian() { "Календарь" } else { "Calendar" }, CMD_CALENDAR_LOCK, CMD_CALENDAR_HIDE),
             3 => (self.cfg.desktop_notes, self.cfg.notes_locked, if crate::strings::russian() { "Заметки" } else { "Notes" }, CMD_NOTES_LOCK, CMD_NOTES_HIDE),
             4 => (self.cfg.desktop_weather, self.cfg.desktop_weather_locked, if crate::strings::russian() { "Погода" } else { "Weather" }, CMD_WEATHER_LOCK, CMD_WEATHER_HIDE),
+            5 => (self.cfg.desktop_radio, self.cfg.desktop_radio_locked, if crate::strings::russian() { "Радио" } else { "Radio" }, CMD_RADIO_LOCK, CMD_RADIO_HIDE),
             _ => return,
         };
         if enabled {
@@ -6849,6 +6904,11 @@ impl Dock {
             let mut items = vec![MenuItem::header(title)];
             if index == 3 { items.push(MenuItem::item(if english { "Edit notes…" } else { "Редактировать заметки…" }, CMD_NOTES_EDIT)); }
             if index == 4 { items.push(MenuItem::item("Change Location…", CMD_WEATHER_LOCATION)); }
+            if index == 5 {
+                items.push(MenuItem::item(if english { "Previous station" } else { "Предыдущая станция" }, CMD_RADIO_PREV));
+                items.push(MenuItem::item(if english { "Play / Pause" } else { "Воспроизвести / пауза" }, CMD_RADIO_TOGGLE));
+                items.push(MenuItem::item(if english { "Next station" } else { "Следующая станция" }, CMD_RADIO_NEXT));
+            }
             items.push(MenuItem::item(if english { "Lock position" } else { "Закрепить положение" }, lock).checked(locked));
             items.push(MenuItem::item(if english { "Hide card" } else { "Скрыть карточку" }, hide).danger());
             self.open_menu_at_cursor(items);
@@ -7134,8 +7194,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             clock_retry_at: Instant::now(),
             system_host: None,
             system_retry_at: Instant::now(),
-            extra_hosts: [None, None, None, None, None],
-            extra_retry_at: [Instant::now(), Instant::now(), Instant::now(), Instant::now(), Instant::now()],
+            extra_hosts: [None, None, None, None, None, None],
+            extra_retry_at: [Instant::now(), Instant::now(), Instant::now(), Instant::now(), Instant::now(), Instant::now()],
             floor_y: 0,
             panel_top: false,
             band_topmost: false,
