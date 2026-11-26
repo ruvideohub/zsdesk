@@ -96,3 +96,29 @@ mod fit_tests {
         }
     }
 }
+
+/// Place a fitted text surface against the right edge of its allotted slot.
+pub fn right_text_offset(available: f32, rendered_width: f32) -> f32 {
+    if !available.is_finite() || !rendered_width.is_finite() {
+        return 0.0;
+    }
+    (available - rendered_width).max(0.0)
+}
+
+#[cfg(test)]
+mod alignment_tests {
+    use super::right_text_offset;
+    #[test]
+    fn fitted_values_stay_in_their_right_aligned_slots() {
+        for scale in [0.75, 1.0, 1.25, 1.5, 2.0, 3.0] {
+            let slot = 147.0 * scale;
+            for fraction in [0.1, 0.5, 1.0] {
+                let width = slot * fraction;
+                let offset = right_text_offset(slot, width);
+                assert!(offset >= 0.0 && offset + width <= slot + 0.001);
+            }
+            assert_eq!(right_text_offset(slot, slot * 2.0), 0.0);
+        }
+        assert_eq!(right_text_offset(20.0, f32::NAN), 0.0);
+    }
+}

@@ -10,6 +10,7 @@
 mod fence;
 mod empty_style;
 mod scroll_style;
+mod selection_style;
 mod header_style;
 mod appearance_panel;
 mod rounded_mask;

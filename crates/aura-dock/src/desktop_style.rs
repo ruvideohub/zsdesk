@@ -208,6 +208,21 @@ pub fn fitted_text(
     Ok(())
 }
 
+/// Fit a live value within its slot and align it to the right, without moving
+/// the adjacent label or changing the meter geometry.
+pub fn fitted_text_right(
+    c: &Compositor, gfx: &Gfx, root: &ContainerVisual, value: &str,
+    x: f32, y: f32, max_w: f32, px: f32, weight: u32,
+    color: (f32, f32, f32, f32),
+) -> Result<()> {
+    let style = TextStyle { px, weight, color, ..Default::default() };
+    let (visual, width, _) = fitted_visual(c, gfx, value, max_w, &style)?;
+    let offset = crate::desktop_card_policy::right_text_offset(max_w, width);
+    visual.SetOffset(v3(x + offset, y, 0.0))?;
+    root.Children()?.InsertAtTop(&visual)?;
+    Ok(())
+}
+
 /// A compact tinted icon tile and two-line header, shared by all information cards.
 pub fn header(
     c: &Compositor,

@@ -618,7 +618,15 @@ impl FenceWin {
                     } else if self.hover == FenceHit::Item(i) {
                         cv.round(r, item_radius, col(palette.hover));
                     }
-                    if self.focus == Some(i) && selected { cv.stroke_round(r, item_radius, col(palette.selected_border), selection_stroke); }
+                    if self.focus == Some(i) && selected {
+                        if self.standalone {
+                            // Preserve the released desktop icon presentation.
+                            cv.stroke_round(r, item_radius, col(palette.selected_border), selection_stroke);
+                        } else if let Some(ring) = super::selection_style::focus_ring(r.w, r.h, item_radius, dpi as f32 / 96.0) {
+                            let color = if high_contrast { col(palette.text) } else { col(palette.text).with_alpha(0.7) };
+                            cv.stroke_round(r.inset(ring.inset, ring.inset), ring.radius, color, ring.width);
+                        }
+                    }
                     let icon_rect = rf(cell.icon);
                     let opacity = if entry.ghosted || self.cut_keys.contains(&entry.key) { 0.5 } else { 1.0 };
                     match bitmap {

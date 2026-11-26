@@ -229,6 +229,10 @@ jobs:
           rustc --edition 2021 --test crates/aura-fences/src/desktop/scroll_style.rs -o target/fences-scroll-style-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/fences-scroll-style-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition 2021 --test crates/aura-fences/src/desktop/selection_style.rs -o target/fences-selection-style-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/fences-selection-style-tests.exe
           exit $LASTEXITCODE
       - name: Fences rounded corner mask tests
         shell: pwsh

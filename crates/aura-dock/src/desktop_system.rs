@@ -366,7 +366,7 @@ impl DesktopSystem {
                 for (index, meter) in meters.iter().enumerate() {
                     let y = ROWS[index] * k;
                     style::text(c, gfx, root, meter.label, 21.0*k, y, 74.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
-                    style::text(c, gfx, root, &meter.text, 100.0*k, y, 147.0*k, 11.0*k, 600, theme::text(), false, true)?;
+                    style::fitted_text_right(c, gfx, root, &meter.text, 100.0*k, y, 147.0*k, 11.0*k, 600, theme::text())?;
                     style::meter(c, root, 21.0*k, y + 19.0*k, 226.0*k, BAR_H*k, meter.fill)?;
                 }
             }
