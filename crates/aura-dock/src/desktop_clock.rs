@@ -349,7 +349,8 @@ impl DesktopClock {
         crate::desktop_style::surface(c, root, self.state.backdrop.as_ref(), card_w, card_h, k)?;
 
         // A quiet kicker gives the clock context without competing with the time.
-        let (dot, _, _) = ui::rounded(c, 6.0*k, 6.0*k, 3.0*k, theme::accent())?;
+        let dot_color = if theme::high_contrast() { theme::ink(0.20) } else { theme::accent() };
+        let (dot, _, _) = ui::rounded(c, 6.0*k, 6.0*k, 3.0*k, dot_color)?;
         dot.SetOffset(v3(22.0*k, 19.0*k, 0.0))?;
         root.Children()?.InsertAtTop(&dot)?;
         crate::desktop_style::text(c, gfx, root, "СЕЙЧАС", 35.0*k, 13.0*k, 160.0*k, 10.5*k, 600, theme::text_2(), false, false)?;
@@ -358,8 +359,8 @@ impl DesktopClock {
         // stays legible at every supported card scale without clipping its suffix.
         let time_px = if self.state.prefs.seconds { 36.0 } else { 49.0 } * k;
         let available = if suffix.is_empty() { 224.0 } else { 182.0 } * k;
-        let (time_card, time_w, _) = ui::text(c, gfx, &time,
-            &TextStyle { px: time_px, weight: 400, display: true, max_w: Some(available), ..Default::default() })?;
+        let (time_card, time_w, _) = crate::desktop_style::fitted_visual(c, gfx, &time, available,
+            &TextStyle { px: time_px, weight: 400, display: true, ..Default::default() })?;
         time_card.SetOffset(v3(21.0*k, 31.0*k, 0.0))?;
         root.Children()?.InsertAtTop(&time_card)?;
         if !suffix.is_empty() {
@@ -367,9 +368,11 @@ impl DesktopClock {
                 36.0*k, 12.0*k, 600, theme::text_2(), false, false)?;
         }
         if self.state.prefs.date {
-            crate::desktop_style::rect(c, root, 21.0*k, 96.0*k, card_w - 42.0*k, k.max(1.0), 0.0, theme::hair())?;
-            crate::desktop_style::text(c, gfx, root, &date, 22.0*k, 103.0*k, 224.0*k,
-                12.0*k, 500, theme::text_2(), false, false)?;
+            // The date gets a quiet inset footer like the network and battery
+            // cards. Keep it inside the old card bounds and retain long dates.
+            crate::desktop_style::tile(c, root, 18.0*k, 99.0*k, card_w - 36.0*k, 25.0*k, 8.0*k, k)?;
+            crate::desktop_style::fitted_text(c, gfx, root, &date, 27.0*k, 103.0*k, 214.0*k,
+                12.0*k, 500, theme::text_2(), false)?;
         }
 
         self.state.drawn = key;

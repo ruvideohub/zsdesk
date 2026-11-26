@@ -166,6 +166,27 @@ pub fn text(
     Ok(())
 }
 
+/// Measure once and shrink before applying the final ellipsis-constrained width.
+/// Also returns the actual visual width for adjacent elements such as AM/PM.
+pub fn fitted_visual(
+    c: &Compositor,
+    gfx: &Gfx,
+    value: &str,
+    max_w: f32,
+    style: &TextStyle,
+) -> Result<(windows::UI::Composition::SpriteVisual, f32, f32)> {
+    let mut natural_style = style.clone();
+    natural_style.max_w = None;
+    let (natural, width, height) = ui::text(c, gfx, value, &natural_style)?;
+    if width <= max_w {
+        return Ok((natural, width, height));
+    }
+    let mut fitted = natural_style;
+    fitted.px = crate::desktop_card_policy::fitted_font_size(style.px, width, max_w);
+    fitted.max_w = Some((max_w - 2.0).max(1.0));
+    ui::text(c, gfx, value, &fitted)
+}
+
 /// Keep live numbers whole where possible; shrink before resorting to ellipsis.
 pub fn fitted_text(
     c: &Compositor,
@@ -180,24 +201,11 @@ pub fn fitted_text(
     color: (f32, f32, f32, f32),
     display: bool,
 ) -> Result<()> {
-    let st = TextStyle {
-        px,
-        weight,
-        color,
-        display,
-        ..Default::default()
-    };
-    let (natural, width, _) = ui::text(c, gfx, value, &st)?;
-    if width <= max_w {
-        natural.SetOffset(v3(x, y, 0.0))?;
-        root.Children()?.InsertAtTop(&natural)?;
-        Ok(())
-    } else {
-        let smaller = (px * (max_w - 3.0).max(1.0) / width).max(px * 0.70);
-        text(
-            c, gfx, root, value, x, y, max_w, smaller, weight, color, display, false,
-        )
-    }
+    let st = TextStyle { px, weight, color, display, ..Default::default() };
+    let (visual, _, _) = fitted_visual(c, gfx, value, max_w, &st)?;
+    visual.SetOffset(v3(x, y, 0.0))?;
+    root.Children()?.InsertAtTop(&visual)?;
+    Ok(())
 }
 
 /// A compact tinted icon tile and two-line header, shared by all information cards.

@@ -470,6 +470,11 @@ impl FenceWin {
             // layer. High contrast retains the native raised-title colour.
             let title = RectF::new(0.0, 0.0, w as f32, g.title.height as f32);
             let high_contrast = aura_windows::theme::high_contrast();
+            // Keep the count in its existing hit-test area; tabs and high
+            // contrast retain their original presentation.
+            let count_badge = if show_counts && !hovered && !self.tabbed() && !high_contrast && self.merge_hover.is_none() {
+                super::header_style::count_badge(w as f32, title.h, dpi as f32 / 96.0)
+            } else { None };
             if high_contrast {
                 cv.push_clip(title);
                 cv.round(outer, radius, col(palette.title));
@@ -528,7 +533,7 @@ impl FenceWin {
                 }
             } else if !renaming_title {
                 let title_style = TextStyle::ui(sf(13.0)).weight(600).align(Align::Center);
-                let side = if hovered { sf(66.0) } else { sf(36.0) };
+                let side = super::header_style::title_side(dpi as f32 / 96.0, hovered, count_badge.is_some(), fence.locked);
                 let lock = if fence.locked { sf(16.0) } else { 0.0 };
                 let room = (w as f32 - side * 2.0 - lock).max(0.0);
                 let area = RectF::new(side + lock / 2.0, 0.0, room, title.h);
@@ -559,6 +564,9 @@ impl FenceWin {
                 if self.hover == FenceHit::More { cv.round(more, sf(4.0), col(palette.hover)); }
                 cv.glyph(glyph::MORE, more, sf(13.0), col(palette.text));
             } else if show_counts {
+                if let Some(b) = count_badge {
+                    cv.round(RectF::new(b.x, b.y, b.width, b.height), sf(8.0), col(palette.hover));
+                }
                 let count = self.entries.len().to_string();
                 cv.text(&count, RectF::new(w as f32 - sf(40.0), 0.0, sf(30.0), title.h), &small, col(palette.text_secondary));
             }

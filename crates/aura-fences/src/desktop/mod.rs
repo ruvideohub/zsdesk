@@ -8,6 +8,7 @@
 //! process or its desktop thread exits unexpectedly.
 
 mod fence;
+mod header_style;
 mod appearance_panel;
 mod rounded_mask;
 mod shadow_mask;
