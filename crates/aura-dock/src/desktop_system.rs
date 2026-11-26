@@ -371,8 +371,10 @@ impl DesktopSystem {
                 for (i, meter) in meters.iter().enumerate() {
                     let x = NETWORK_TILE_X[i] * k;
                     style::tile(c, root, x, NETWORK_TILE_Y*k, NETWORK_TILE_W*k, NETWORK_TILE_H*k, 16.0*k, k)?;
-                    let label = if i == 0 { "↓  ПОЛУЧЕНИЕ" } else { "↑  ОТПРАВКА" };
-                    style::text(c, gfx, root, label, x + 12.0*k, 73.0*k, 91.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
+                    let (arrow, label) = if i == 0 { ("↓", "ПОЛУЧЕНИЕ") } else { ("↑", "ОТПРАВКА") };
+                    let arrow_color = if theme::high_contrast() { theme::text() } else { theme::accent_f() };
+                    style::text(c, gfx, root, arrow, x + 12.0*k, 71.0*k, 14.0*k, 12.0*k, 600, arrow_color, false, false)?;
+                    style::text(c, gfx, root, label, x + 29.0*k, 73.0*k, 75.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
                     style::fitted_text(c, gfx, root, &meter.text, x + 12.0*k, 101.0*k, 91.0*k, 15.0*k, 600, theme::text(), true)?;
                 }
             }
@@ -540,6 +542,10 @@ mod tests {
             assert!(left_end < right_start);
             assert!((NETWORK_TILE_X[1] + NETWORK_TILE_W) * scale <= CARD_W * scale);
             assert!((NETWORK_TILE_Y + NETWORK_TILE_H) * scale <= CARD_H * scale);
+            // Separate directional arrow and title stay inside their tile.
+            assert!((12.0 + 14.0) * scale < 29.0 * scale);
+            assert!((29.0 + 75.0) * scale <= NETWORK_TILE_W * scale);
+            assert!((12.0 + 91.0) * scale <= NETWORK_TILE_W * scale);
         }
     }
 

@@ -463,13 +463,13 @@ impl FenceWin {
             let radius = sf(f32::from(CORNER_RADIUS.with(std::cell::Cell::get))).min(w.min(h) as f32 / 2.0);
             let drop_all = self.drop_hover == Some(usize::MAX);
             let hovered = !matches!(self.hover, FenceHit::None);
+            let high_contrast = aura_windows::theme::high_contrast();
             if !self.standalone {
             cv.round(outer, radius, col(palette.background));
             // Keep the selected surface colour and opacity uniform across the
             // header; a quiet divider gives structure without another opaque
             // layer. High contrast retains the native raised-title colour.
             let title = RectF::new(0.0, 0.0, w as f32, g.title.height as f32);
-            let high_contrast = aura_windows::theme::high_contrast();
             // Keep the count in its existing hit-test area; tabs and high
             // contrast retain their original presentation.
             let count_badge = if show_counts && !hovered && !self.tabbed() && !high_contrast && self.merge_hover.is_none() {
@@ -581,7 +581,21 @@ impl FenceWin {
                 cv.push_clip(content);
                 if self.entries.is_empty() && !self.standalone {
                     let hint = self.message.clone().unwrap_or_else(|| if fence.is_desktop() { aura_core::i18n::text("将桌面图标拖到这里").into() } else { aura_core::i18n::text("此文件夹为空").into() });
-                    cv.text(&hint, content, &TextStyle::ui(sf(12.0)).align(Align::Center), col(palette.text_secondary));
+                    let layout = if self.message.is_none() {
+                        super::empty_style::layout(content.w, content.h, dpi as f32 / 96.0)
+                    } else { None };
+                    if let Some(layout) = layout {
+                        let tile = layout.icon_tile;
+                        let tile = RectF::new(content.x + tile.x, content.y + tile.y, tile.w, tile.h);
+                        cv.round(tile, sf(10.0), col(palette.hover));
+                        if high_contrast { cv.stroke_round(tile, sf(10.0), col(palette.border), sf(1.0).max(1.0)); }
+                        cv.glyph(if fence.is_desktop() { glyph::TILES_VIEW } else { glyph::FOLDER }, tile, sf(17.0), col(palette.text_secondary));
+                        let m = layout.message;
+                        cv.text(&hint, RectF::new(content.x + m.x, content.y + m.y, m.w, m.h),
+                            &TextStyle::ui(sf(12.0)).align(Align::Center), col(palette.text_secondary));
+                    } else {
+                        cv.text(&hint, content, &TextStyle::ui(sf(12.0)).align(Align::Center), col(palette.text_secondary));
+                    }
                 }
                 let label_style = if fence.view == FenceView::List { TextStyle::ui(sf(12.0)) } else { TextStyle::ui(sf(12.0)).align(Align::Center).top().wrapped() };
                 for (i,cell,bitmap) in &visible {

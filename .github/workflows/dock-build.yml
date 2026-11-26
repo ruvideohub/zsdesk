@@ -214,13 +214,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/steam-shortcut-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Fences header decoration layout tests
+      - name: Fences decoration layout tests
         shell: pwsh
         working-directory: aura
         run: |
           rustc --edition 2021 --test crates/aura-fences/src/desktop/header_style.rs -o target/fences-header-style-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/fences-header-style-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition 2021 --test crates/aura-fences/src/desktop/empty_style.rs -o target/fences-empty-style-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/fences-empty-style-tests.exe
           exit $LASTEXITCODE
       - name: Fences rounded corner mask tests
         shell: pwsh
