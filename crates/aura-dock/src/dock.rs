@@ -5690,11 +5690,9 @@ impl Dock {
     fn update_theme(&mut self) -> bool {
         // LAMINAR_THEME=light|dark forces a theme (for testing without changing Windows).
         let forced = std::env::var("LAMINAR_THEME").ok();
-        let light = match forced.as_deref() {
-            Some("light") => true,
-            Some("dark") => false,
-            _ => self.cfg.match_windows_theme && !laminar_sys::theme::apps_use_dark(),
-        };
+        let light = !aura_core::desktop_style::resolve_dock_dark(
+            Some(self.cfg.match_windows_theme), laminar_sys::theme::apps_use_dark(), forced.as_deref(),
+        );
         if light == crate::ui::theme::light() {
             return false;
         }

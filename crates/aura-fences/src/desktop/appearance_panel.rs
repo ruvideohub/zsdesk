@@ -3,9 +3,9 @@
 //! contrast and keyboard settings without a dependency on Dock.
 use std::cell::Cell;
 use aura_fences_model::{appearance::Control, desktop::{DesktopSettings,FenceTheme}};
-use windows::{core::{w,PCWSTR}, Win32::{
+use windows::{core::{w,BOOL,PCWSTR}, Win32::{
     Foundation::{COLORREF,HWND,LPARAM,LRESULT,POINT,WPARAM},
-    Graphics::Gdi::{CreateSolidBrush,DeleteObject,FillRect,GetMonitorInfoW,MonitorFromPoint,GetStockObject,SetBkColor,SetTextColor,SetBkMode,SelectObject,RoundRect,HBRUSH,HDC,TRANSPARENT,NULL_PEN,DEFAULT_GUI_FONT,COLOR_WINDOW,MONITORINFO,MONITOR_DEFAULTTONEAREST},
+    Graphics::Gdi::{CreateSolidBrush,DeleteObject,FillRect,GetMonitorInfoW,MonitorFromPoint,GetStockObject,SetBkColor,SetTextColor,SetBkMode,SelectObject,RoundRect,InvalidateRect,HBRUSH,HDC,TRANSPARENT,NULL_PEN,DEFAULT_GUI_FONT,COLOR_WINDOW,MONITORINFO,MONITOR_DEFAULTTONEAREST},
     System::LibraryLoader::GetModuleHandleW,
     UI::{Controls::{InitCommonControlsEx,INITCOMMONCONTROLSEX,ICC_BAR_CLASSES,TRACKBAR_CLASSW,TBS_HORZ,TBS_NOTICKS,TBM_SETPOS,TBM_SETRANGEMIN,TBM_SETRANGEMAX},
         HiDpi::{GetDpiForMonitor,MDT_EFFECTIVE_DPI}, Input::KeyboardAndMouse::{EnableWindow,SetFocus}, WindowsAndMessaging::*},
@@ -19,6 +19,7 @@ const DONE_ID:usize=201;
 const ACRYLIC_ID:usize=202;
 const THEME_ID:usize=203;
 const COUNTS_ID:usize=204;
+const PANEL_THEME_TIMER:usize=0x5151;
 thread_local!{
     static OPEN:Cell<bool>=const{Cell::new(false)};
     // Native controls remain keyboard/UIA accessible. In high contrast the
@@ -33,7 +34,14 @@ thread_local!{
 fn rgb(r:u8,g:u8,b:u8)->COLORREF { COLORREF(u32::from(r) | u32::from(g)<<8 | u32::from(b)<<16) }
 struct PaletteGuard;
 impl PaletteGuard {
-    fn new(dark:bool)->Self {
+    fn new(dark:bool)->Self { let mut guard=Self;guard.refresh(dark);guard }
+    fn clear(&mut self) {
+        for brush in [PANEL_BRUSH.with(|v|v.replace(0)),GROUP_BRUSH.with(|v|v.replace(0))] {
+            if brush!=0 {let _=unsafe{DeleteObject(HBRUSH(brush as *mut _).into())};}
+        }
+    }
+    fn refresh(&mut self,dark:bool) {
+        self.clear();
         if !aura_windows::theme::high_contrast() {
             let [r,g,b]=if dark {aura_core::desktop_style::SURFACE_DARK} else {aura_core::desktop_style::SURFACE_LIGHT};
             let bg=rgb(r,g,b); let fg=if dark {rgb(242,242,246)} else {rgb(27,27,32)};
@@ -44,14 +52,15 @@ impl PaletteGuard {
             PANEL_BRUSH.with(|v|v.set(brush.0 as isize));PANEL_BG.with(|v|v.set(bg.0));PANEL_FG.with(|v|v.set(fg.0));
             GROUP_BRUSH.with(|v|v.set(group_brush.0 as isize));GROUP_BG.with(|v|v.set(group.0));
         }
-        Self
     }
 }
-impl Drop for PaletteGuard { fn drop(&mut self) {
-    for brush in [PANEL_BRUSH.with(|v|v.replace(0)),GROUP_BRUSH.with(|v|v.replace(0))] {
-        if brush!=0 {let _=unsafe{DeleteObject(HBRUSH(brush as *mut _).into())};}
-    }
-} }
+impl Drop for PaletteGuard { fn drop(&mut self) { self.clear(); } }
+
+unsafe extern "system" fn refresh_child(hwnd:HWND, lp:LPARAM)->BOOL {
+    aura_windows::theme::theme_control(hwnd,lp.0!=0);
+    let _=unsafe{InvalidateRect(Some(hwnd),None,true)};
+    true.into()
+}
 
 unsafe extern "system" fn proc(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRESULT {
     match msg {
@@ -108,10 +117,11 @@ fn text(key:&str)->Vec<u16>{wide(aura_core::i18n::text(key))}
 
 /// A small owned settings window, with immediate application and debounced save.
 /// Closing or Escape keeps changes, just like the other Fences menus.
-pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mut apply:impl FnMut(&DesktopSettings)) {
+pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mut current_dark:impl FnMut()->bool,mut apply:impl FnMut(&DesktopSettings)) {
     if OPEN.with(|v|v.replace(true)){return;}let _open=OpenGuard;
     if !register(){return;}
-    let _palette=PaletteGuard::new(dark);
+    let mut palette=PaletteGuard::new(dark);
+    let mut appearance=(dark,aura_windows::theme::high_contrast());
     let monitor=unsafe{MonitorFromPoint(point,MONITOR_DEFAULTTONEAREST)};
     let mut info=MONITORINFO{cbSize:std::mem::size_of::<MONITORINFO>() as u32,..Default::default()};
     if !unsafe{GetMonitorInfoW(monitor,&mut info)}.as_bool(){return;}
@@ -142,10 +152,10 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
     if child(w!("STATIC"),&theme_label,WINDOW_STYLE(0),0,20,42,190,24).is_none(){return;}
     let empty=wide("");
     let Some(theme_box)=child(w!("COMBOBOX"),&empty,WS_TABSTOP|WINDOW_STYLE((CBS_DROPDOWNLIST|WS_VSCROLL.0 as i32) as u32),THEME_ID,210,38,255,140) else{return};
-    for key in ["跟随系统","深色","浅色"] {
+    for key in ["跟随 Dock 外观","跟随系统","深色","浅色"] {
         let option=text(key);unsafe{SendMessageW(theme_box,CB_ADDSTRING,Some(WPARAM(0)),Some(LPARAM(option.as_ptr() as isize)));}
     }
-    let selection=match value.theme {FenceTheme::System=>0,FenceTheme::Dark=>1,FenceTheme::Light=>2};
+    let selection=match value.theme {FenceTheme::Dock=>0,FenceTheme::System=>1,FenceTheme::Dark=>2,FenceTheme::Light=>3};
     unsafe{SendMessageW(theme_box,CB_SETCURSEL,Some(WPARAM(selection)),None);}
     let mut sliders=Vec::new();
     for (i,control) in Control::ALL[..7].iter().copied().enumerate(){
@@ -171,15 +181,24 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
     unsafe{SendMessageW(counts_box,BM_SETCHECK,Some(WPARAM(value.show_counts as usize)),None);}
     let done=text("完成");
     if child(w!("BUTTON"),&done,WS_TABSTOP|WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),DONE_ID,355,598,110,30).is_none(){return;}
-    unsafe{let _=ShowWindow(hwnd,SW_SHOWNORMAL);let _=SetForegroundWindow(hwnd);let _=SetFocus(Some(sliders[0].1));}
+    unsafe{let _=SetTimer(Some(hwnd),PANEL_THEME_TIMER,1000,None);let _=ShowWindow(hwnd,SW_SHOWNORMAL);let _=SetForegroundWindow(hwnd);let _=SetFocus(Some(sliders[0].1));}
     loop {
         let mut msg=MSG::default();let result=unsafe{GetMessageW(&mut msg,None,0,0)}.0;
         if result==0{unsafe{PostQuitMessage(msg.wParam.0 as i32)};break;}if result<0{break;}
         if msg.hwnd==hwnd && msg.message==FINISH{break;}
+        if msg.hwnd==hwnd && msg.message==WM_TIMER && msg.wParam.0==PANEL_THEME_TIMER {
+            let next=(current_dark(),aura_windows::theme::high_contrast());
+            if next!=appearance {
+                appearance=next;palette.refresh(next.0);
+                aura_windows::theme::set_dark_frame(hwnd,next.0);
+                unsafe{let _=EnumChildWindows(Some(hwnd),Some(refresh_child),LPARAM(next.0 as isize));let _=InvalidateRect(Some(hwnd),None,true);}
+            }
+            continue;
+        }
         if msg.hwnd==hwnd && msg.message==CHANGE {
             if msg.wParam.0==THEME_ID {
                 let selection=unsafe{SendMessageW(theme_box,CB_GETCURSEL,None,None)}.0;
-                let next=match selection {0=>FenceTheme::System,1=>FenceTheme::Dark,2=>FenceTheme::Light,_=>value.theme};
+                let next=match selection {0=>FenceTheme::Dock,1=>FenceTheme::System,2=>FenceTheme::Dark,3=>FenceTheme::Light,_=>value.theme};
                 if next!=value.theme {value.theme=next;apply(&value);}
             } else if msg.wParam.0==COUNTS_ID {
                 let next=unsafe{SendMessageW(counts_box,BM_GETCHECK,None,None)}.0!=0;

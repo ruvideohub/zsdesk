@@ -189,7 +189,7 @@ impl Fence {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FenceTheme { #[default] Dark, Light, System }
+pub enum FenceTheme { #[default] Dark, Light, System, Dock }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopSettings {
@@ -247,7 +247,7 @@ fn default_edge_highlight() -> u8 { 55 }
 impl Default for DesktopSettings {
     fn default() -> Self {
         Self { organize: false, icons_hidden_by_aura: false, hidden: false, double_click_toggle: true,
-            theme: FenceTheme::Dark, opacity: 55, corner_radius: default_corner_radius(), icon_scale: default_icon_scale(),
+            theme: FenceTheme::Dock, opacity: 55, corner_radius: default_corner_radius(), icon_scale: default_icon_scale(),
             inner_padding: default_inner_padding(), icon_spacing: 0, edge_highlight: default_edge_highlight(), shadow_strength: 0, browse_inside: true, hover_expand: true, hide_tray: false, show_counts: false,
             blur: false, acrylic_blur: false }
     }
@@ -801,6 +801,15 @@ mod tests {
     fn info(key: &str, folder: bool) -> ItemInfo {
         let name = key.rsplit('\\').next().unwrap().to_string();
         ItemInfo { key: key.into(), category: categorize(&name, folder, true), name, is_folder: folder, size: None, modified: None }
+    }
+    #[test]
+    fn theme_inheritance_round_trips_without_changing_existing_profiles() {
+        assert_eq!(DesktopSettings::default().theme, FenceTheme::Dock);
+        for theme in [FenceTheme::Dark, FenceTheme::Light, FenceTheme::System, FenceTheme::Dock] {
+            let mut settings = DesktopSettings::default(); settings.theme = theme;
+            let restored: DesktopSettings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+            assert_eq!(restored.theme, theme);
+        }
     }
     #[test]
     fn old_appearance_profiles_keep_layout_defaults() {

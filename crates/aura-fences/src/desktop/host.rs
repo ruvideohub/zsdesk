@@ -274,6 +274,7 @@ pub struct DesktopHost {
     pub hwnd: HWND,
     pub config_path: PathBuf,
     pub settings_path: PathBuf,
+    last_fence_dark: bool,
     pub config: DesktopConfig,
     pub fences: Vec<FenceWin>,
     cut_paths: HashSet<String>,
@@ -326,7 +327,7 @@ impl DesktopHost {
             "icon_worker_tests::native_icon_worker_entry".into(),"--exact".into(),"--ignored".into(),"--nocapture".into()]).ok();
         let loader = IconLoader::spawn(hwnd, WM_ICON_READY);
         let taskbar_created = unsafe { RegisterWindowMessageW(windows::core::w!("TaskbarCreated")) };
-        let mut host = Self { hwnd, config_path, settings_path, config, fences: Vec::new(), desktop_entries: Vec::new(), #[cfg(test)]desktop_test_entries:None,gfx,
+        let mut host = Self { hwnd, config_path, settings_path, last_fence_dark: true, config, fences: Vec::new(), desktop_entries: Vec::new(), #[cfg(test)]desktop_test_entries:None,gfx,
             cut_paths:HashSet::new(),icons: HashMap::new(), icon_clock: 0,icon_batches:0,icon_repaint_requests:0, next_icon_request: 1, icon_content_active: false, shutting_down: false, desktop_anchor: None, desktop_exposed:false,
             loader, desktop_notify: None, guard: None, pending: Vec::new(), known: HashSet::new(),desktop_snapshot_initialized:false, menu_input_started:None,
             modal_holds:HashMap::new(),pending_menu:None,incoming_drag:None,drag_geometry:Vec::new(),drag_anchor:None,last_drop:None,last_drop_route:None,
@@ -389,6 +390,7 @@ impl DesktopHost {
     pub fn fence_dark(&self) -> bool {
         match self.config.settings.theme {
             FenceTheme::Dark => true, FenceTheme::Light => false, FenceTheme::System => aura_windows::theme::system_dark_mode(),
+            FenceTheme::Dock => super::shared_theme::dock_dark(),
         }
     }
 
@@ -399,17 +401,27 @@ impl DesktopHost {
         use aura_core::model::explorer::ColorScheme;
         let scheme = if crate::edition::THEMED {
             crate::storage::load(&self.settings_path).map(|session| session.ui.appearance.color_scheme).unwrap_or(ColorScheme::System)
-        } else { ColorScheme::System };
+        } else { return super::shared_theme::dock_dark(); };
         match scheme { ColorScheme::Dark => true, ColorScheme::Light => false, ColorScheme::System => aura_windows::theme::system_dark_mode() }
     }
 
     pub fn update_palette(&mut self) {
         let dark = self.fence_dark();
+        self.last_fence_dark = dark;
         super::fence::set_blur_style(self.config.settings.acrylic_blur,dark);
         aura_windows::flyout::refresh_system();
         let opacity=aura_windows::blur_policy::effective_opacity(self.config.settings.opacity,aura_windows::theme::transparency_available());
         self.palette = FencePalette::new(if dark { Mode::Dark } else { Mode::Light }, opacity);
         if let Some(accent) = aura_windows::theme::system_accent(dark) { self.palette = self.palette.with_accent(accent); }
+    }
+
+    /// A Dock settings change is a separate-process file update, not a Windows
+    /// theme message. Check periodically, without changing the Fences profile.
+    pub fn refresh_shared_theme(&mut self) {
+        if self.config.settings.theme == FenceTheme::Dock && self.fence_dark() != self.last_fence_dark {
+            self.update_palette();
+            self.render_all();
+        }
     }
 
     /// Apply only appearance fields: a long-lived settings window must not

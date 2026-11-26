@@ -15,6 +15,7 @@ mod header_style;
 mod appearance_panel;
 mod glass_layer;
 mod glass_effects;
+mod shared_theme;
 mod rounded_mask;
 mod shadow_mask;
 mod shadow;
@@ -161,6 +162,7 @@ const WM_COMMAND_REQUEST: u32 = protocol::Message::CommandRequest as u32;
 const WM_RENAME_REQUEST: u32 = protocol::Message::RenameRequest as u32;
 const WM_FOREGROUND: u32 = protocol::Message::Foreground as u32;
 const WM_REPAIR_LAYER: u32 = protocol::Message::RepairLayer as u32;
+const TIMER_SHARED_THEME: usize = protocol::HostTimer::SharedTheme as usize;
 const TIMER_RAISE: usize = protocol::HostTimer::Raise as usize;
 const TIMER_REPAIR_LAYER: usize = protocol::HostTimer::RepairLayer as usize;
 const TIMER_FOREGROUND: usize = protocol::HostTimer::Foreground as usize;
@@ -332,6 +334,7 @@ fn run_host(config_path: PathBuf, settings_path: PathBuf, command: DesktopComman
     let config = host::load_config(&config_path);
     HOST.with(|h| *h.borrow_mut() = Some(DesktopHost::new(hwnd, config_path, settings_path, config, gfx)));
     with_host(|h| h.start());
+    unsafe { SetTimer(Some(hwnd), TIMER_SHARED_THEME, 2000, None); }
     let _clipboard=clipboard::Listener::new(hwnd).ok();
     with_host(|host|update_hook(host.config.settings.double_click_toggle,host.config.settings.organize));
     let foreground = unsafe { windows::Win32::UI::Accessibility::SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND, None,
@@ -497,6 +500,7 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         }
         WM_TIMER => {
             let done = with_host(|h| {
+                if wp.0 == TIMER_SHARED_THEME { h.refresh_shared_theme(); }
                 if wp.0 == TIMER_SAVE { h.save_now(); }
                 if wp.0 == TIMER_DESKTOP { let _ = unsafe { KillTimer(Some(h.hwnd), TIMER_DESKTOP) }; h.refresh_desktop(); }
                 if wp.0 == TIMER_ICONS { let _ = unsafe { KillTimer(Some(h.hwnd), TIMER_ICONS) }; h.icons_ready(); }
@@ -723,7 +727,7 @@ fn run_after(after: After) {
             let initial = with_host(|host| (host.hwnd,host.config.settings.clone(),host.menu_dark(),
                 fence.and_then(|id|host.win_index(id).map(|i|host.fences[i].hwnd))));
             if let Some((host,settings,dark,window))=initial {
-                appearance_panel::show(window.unwrap_or(host),point,settings,dark,|value| {with_host(|host|host.apply_appearance(value));});
+                appearance_panel::show(window.unwrap_or(host),point,settings,dark,||with_host(|host|host.menu_dark()).unwrap_or_else(aura_windows::theme::system_dark_mode),|value| {with_host(|host|host.apply_appearance(value));});
             }
         }
         After::ItemMenu { fence, point } => item_menu(fence, point),

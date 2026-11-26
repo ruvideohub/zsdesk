@@ -8,11 +8,10 @@ use windows::Win32::UI::{
 };
 
 pub fn read(match_windows_theme: bool) -> Environment {
-    let light = match std::env::var("LAMINAR_THEME").ok().as_deref() {
-        Some("light") => true,
-        Some("dark") => false,
-        _ => match_windows_theme && !laminar_sys::theme::apps_use_dark(),
-    };
+    let forced = std::env::var("LAMINAR_THEME").ok();
+    let light = !aura_core::desktop_style::resolve_dock_dark(
+        Some(match_windows_theme), laminar_sys::theme::apps_use_dark(), forced.as_deref(),
+    );
     let mut contrast = HIGHCONTRASTW {
         cbSize: std::mem::size_of::<HIGHCONTRASTW>() as u32,
         ..Default::default()
