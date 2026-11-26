@@ -41,6 +41,7 @@ mod launchpad_command_aliases;
 mod menu;
 mod metrics;
 mod preview;
+mod radio_playlist;
 mod services;
 mod stack;
 mod startup;
