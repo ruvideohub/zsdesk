@@ -139,7 +139,7 @@ fn management(host:&OwnedHost)->Result<serde_json::Value>{
         MenuItemSpec::Submenu{menu,..}=>ids(menu,out),_=>{}
     }}}
     let mut commands=Vec::new();ids(&spec,&mut commands);
-    for id in ["paste","folder-system-menu","rename","delete","lock","collapse","new-folder-fence","new-tab-folder","icons-large","theme-dark","autostart","select-none"]{
+    for id in ["paste","folder-system-menu","rename","delete","lock","collapse","new-folder-fence","new-tab-folder","icons-large","appearance-panel","autostart","select-none"]{
         ensure!(commands.iter().any(|command|command==id),"management command missing: {id}");
     }
     ensure!(spec.items.iter().any(|item|matches!(item,MenuItemSpec::Submenu{label,..}if label=="所选项目")),"selected-item management submenu missing");
@@ -233,6 +233,7 @@ fn native_fence_cut_appearance_and_paste_selection()->Result<()>{
 #[test]
 fn shadow_window_is_not_a_foreign_application_for_layer_repair(){
     assert!(super::desktop_layer_class(super::shadow::CLASS_NAME));
+    assert!(super::desktop_layer_class(super::glass_layer::CLASS_NAME));
     assert!(!super::desktop_layer_class("Unrelated.Application.Window"));
 }
 

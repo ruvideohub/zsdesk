@@ -418,14 +418,16 @@ impl DesktopHost {
         let old_blur=self.config.settings.blur;
         let old_radius=self.config.settings.corner_radius;
         let old_acrylic=self.config.settings.acrylic_blur;
+        let old_theme=self.config.settings.theme;
         let s=&mut self.config.settings;
+        s.theme=value.theme;s.show_counts=value.show_counts;
         s.icon_scale=value.icon_scale.clamp(50,200);s.icon_spacing=value.icon_spacing.min(32);
         s.inner_padding=value.inner_padding.min(24);s.opacity=value.opacity.clamp(10,100);
         s.corner_radius=value.corner_radius.min(40);s.edge_highlight=value.edge_highlight.min(100);s.shadow_strength=value.shadow_strength.min(100);s.blur=value.blur;s.acrylic_blur=value.acrylic_blur;
         super::fence::set_layout(s.icon_scale,s.inner_padding,s.icon_spacing);
         super::fence::set_corner_radius(s.corner_radius);super::fence::set_edge_highlight(s.edge_highlight);
         super::fence::set_blur(s.blur);
-        let glass_changed=old_blur!=s.blur || old_radius!=s.corner_radius || old_acrylic!=s.acrylic_blur;
+        let glass_changed=old_blur!=s.blur || old_radius!=s.corner_radius || old_acrylic!=s.acrylic_blur || old_theme!=s.theme;
         self.update_palette();
         for win in &mut self.fences {
             if glass_changed { super::fence::apply_glass(win.hwnd); }
@@ -1247,6 +1249,13 @@ impl DesktopHost {
             }
             slot.bitmap.as_ref().map(|(_, b)| b.clone())
         });
+        // Blur is a separate Composition surface clipped to the same radius as
+        // the foreground. If composition is unavailable, keep the surface
+        // translucent without re-enabling the old rectangular accent policy.
+        if !win.standalone && self.config.settings.blur && aura_windows::theme::transparency_available() {
+            if win.glass.is_none() {win.glass=super::glass_layer::Glass::new(win.hwnd);}
+            if win.glass.as_mut().is_some_and(|glass|!glass.update(win.dpi,self.config.settings.corner_radius,self.config.settings.acrylic_blur)){win.glass=None;}
+        } else {win.glass=None;}
         let shadow_strength=if win.ghost {(u16::from(self.config.settings.shadow_strength)*3/5) as u8} else {self.config.settings.shadow_strength};
         if !win.standalone && shadow_strength>0 && !aura_windows::theme::high_contrast() {
             if win.shadow.is_none() {win.shadow=super::shadow::Shadow::new(win.hwnd);}
@@ -2302,6 +2311,7 @@ impl DesktopHost {
         let selected=self.win_index(id).is_some_and(|index|!self.fences[index].selection.is_empty());
         if selected{items.push(submenu(aura_core::i18n::text("所选项目"),self.item_menu_items(id)));}
         items.push(MenuItemSpec::Separator);
+        items.push(entry(aura_core::i18n::text("外观设置…"), "appearance-panel", true, false));
         if fence.is_desktop() { items.push(entry(aura_core::i18n::text("新建格子"), "new-fence", true, false)); }
         items.push(entry(aura_core::i18n::text("新建文件夹映射格子…"), "new-folder-fence", true, false));
         items.push(submenu(aura_core::i18n::text("新建标签"), vec![
@@ -2372,10 +2382,6 @@ impl DesktopHost {
         let autostart = super::startup_enabled(&self.config_path).unwrap_or(false);
         let all_collapsed = !self.config.fences.is_empty()
             && self.config.fences.iter().filter(|fence| !self.config.is_released(fence.id)).all(|fence| fence.collapsed);
-        let transparency = |opacity: u8| {
-            let label = if opacity >= 100 { aura_core::i18n::text("不透明").to_string() } else { aura_core::tr_format!("透明度 {}%", 100 - u32::from(opacity)) };
-            entry(&label, &format!("opacity-{opacity}"), true, s.opacity == opacity)
-        };
         vec![
             submenu(aura_core::i18n::text("配置目录"),vec![
                 entry(aura_core::i18n::text("选择默认配置目录…"),"profile-folder",true,false),
@@ -2390,24 +2396,7 @@ impl DesktopHost {
             entry(aura_core::i18n::text("锁定全部格子"), "lock-all", !self.config.fences.is_empty(), !self.config.fences.is_empty() && self.config.fences.iter().all(|f| f.locked)),
             entry(if s.hidden { aura_core::i18n::text("显示全部格子") } else { aura_core::i18n::text("隐藏全部格子") }, "toggle-hidden", true, false),
             entry(aura_core::i18n::text("双击桌面空白处隐藏/显示格子"), "double-click", true, s.double_click_toggle),
-            submenu(aura_core::i18n::text("外观"), vec![
-                entry(aura_core::i18n::text("外观设置…"), "appearance-panel", true, false),
-                MenuItemSpec::Separator,
-                entry(aura_core::i18n::text("显示文件数量"), "show-counts", true, s.show_counts),
-                MenuItemSpec::Separator,
-                entry(aura_core::i18n::text("深色"), "theme-dark", true, s.theme == FenceTheme::Dark),
-                entry(aura_core::i18n::text("浅色"), "theme-light", true, s.theme == FenceTheme::Light),
-                entry(aura_core::i18n::text("跟随系统"), "theme-system", true, s.theme == FenceTheme::System),
-                MenuItemSpec::Separator,
-                entry(aura_core::i18n::text("毛玻璃效果"), "blur", true, s.blur),
-                submenu(aura_core::i18n::text("圆角"), [0u8, 10, 18, 24, 32, 40].into_iter().map(|radius| {
-                    entry(&format!("{radius} px"), &format!("corner-{radius}"), true, s.corner_radius == radius)
-                }).collect()),
-                MenuItemSpec::Separator,
-                // The setting stores the background opacity; the menu shows transparency.
-                transparency(100), transparency(85), transparency(70), transparency(55),
-                transparency(45), transparency(30), transparency(15),
-            ]),
+            entry(aura_core::i18n::text("外观设置…"), "appearance-panel", true, false),
             entry(aura_core::i18n::text("文件夹格子内打开子文件夹"), "browse-inside", true, s.browse_inside),
             entry(aura_core::i18n::text("鼠标悬停展开折叠的格子"), "hover-expand", true, s.hover_expand),
             entry(aura_core::i18n::text("隐藏托盘图标"), "hide-tray", true, s.hide_tray),

@@ -34,9 +34,9 @@ pub fn set_edge_highlight(value:u8) { EDGE_HIGHLIGHT.with(|v|v.set(value.min(100
 
 /// Applies or removes the frosted-glass blur and the matching rounded window region.
 pub fn apply_glass(hwnd: HWND) {
-    let on = BLUR.with(std::cell::Cell::get) && !is_desktop_item(hwnd);
-    let (acrylic,dark)=ACRYLIC.with(std::cell::Cell::get);
-    aura_windows::theme::set_blur_behind_with_acrylic(hwnd,on,acrylic,dark);
+    // The window-wide accent policy ignores SetWindowRgn on layered windows.
+    // Clear it; the separately clipped Composition glass layer is owned by FenceWin.
+    aura_windows::theme::set_blur_behind(hwnd,false);
     shape_window(hwnd);
 }
 
@@ -355,6 +355,7 @@ pub struct FenceWin {
     pub interaction: Option<Interaction>,
     pub surface: Option<Surface>,
     pub shadow: Option<super::shadow::Shadow>,
+    pub glass: Option<super::glass_layer::Glass>,
     pub notify: Option<ChangeNotify>,
     pub notify_path: Option<std::path::PathBuf>,
     pub drop: Option<aura_windows::ole::DropRegistration>,
@@ -391,7 +392,7 @@ impl FenceWin {
     }
     pub fn new(id: u64) -> Self {
         let mut value=Self { id, hwnd: HWND::default(), dpi: 96, entries: Vec::new(), selection: HashSet::new(), anchor: None, focus: None,
-            hover: FenceHit::None, scroll: 0, zoom_remainder: 0, standalone: false, interaction: None, surface: None, shadow: None, notify: None, notify_path: None, drop: None,
+            hover: FenceHit::None, scroll: 0, zoom_remainder: 0, standalone: false, interaction: None, surface: None, shadow: None, glass: None, notify: None, notify_path: None, drop: None,
             drop_hover: None, rename: None, message: None,notice:None,cut_keys:HashSet::new(),pending_selection:None,operation_epoch:0, tracking: false, peek: false, peek_blocked: false,
             tabs: Vec::new(), ghost: false, merge_hover: None, drop_tab: None };
         value.advance_operation_epoch();value

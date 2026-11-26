@@ -13,6 +13,8 @@ mod scroll_style;
 mod selection_style;
 mod header_style;
 mod appearance_panel;
+mod glass_layer;
+mod glass_effects;
 mod rounded_mask;
 mod shadow_mask;
 mod shadow;
@@ -258,7 +260,7 @@ unsafe extern "system" fn layer_window_hook(_:windows::Win32::UI::Accessibility:
 }
 
 fn desktop_layer_class(class:&str)->bool{
-    matches!(class,host::FENCE_CLASS|HOST_CLASS|return_to_desktop::DROP_CLASS|shadow::CLASS_NAME)
+    matches!(class,host::FENCE_CLASS|HOST_CLASS|return_to_desktop::DROP_CLASS|shadow::CLASS_NAME|glass_layer::CLASS_NAME)
 }
 
 /// Runs `f` on the host unless it is already borrowed by an outer call.
@@ -652,8 +654,8 @@ unsafe extern "system" fn fence_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             return LRESULT(0);
         }
         WM_MOUSEACTIVATE => return LRESULT(MA_ACTIVATE as isize),
-        WM_SHOWWINDOW => shadow::sync(hwnd,Some(wp.0 != 0)),
-        WM_WINDOWPOSCHANGED => shadow::sync(hwnd,Some(unsafe{IsWindowVisible(hwnd)}.as_bool())),
+        WM_SHOWWINDOW => { shadow::sync(hwnd,Some(wp.0 != 0)); glass_layer::sync(hwnd,Some(wp.0 != 0)); },
+        WM_WINDOWPOSCHANGED => { let visible=unsafe{IsWindowVisible(hwnd)}.as_bool(); shadow::sync(hwnd,Some(visible)); glass_layer::sync(hwnd,Some(visible)); },
         // Resizes happen inside host calls, so the shape is kept here, outside the host borrow.
         WM_SIZE => fence::shape_window(hwnd),
         _ => {}
@@ -718,10 +720,10 @@ fn run_after(after: After) {
     match after {
         After::Nothing => {}
         After::Appearance { fence, point } => {
-            let initial = with_host(|host| (host.hwnd,host.config.settings.clone(),
+            let initial = with_host(|host| (host.hwnd,host.config.settings.clone(),host.menu_dark(),
                 fence.and_then(|id|host.win_index(id).map(|i|host.fences[i].hwnd))));
-            if let Some((host,settings,window))=initial {
-                appearance_panel::show(window.unwrap_or(host),point,settings,|value| {with_host(|host|host.apply_appearance(value));});
+            if let Some((host,settings,dark,window))=initial {
+                appearance_panel::show(window.unwrap_or(host),point,settings,dark,|value| {with_host(|host|host.apply_appearance(value));});
             }
         }
         After::ItemMenu { fence, point } => item_menu(fence, point),

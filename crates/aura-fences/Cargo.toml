@@ -25,7 +25,19 @@ sha2 = "0.10.9"
 
 [target.'cfg(windows)'.dependencies]
 windows-core = "0.62.2"
+windows-numerics = "0.3.1"
 windows = { version = "0.62.2", features = [
+  "Foundation",
+  "Foundation_Numerics",
+  "Graphics",
+  "Graphics_Effects",
+  "System",
+  "UI",
+  "UI_Composition",
+  "UI_Composition_Desktop",
+  "Win32_System_WinRT",
+  "Win32_System_WinRT_Composition",
+  "Win32_System_WinRT_Graphics_Direct2D",
   "Win32_Foundation",
   "Win32_Media_MediaFoundation",
   "Win32_Networking_WinHttp",
