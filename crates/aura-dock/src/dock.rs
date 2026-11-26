@@ -3595,6 +3595,7 @@ impl Dock {
             let (x, y) = lparam_xy(lp);
             match msg {
                 WM_MOUSEMOVE => self.menu.on_move(&self.compositor, x, y),
+                WM_MOUSEWHEEL => self.menu.on_wheel(&self.compositor, ((wp.0 >> 16) & 0xFFFF) as i16),
                 WM_LBUTTONUP | WM_RBUTTONUP => {
                     if let Some(action) = self.menu.on_click(x, y) {
                         self.menu_action(action);

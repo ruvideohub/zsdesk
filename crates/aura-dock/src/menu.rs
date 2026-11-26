@@ -5,11 +5,11 @@
 use windows::core::{Interface, Result};
 use windows::UI::Composition::*;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_UP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_END, VK_ESCAPE, VK_HOME, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_UP};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 use crate::gfx::{Gfx, TextStyle};
-use crate::ui::{self, theme, v3, Popup};
+use crate::ui::{self, theme, v2, v3, Popup};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -77,6 +77,12 @@ struct Row {
     item: usize,
 }
 
+struct MenuFrame {
+    items: Vec<MenuItem>,
+    scroll_y: f32,
+    hover: Option<usize>,
+}
+
 pub struct Menu {
     pub popup: Popup,
     items: Vec<MenuItem>,
@@ -85,9 +91,14 @@ pub struct Menu {
     hover: Option<usize>,
     origin: (f32, f32), // panel top-left inside the window
     panel_w: f32,
+    panel_h: f32,
+    content_h: f32,
+    scroll_y: f32,
+    scroll_inner: Option<ContainerVisual>,
+    scroll_thumb: Option<ShapeVisual>,
     scale: f32,
     restore_focus: HWND,
-    trail: Vec<Vec<MenuItem>>,
+    trail: Vec<MenuFrame>,
     anchor: POINT,
     above: bool,
     monitor: RECT,
@@ -104,6 +115,11 @@ impl Menu {
             hover: None,
             origin: (0.0, 0.0),
             panel_w: 0.0,
+            panel_h: 0.0,
+            content_h: 0.0,
+            scroll_y: 0.0,
+            scroll_inner: None,
+            scroll_thumb: None,
             scale: 1.0,
             restore_focus: HWND::default(),
             trail: Vec::new(),
@@ -160,6 +176,10 @@ impl Menu {
         let sep_h = 9.0 * s;
         let head_h = 22.0 * s;
         let text_x = 26.0 * s;
+        // `ui::panel` reserves 22 DIP blur plus 6 DIP offset on each side.
+        let shadow_margin = (28.0 * s).ceil();
+        let max_body_w = crate::menu_layout::viewport(f32::MAX, (monitor.right - monitor.left).max(1) as f32, shadow_margin);
+        let label_limit = (max_body_w - text_x - 2.0 * pad - 48.0 * s).clamp(1.0, 300.0 * s);
         let mut labels = Vec::new();
         let mut max_w: f32 = 200.0 * s;
         for it in &self.items {
@@ -175,7 +195,7 @@ impl Menu {
                     };
                     let weight = if it.kind == Kind::Header { 600 } else { 400 };
                     let px = if it.kind == Kind::Header { 11.5 } else { 13.0 } * s;
-                    let (lab, lw, lh) = ui::text(c, gfx, &it.label, &TextStyle { px, weight, color: col, max_w: Some(300.0 * s), ..Default::default() })?;
+                    let (lab, lw, lh) = ui::text(c, gfx, &it.label, &TextStyle { px, weight, color: col, max_w: Some(label_limit), ..Default::default() })?;
                     let arrow = if !it.children.is_empty() { Some("›") } else if it.back { Some("‹") } else { None };
                     let sc = match arrow.or(it.shortcut.as_deref()) {
                         Some(t) => Some(ui::text(c, gfx, t, &TextStyle { px: 12.0 * s, color: theme::text_3(), ..Default::default() })?),
@@ -187,7 +207,7 @@ impl Menu {
                 }
             }
         }
-        let w = (max_w + 2.0 * pad).ceil();
+        let w = (max_w + 2.0 * pad).ceil().min(max_body_w);
         let mut y = pad;
         for (i, it) in self.items.iter().enumerate() {
             let h = match it.kind {
@@ -198,45 +218,64 @@ impl Menu {
             self.rows.push(Row { y, h, item: i });
             y += h;
         }
-        let h = (y + pad).ceil();
+        let content_h = (y + pad).ceil();
+        let h = crate::menu_layout::viewport(content_h, (monitor.bottom - monitor.top).max(1) as f32, shadow_margin);
+        self.panel_h = h;
+        self.content_h = content_h;
+        self.scroll_y = 0.0;
+        self.scroll_thumb = None;
 
         let radius = 12.0 * s;
         let panel = ui::panel(c, gfx, backdrop, w, h, radius, theme::surface(0.74), s, 0.42)?;
         let m = panel.margin;
         self.origin = (m, m);
         self.panel_w = w;
+        // All rows move together underneath an explicit clipped viewport. The background,
+        // rim and shadow stay fixed, and hit testing uses the same scroll offset.
+        panel.content.SetClip(&c.CreateInsetClip()?)?;
+        let inner = c.CreateContainerVisual()?;
+        inner.SetSize(v2(w, content_h))?;
+        panel.content.Children()?.InsertAtTop(&inner)?;
+        self.scroll_inner = Some(inner.clone());
 
         // Hover highlight (moves between rows).
-        let (hl, _, _) = ui::rounded(c, w - 2.0 * pad, row_h, 6.0 * s, theme::accent())?;
+        let (hl, _, _) = ui::rounded(c, (w - 2.0 * pad).max(1.0), row_h, 6.0 * s, theme::accent())?;
         hl.SetOpacity(0.0)?;
         hl.SetOffset(v3(pad, pad, 0.0))?;
-        panel.content.Children()?.InsertAtTop(&hl)?;
+        inner.Children()?.InsertAtTop(&hl)?;
         self.highlight = Some(hl);
 
         for (row, lab) in self.rows.iter().zip(labels) {
             let it = &self.items[row.item];
             match (it.kind, lab) {
                 (Kind::Separator, _) => {
-                    let (line, _, _) = ui::rounded(c, w - 2.0 * pad - 16.0 * s, 1.0, 0.0, theme::hair())?;
+                    let (line, _, _) = ui::rounded(c, (w - 2.0 * pad - 16.0 * s).max(1.0), 1.0, 0.0, theme::hair())?;
                     line.SetOffset(v3(pad + 8.0 * s, row.y + (row.h / 2.0).floor(), 0.0))?;
-                    panel.content.Children()?.InsertAtTop(&line)?;
+                    inner.Children()?.InsertAtTop(&line)?;
                 }
                 (_, Some((lab, _lw, lh, sc))) => {
                     let x = if it.kind == Kind::Header { pad + 10.0 * s } else { pad + text_x };
                     lab.SetOffset(v3(x, (row.y + (row.h - lh) / 2.0).round(), 0.0))?;
-                    panel.content.Children()?.InsertAtTop(&lab)?;
+                    inner.Children()?.InsertAtTop(&lab)?;
                     if it.checked {
                         let (ck, _, ch) = ui::text(c, gfx, "\u{2713}", &TextStyle { px: 13.0 * s, weight: 600, ..Default::default() })?;
                         ck.SetOffset(v3(pad + 9.0 * s, (row.y + (row.h - ch) / 2.0).round(), 0.0))?;
-                        panel.content.Children()?.InsertAtTop(&ck)?;
+                        inner.Children()?.InsertAtTop(&ck)?;
                     }
                     if let Some((sv, sw, sh)) = sc {
                         sv.SetOffset(v3(w - pad - 12.0 * s - sw, (row.y + (row.h - sh) / 2.0).round(), 0.0))?;
-                        panel.content.Children()?.InsertAtTop(&sv)?;
+                        inner.Children()?.InsertAtTop(&sv)?;
                     }
                 }
                 _ => {}
             }
+        }
+        if content_h > h {
+            let (top, height) = crate::menu_layout::thumb(h, content_h, 0.0, pad, 16.0 * s);
+            let (thumb, _, _) = ui::rounded(c, 3.0 * s, height, 1.5 * s, theme::ink(0.34))?;
+            thumb.SetOffset(v3((w - 5.0 * s).max(0.0), top, 0.0))?;
+            panel.content.Children()?.InsertAtTop(&thumb)?;
+            self.scroll_thumb = Some(thumb);
         }
         root.Children()?.InsertAtTop(&panel.root)?;
 
@@ -265,6 +304,8 @@ impl Menu {
             return;
         }
         self.open = false;
+        self.scroll_inner = None;
+        self.scroll_thumb = None;
         self.popup.hide();
         if restore_focus && !self.restore_focus.is_invalid() {
             unsafe {
@@ -275,10 +316,36 @@ impl Menu {
 
     fn row_at(&self, x: f32, y: f32) -> Option<usize> {
         let (ox, oy) = self.origin;
-        if x < ox || x > ox + self.panel_w {
+        if x < ox || x >= ox + self.panel_w {
             return None;
         }
-        self.rows.iter().position(|r| y - oy >= r.y && y - oy < r.y + r.h)
+        let y = crate::menu_layout::hit_y(y, oy, self.panel_h, self.scroll_y)?;
+        self.rows.iter().position(|r| y >= r.y && y < r.y + r.h)
+    }
+
+    fn set_scroll(&mut self, y: f32) {
+        let max = crate::menu_layout::max_scroll(self.content_h, self.panel_h);
+        self.scroll_y = y.clamp(0.0, max);
+        if let Some(inner) = &self.scroll_inner { let _ = inner.SetOffset(v3(0.0, -self.scroll_y, 0.0)); }
+        if let Some(thumb) = &self.scroll_thumb {
+            let (top, _) = crate::menu_layout::thumb(self.panel_h, self.content_h, self.scroll_y, 5.0*self.scale, 16.0*self.scale);
+            let _ = thumb.SetOffset(v3((self.panel_w - 5.0*self.scale).max(0.0), top, 0.0));
+        }
+    }
+
+    /// Windows wheel deltas are multiples of 120, but precision wheels may send less.
+    pub fn on_wheel(&mut self, c: &Compositor, delta: i16) {
+        if crate::menu_layout::max_scroll(self.content_h, self.panel_h) <= 0.0 { return; }
+        self.set_scroll(self.scroll_y - (delta as f32 / 120.0) * 3.0 * 26.0 * self.scale);
+        // The old hover is no longer under the pointer after scrolling.
+        self.set_hover(c, None);
+    }
+
+    fn reveal_row(&mut self, row: usize) {
+        if let Some(r) = self.rows.get(row) {
+            let y = crate::menu_layout::reveal(self.scroll_y, r.y, r.h, self.panel_h, self.content_h, 5.0*self.scale);
+            self.set_scroll(y);
+        }
     }
 
     fn selectable(&self, row: usize) -> bool {
@@ -328,17 +395,25 @@ impl Menu {
     }
 
     pub fn navigate(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, action: MenuAction) -> Result<()> {
-        let items = match action {
+        let (items, restore) = match action {
             MenuAction::Open(children) => {
-                self.trail.push(self.items.clone());
+                self.trail.push(MenuFrame { items: self.items.clone(), scroll_y: self.scroll_y, hover: self.hover });
                 let mut items = vec![MenuItem::back(), MenuItem::sep()];
                 items.extend(children);
-                items
+                (items, None)
             }
-            MenuAction::Back => match self.trail.pop() { Some(items) => items, None => return Ok(()) },
+            MenuAction::Back => match self.trail.pop() {
+                Some(frame) => (frame.items, Some((frame.scroll_y, frame.hover))),
+                None => return Ok(()),
+            },
             _ => return Ok(()),
         };
-        self.show_view(c, gfx, backdrop, items, self.anchor, self.above, self.scale, self.monitor)
+        self.show_view(c, gfx, backdrop, items, self.anchor, self.above, self.scale, self.monitor)?;
+        if let Some((scroll_y, hover)) = restore {
+            self.set_scroll(scroll_y);
+            self.set_hover(c, hover);
+        }
+        Ok(())
     }
 
     /// Arrow keys navigate, Enter activates, Escape returns to the parent or closes.
@@ -356,10 +431,17 @@ impl Menu {
         };
         if vk == VK_DOWN.0 {
             let r = step(self.hover, 1);
+            if let Some(row) = r { self.reveal_row(row); }
             self.set_hover(c, r);
             None
         } else if vk == VK_UP.0 {
             let r = step(self.hover, -1);
+            if let Some(row) = r { self.reveal_row(row); }
+            self.set_hover(c, r);
+            None
+        } else if vk == VK_HOME.0 || vk == VK_END.0 {
+            let r = if vk == VK_HOME.0 { step(None, 1) } else { step(None, -1) };
+            if let Some(row) = r { self.reveal_row(row); }
             self.set_hover(c, r);
             None
         } else if vk == VK_RETURN.0 || vk == VK_SPACE.0 {

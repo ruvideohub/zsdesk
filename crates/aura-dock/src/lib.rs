@@ -43,6 +43,7 @@ mod launch_target;
 mod latest_worker;
 mod launchpad_command_aliases;
 mod menu;
+mod menu_layout;
 mod metrics;
 mod preview;
 mod radio;
