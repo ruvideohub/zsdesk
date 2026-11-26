@@ -59,6 +59,11 @@ const NETWORK_TILE_X: [f32; 2] = [18.0, 137.0];
 const NETWORK_TILE_W: f32 = 113.0;
 const NETWORK_TILE_Y: f32 = 62.0;
 const NETWORK_TILE_H: f32 = 84.0;
+/// The same quiet inset language also applies when no battery data exists.
+const BATTERY_EMPTY_X: f32 = 18.0;
+const BATTERY_EMPTY_Y: f32 = 62.0;
+const BATTERY_EMPTY_W: f32 = 232.0;
+const BATTERY_EMPTY_H: f32 = 64.0;
 
 const CLASS: windows::core::PCWSTR = w!("AuraExplorerDesktopSystem");
 
@@ -381,15 +386,21 @@ impl DesktopSystem {
             Kind::Battery => {
                 if let Some(charge) = meters.first() {
                     let has_details = meters.len() == 3;
-                    style::text(c, gfx, root, &charge.text, 21.0*k, 63.0*k, 118.0*k,
-                        if has_details { 29.0*k } else { 15.0*k }, 600, theme::text(), true, false)?;
                     if has_details {
+                        style::text(c, gfx, root, &charge.text, 21.0*k, 63.0*k, 118.0*k,
+                            29.0*k, 600, theme::text(), true, false)?;
                         style::text(c, gfx, root, &meters[1].text, 22.0*k, 103.0*k, 116.0*k,
                             11.0*k, 500, theme::text_2(), false, false)?;
                         style::tile(c, root, 151.0*k, 65.0*k, 97.0*k, 55.0*k, 15.0*k, k)?;
                         style::text(c, gfx, root, "ОСТАЛОСЬ", 162.0*k, 72.0*k, 76.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
                         style::fitted_text(c, gfx, root, &meters[2].text, 162.0*k, 91.0*k, 76.0*k, 12.0*k, 600, theme::text(), false)?;
                         style::meter(c, root, 21.0*k, 138.0*k, 226.0*k, 5.0*k, charge.fill)?;
+                    } else {
+                        // Do not draw an empty progress bar or a fabricated 0%:
+                        // the existing message is the only available reading.
+                        style::tile(c, root, BATTERY_EMPTY_X*k, BATTERY_EMPTY_Y*k, BATTERY_EMPTY_W*k, BATTERY_EMPTY_H*k, 16.0*k, k)?;
+                        style::fitted_text(c, gfx, root, &charge.text, 30.0*k, 82.0*k, 208.0*k,
+                            15.0*k, 600, theme::text(), false)?;
                     }
                 }
             }
@@ -546,6 +557,16 @@ mod tests {
             assert!((12.0 + 14.0) * scale < 29.0 * scale);
             assert!((29.0 + 75.0) * scale <= NETWORK_TILE_W * scale);
             assert!((12.0 + 91.0) * scale <= NETWORK_TILE_W * scale);
+        }
+    }
+
+    #[test]
+    fn unavailable_battery_tile_keeps_message_within_card_at_supported_scales() {
+        for k in [0.75_f32, 1.0, 1.25, 1.5, 2.0, 3.0] {
+            assert!(BATTERY_EMPTY_X*k > 0.0 && (BATTERY_EMPTY_X + BATTERY_EMPTY_W)*k <= CARD_W*k);
+            assert!(BATTERY_EMPTY_Y*k > 48.0*k && (BATTERY_EMPTY_Y + BATTERY_EMPTY_H)*k <= CARD_H*k);
+            assert!(30.0*k >= BATTERY_EMPTY_X*k && (30.0 + 208.0)*k <= (BATTERY_EMPTY_X + BATTERY_EMPTY_W)*k);
+            assert!(82.0*k > BATTERY_EMPTY_Y*k && (82.0 + 20.0)*k <= (BATTERY_EMPTY_Y + BATTERY_EMPTY_H)*k);
         }
     }
 

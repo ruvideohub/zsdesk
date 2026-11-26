@@ -655,8 +655,17 @@ impl FenceWin {
                     cv.text(text,RectF::new(area.x+sf(8.0),area.y,(area.w-sf(16.0)).max(0.0),area.h),&TextStyle::ui(sf(11.0)),col(palette.text));
                 }}}
                 cv.pop_clip();
-                if !g.thumb.is_empty() && (hovered || matches!(self.interaction, Some(Interaction::Thumb { .. }))) {
-                    cv.round(rf(g.thumb), sf(2.0), col(palette.text_secondary).with_alpha(0.6));
+                if !g.thumb.is_empty() {
+                    let dragging = matches!(self.interaction, Some(Interaction::Thumb { .. }));
+                    let appearance = super::scroll_style::appearance(hovered, dragging, high_contrast);
+                    if appearance.show_track {
+                        if let Some(height) = super::scroll_style::track_height(content.h, dpi as f32 / 96.0) {
+                            let track = RectF::new(g.thumb.x as f32, content.y + sf(4.0), g.thumb.width as f32, height);
+                            cv.round(track, sf(2.0), col(palette.hover));
+                        }
+                    }
+                    let ink = if high_contrast { col(palette.text) } else { col(palette.text_secondary) };
+                    cv.round(rf(g.thumb), sf(2.0), ink.with_alpha(appearance.thumb_opacity));
                 }
             }
             let highlight = drop_all || self.merge_hover.is_some();
