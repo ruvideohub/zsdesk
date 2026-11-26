@@ -240,11 +240,12 @@ const CMD_BATTERY_HIDE: usize = 3667;
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
 /// Widgets one click away from the panel's own menu: the everyday ones.
-const DOCK_WIDGETS: [&str; 9] = [
+const DOCK_WIDGETS: [&str; 10] = [
     "clock",
     "weather-hourly",
     "month",
     "notes",
+    "online-radio",
     "resource-monitor",
     "battery",
     "now-playing-compact",

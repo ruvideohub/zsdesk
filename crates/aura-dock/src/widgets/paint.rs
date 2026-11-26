@@ -2143,6 +2143,32 @@ fn timer(c: &Canvas, out: &mut Painted, k: TimerKind, x: &Ctx, sh: Shape) {
     }
 }
 
+// Internet radio: station, truthful connection state, and independent transport controls.
+fn radio_widget(c: &Canvas, out: &mut Painted, x: &Ctx, sh: Shape) {
+    let radio = &x.hub.radio;
+    let playing = matches!(radio.state(), crate::radio_player::State::Playing | crate::radio_player::State::Opening) || radio.loading;
+    let play_glyph = if playing { G_PAUSE } else { G_PLAY };
+    if sh == Shape::Mini {
+        c.glyph(play_glyph, c.w / 2.0, c.h / 2.0, 16.0, c.text1());
+        out.hits.push(((0.0, 0.0, c.w, c.h), WAct::RadioToggle));
+        return;
+    }
+    let dense = sh == Shape::Dock;
+    let controls_y = if dense { c.h / 2.0 } else { c.h - 24.0 };
+    let gap = if dense { 27.0 } else { 36.0 };
+    let controls_x = if dense { c.w - 45.0 } else { c.w / 2.0 };
+    let label_w = if dense { (c.w - 104.0).max(1.0) } else { (c.w - 28.0).max(1.0) };
+    let name = if radio.stations.is_empty() { crate::strings::tr("Online Radio") } else { radio.name().to_string() };
+    let caption = crate::strings::tr(radio.caption());
+    c.tw(&name, 12.0, if dense { (c.h / 2.0 - 15.0).max(2.0) } else { 12.0 }, 12.0, 600, c.text1(), label_w);
+    c.tw(&caption, 12.0, if dense { (c.h / 2.0 + 2.0).max(2.0) } else { 32.0 }, 10.5, 400, c.text2(), label_w);
+    for (i, (glyph, action)) in [(G_PREV, WAct::RadioPrevious), (play_glyph, WAct::RadioToggle), (G_NEXT, WAct::RadioNext)].into_iter().enumerate() {
+        let cx = controls_x + (i as f32 - 1.0) * gap;
+        c.glyph(glyph, cx, controls_y, if i == 1 { 16.0 } else { 12.0 }, c.text1());
+        out.hits.push(((cx - gap / 2.0, controls_y - 16.0, gap, 32.0), action));
+    }
+}
+
 // ------------------------------------------------------------------ media
 
 #[allow(clippy::too_many_arguments)]
@@ -2721,6 +2747,7 @@ fn tool(c: &Canvas, out: &mut Painted, k: ToolKind, x: &Ctx, sh: Shape) {
                 }
             }
         }
+        ToolKind::Radio => radio_widget(c, out, x, sh),
         ToolKind::Notes => {
             out.hits.push(((0.0, 0.0, c.w, c.h), WAct::Notes));
             let lines: Vec<&str> = x.hub.notes.lines().filter(|l| !l.trim().is_empty()).collect();

@@ -295,6 +295,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/dock-launchpad-layout-tests.exe
           exit $LASTEXITCODE
+      - name: Radio station navigation tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/radio_queue.rs -o target/radio-queue-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/radio-queue-tests.exe
+          exit $LASTEXITCODE
       - name: Radio callback safety tests
         shell: pwsh
         working-directory: aura

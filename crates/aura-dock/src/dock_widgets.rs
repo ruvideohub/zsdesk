@@ -214,6 +214,9 @@ impl Dock {
                 self.hub.desktop_shown = !self.hub.desktop_shown;
             }
             WAct::Language => send_keys(&[VK_LWIN, VK_SPACE]),
+            WAct::RadioPrevious => self.hub.radio.next(false),
+            WAct::RadioToggle => self.hub.radio_toggle(),
+            WAct::RadioNext => self.hub.radio.next(true),
             WAct::MediaPrev => self.lp_act(Act::MediaPrev),
             WAct::MediaPlay => self.lp_act(Act::MediaPlay),
             WAct::MediaNext => self.lp_act(Act::MediaNext),

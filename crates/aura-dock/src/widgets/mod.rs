@@ -184,6 +184,9 @@ pub enum WAct {
     MediaPrev,
     MediaPlay,
     MediaNext,
+    RadioPrevious,
+    RadioToggle,
+    RadioNext,
     /// Set from the click position inside the hit rectangle (0..1 across it).
     Volume,
     /// The microphone level, set the same way (and it unmutes above zero).

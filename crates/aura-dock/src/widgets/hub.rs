@@ -158,6 +158,7 @@ enum Job {
     Output,
     ApplyWallpaper(String),
     Geocode(String),
+    RadioCatalogue,
 }
 
 enum Reply {
@@ -168,9 +169,11 @@ enum Reply {
     Touched,
     Output(Option<String>),
     Geocode(String, Option<(f32, f32, String)>),
+    RadioCatalogue(Option<Vec<crate::radio_playlist::Station>>),
 }
 
 pub struct Hub {
+    pub radio: crate::radio::Radio,
     pub slots: HashMap<String, Slot>,
     pub timers: HashMap<TimerKind, Countdown>,
     pub stopwatch: Stopwatch,
@@ -215,6 +218,7 @@ impl Hub {
         timers.insert(TimerKind::Pomodoro, Countdown::new(25 * 60));
         timers.insert(TimerKind::Countdown, Countdown::new(5 * 60));
         Self {
+            radio: crate::radio::Radio::default(),
             slots: HashMap::new(),
             timers,
             stopwatch: Stopwatch::default(),
@@ -295,6 +299,7 @@ impl Hub {
                         // pick up "this display takes no brightness commands".
                         Some(Reply::Touched)
                     }
+                    Job::RadioCatalogue => Some(Reply::RadioCatalogue(crate::radio_catalogue::load())),
                     Job::Output => Some(Reply::Output(laminar_sys::audio::default_output_name())),
                     Job::Geocode(city) => {
                         let r = laminar_sys::weather::geocode(&city);
@@ -355,6 +360,7 @@ impl Hub {
                         self.brightness = b;
                     }
                 }
+                Reply::RadioCatalogue(r) => self.radio.finish_loading(r),
                 Reply::Output(n) => self.output_name = n,
                 Reply::Geocode(city, r) => self.geocoded = Some((city, r)),
             }
@@ -415,6 +421,9 @@ impl Hub {
         if !self.brightness_busy.swap(true, Ordering::SeqCst) {
             self.run(Job::SetBrightness);
         }
+    }
+    pub fn radio_toggle(&mut self) {
+        if self.radio.toggle() { self.run(Job::RadioCatalogue); }
     }
     pub fn ask_output(&self) {
         self.run(Job::Output);
