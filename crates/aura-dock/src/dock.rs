@@ -262,6 +262,10 @@ const CMD_RADIO_HIDE: usize = 3681;
 const CMD_RADIO_PREV: usize = 3682;
 const CMD_RADIO_TOGGLE: usize = 3683;
 const CMD_RADIO_NEXT: usize = 3684;
+const CMD_RADIO_LOAD: usize = 3685;
+const CMD_RADIO_CHOOSE: usize = 3686;
+const CMD_RADIO_DEFAULT: usize = 3687;
+const CMD_RADIO_STATION_BASE: usize = 100_000;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -2784,6 +2788,19 @@ impl Dock {
             CMD_RADIO_PREV => self.hub.radio.next(false),
             CMD_RADIO_TOGGLE => self.hub.radio_toggle(),
             CMD_RADIO_NEXT => self.hub.radio.next(true),
+            CMD_RADIO_LOAD => self.hub.radio_load(),
+            CMD_RADIO_CHOOSE => self.hub.radio_choose(),
+            CMD_RADIO_DEFAULT => {
+                if !self.hub.radio.loading {
+                    let path = crate::radio_import::path();
+                    match std::fs::remove_file(path) {
+                        Ok(()) => { self.hub.radio.replace_catalogue(Vec::new()); self.hub.radio_load(); },
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => { self.hub.radio.replace_catalogue(Vec::new()); self.hub.radio_load(); },
+                        Err(_) => self.notice(&[if crate::strings::russian() { "Не удалось переключить плейлист".into() } else { "Could not switch playlist".into() }]),
+                    }
+                }
+            }
+            cmd if (CMD_RADIO_STATION_BASE..CMD_RADIO_STATION_BASE + crate::radio_playlist::MAX_STATIONS).contains(&cmd) => self.hub.radio.select(cmd - CMD_RADIO_STATION_BASE),
             CMD_WEATHER_DESKTOP => self.save_and_apply(|c| c.desktop_weather = !c.desktop_weather),
             CMD_WEATHER_HIDE => self.save_and_apply(|c| c.desktop_weather = false),
             CMD_WEATHER_LOCK => self.save_and_apply(|c| c.desktop_weather_locked = !c.desktop_weather_locked),
@@ -6885,6 +6902,7 @@ impl Dock {
             crate::desktop_radio::PREVIOUS => self.hub.radio.next(false),
             crate::desktop_radio::TOGGLE => self.hub.radio_toggle(),
             crate::desktop_radio::NEXT => self.hub.radio.next(true),
+            crate::desktop_radio::STATIONS => { self.extra_menu(5); return; },
             _ => return,
         }
         let radio = &self.hub.radio;
@@ -6913,6 +6931,24 @@ impl Dock {
                 items.push(MenuItem::item(if english { "Previous station" } else { "Предыдущая станция" }, CMD_RADIO_PREV));
                 items.push(MenuItem::item(if english { "Play / Pause" } else { "Воспроизвести / пауза" }, CMD_RADIO_TOGGLE));
                 items.push(MenuItem::item(if english { "Next station" } else { "Следующая станция" }, CMD_RADIO_NEXT));
+                let radio = &self.hub.radio;
+                if radio.loading {
+                    items.push(MenuItem::header(if english { "Loading…" } else { "Загрузка…" }));
+                } else if radio.stations.is_empty() {
+                    items.push(MenuItem::item(if english { "Load station list" } else { "Загрузить список станций" }, CMD_RADIO_LOAD));
+                } else {
+                    let pages: Vec<MenuItem> = radio.stations.chunks(50).enumerate().map(|(page, stations)| {
+                        let start = page * 50;
+                        let entries = stations.iter().enumerate().map(|(i, station)|
+                            MenuItem::item(&station.name, CMD_RADIO_STATION_BASE + start + i).checked(start + i == radio.index)).collect();
+                        MenuItem::submenu(format!("{}–{}", start + 1, start + stations.len()), entries)
+                    }).collect();
+                    items.push(MenuItem::submenu(if english { "Stations" } else { "Станции" }, pages));
+                }
+                if !radio.loading {
+                    items.push(MenuItem::item(if english { "Import M3U playlist…" } else { "Выбрать M3U-плейлист…" }, CMD_RADIO_CHOOSE));
+                    items.push(MenuItem::item(if english { "Use default playlist" } else { "Стандартный плейлист" }, CMD_RADIO_DEFAULT));
+                }
             }
             items.push(MenuItem::item(if english { "Lock position" } else { "Закрепить положение" }, lock).checked(locked));
             items.push(MenuItem::item(if english { "Hide card" } else { "Скрыть карточку" }, hide).danger());

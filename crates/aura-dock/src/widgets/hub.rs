@@ -159,6 +159,7 @@ enum Job {
     ApplyWallpaper(String),
     Geocode(String),
     RadioCatalogue,
+    RadioChoose,
 }
 
 enum Reply {
@@ -170,6 +171,7 @@ enum Reply {
     Output(Option<String>),
     Geocode(String, Option<(f32, f32, String)>),
     RadioCatalogue(Option<Vec<crate::radio_playlist::Station>>),
+    RadioChoose(crate::radio_import::Choice),
 }
 
 pub struct Hub {
@@ -300,6 +302,7 @@ impl Hub {
                         Some(Reply::Touched)
                     }
                     Job::RadioCatalogue => Some(Reply::RadioCatalogue(crate::radio_catalogue::load())),
+                    Job::RadioChoose => Some(Reply::RadioChoose(crate::radio_import::choose())),
                     Job::Output => Some(Reply::Output(laminar_sys::audio::default_output_name())),
                     Job::Geocode(city) => {
                         let r = laminar_sys::weather::geocode(&city);
@@ -361,6 +364,11 @@ impl Hub {
                     }
                 }
                 Reply::RadioCatalogue(r) => self.radio.finish_loading(r),
+                Reply::RadioChoose(choice) => match choice {
+                    crate::radio_import::Choice::Cancelled => self.radio.loading = false,
+                    crate::radio_import::Choice::Failed => { self.radio.loading = false; self.radio.import_error = true; },
+                    crate::radio_import::Choice::Loaded(stations) => self.radio.replace_catalogue(stations),
+                },
                 Reply::Output(n) => self.output_name = n,
                 Reply::Geocode(city, r) => self.geocoded = Some((city, r)),
             }
@@ -424,6 +432,12 @@ impl Hub {
     }
     pub fn radio_toggle(&mut self) {
         if self.radio.toggle() { self.run(Job::RadioCatalogue); }
+    }
+    pub fn radio_load(&mut self) {
+        if !self.radio.loading { self.radio.loading = true; self.radio.pending_play = false; self.radio.error = false; self.radio.import_error = false; self.run(Job::RadioCatalogue); }
+    }
+    pub fn radio_choose(&mut self) {
+        if !self.radio.loading { self.radio.loading = true; self.radio.pending_play = false; self.radio.error = false; self.radio.import_error = false; self.run(Job::RadioChoose); }
     }
     pub fn ask_output(&self) {
         self.run(Job::Output);

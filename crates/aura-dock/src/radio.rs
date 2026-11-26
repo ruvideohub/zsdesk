@@ -9,6 +9,7 @@ pub struct Radio {
     pub loading: bool,
     pub pending_play: bool,
     pub error: bool,
+    pub import_error: bool,
     pub nested: bool,
     player: RadioPlayer,
 }
@@ -26,6 +27,7 @@ impl Radio {
         if self.loading {
             return "Loading stations…";
         }
+        if self.import_error { return "Playlist import failed"; }
         if self.nested {
             return "Playlist stream unsupported";
         }
@@ -49,6 +51,7 @@ impl Radio {
             self.loading = true;
             self.pending_play = true;
             self.error = false;
+            self.import_error = false;
             return true;
         }
         match self.player.state() {
@@ -81,6 +84,19 @@ impl Radio {
         }
         self.pending_play = false;
     }
+    pub fn select(&mut self, index: usize) {
+        if index < self.stations.len() { self.index = index; self.play_selected(); }
+    }
+    pub fn replace_catalogue(&mut self, stations: Vec<Station>) {
+        self.player.stop();
+        self.stations = stations;
+        self.index = 0;
+        self.loading = false;
+        self.pending_play = false;
+        self.error = false;
+        self.import_error = false;
+        self.nested = false;
+    }
     pub fn next(&mut self, forward: bool) {
         if let Some(i) = crate::radio_queue::step(self.index, self.stations.len(), forward) {
             self.index = i;
@@ -89,6 +105,7 @@ impl Radio {
     }
     fn play_selected(&mut self) {
         self.error = false;
+        self.import_error = false;
         self.nested = false;
         let Some(s) = self.stations.get(self.index) else {
             return;

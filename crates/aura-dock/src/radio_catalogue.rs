@@ -17,6 +17,7 @@ impl Drop for Handle {
 }
 
 pub fn load() -> Option<Vec<Station>> {
+    if crate::radio_import::path().exists() { return crate::radio_import::load_saved(); }
     unsafe {
         let session = Handle(WinHttpOpen(
             w!("AuraDock Radio"),

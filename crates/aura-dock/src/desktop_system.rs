@@ -424,6 +424,7 @@ impl DesktopSystem {
                 let title = if waiting { if crate::strings::russian() { "Связь с проигрывателем…" } else { "Connecting to player…" } } else { &meters[0].text };
                 style::fitted_text(c, gfx, root, title, 22.0*k, 61.0*k, 224.0*k, 14.0*k, 600, theme::text(), false)?;
                 if !waiting { style::text(c, gfx, root, &meters[1].text, 22.0*k, 87.0*k, 224.0*k, 11.0*k, 500, theme::text_2(), false, false)?; }
+                style::text(c, gfx, root, if crate::strings::russian() { "Список станций и плейлист ›" } else { "Stations and playlist ›" }, 58.0*k, 150.0*k, 190.0*k, 10.0*k, 500, theme::text_2(), false, false)?;
                 for (index, x) in [52.0_f32, 112.0, 172.0].into_iter().enumerate() {
                     style::tile(c, root, x*k, 117.0*k, 44.0*k, 30.0*k, 10.0*k, k)?;
                     let glyph = match index { 0 => "◀", 1 if meters[0].label == "playing" => "Ⅱ", 1 => "▶", _ => "▶▶" };

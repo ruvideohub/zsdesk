@@ -129,6 +129,7 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Edit notes…" => "Редактировать заметки…",
         "Online Radio" => "Онлайн-радио",
         "Loading stations…" => "Загрузка станций…",
+        "Playlist import failed" => "Не удалось импортировать плейлист",
         "Playlist stream unsupported" => "Вложенный плейлист не поддерживается",
         "Radio unavailable — retry" => "Радио недоступно — повторите",
         "Connecting…" => "Подключение…",

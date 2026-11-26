@@ -12,6 +12,7 @@ pub const QUERY: isize = 0;
 pub const PREVIOUS: isize = 1;
 pub const TOGGLE: isize = 2;
 pub const NEXT: isize = 3;
+pub const STATIONS: isize = 4;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct View { pub name: String, pub caption: String, pub playing: bool }
@@ -40,6 +41,7 @@ pub unsafe fn receive(ptr: isize) -> Option<View> {
 
 /// Buttons in logical pixels. The rest of the card remains draggable.
 pub fn hit(x: f32, y: f32) -> Option<isize> {
+    if (149.0..166.0).contains(&y) && (22.0..246.0).contains(&x) { return Some(STATIONS); }
     if !(117.0..147.0).contains(&y) { return None; }
     if (52.0..96.0).contains(&x) { Some(PREVIOUS) }
     else if (112.0..156.0).contains(&x) { Some(TOGGLE) }
@@ -57,6 +59,9 @@ mod tests {
         assert_eq!(hit(200.0, 130.0), Some(NEXT));
         assert_eq!(hit(96.0, 130.0), None);
         assert_eq!(hit(134.0, 147.0), None);
+        assert_eq!(hit(134.0, 155.0), Some(STATIONS));
+        assert_eq!(hit(21.0, 155.0), None);
+        assert_eq!(hit(134.0, 166.0), None);
         assert_eq!(hit(f32::NAN, 130.0), None);
     }
     #[test]

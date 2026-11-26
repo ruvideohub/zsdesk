@@ -48,6 +48,7 @@ mod metrics;
 mod preview;
 mod radio;
 mod radio_catalogue;
+mod radio_import;
 mod radio_generation;
 mod radio_playlist;
 mod radio_player;
