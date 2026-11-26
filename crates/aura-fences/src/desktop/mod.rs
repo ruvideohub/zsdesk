@@ -10,6 +10,8 @@
 mod fence;
 mod appearance_panel;
 mod rounded_mask;
+mod shadow_mask;
+mod shadow;
 mod host;
 mod menu_worker;
 mod return_to_desktop;
@@ -252,7 +254,7 @@ unsafe extern "system" fn layer_window_hook(_:windows::Win32::UI::Accessibility:
 }
 
 fn desktop_layer_class(class:&str)->bool{
-    matches!(class,host::FENCE_CLASS|HOST_CLASS|return_to_desktop::DROP_CLASS)
+    matches!(class,host::FENCE_CLASS|HOST_CLASS|return_to_desktop::DROP_CLASS|shadow::CLASS_NAME)
 }
 
 /// Runs `f` on the host unless it is already borrowed by an outer call.
@@ -530,7 +532,7 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
         WM_SETTINGCHANGE => {
             let area = if lp.0 != 0 { unsafe { PCWSTR(lp.0 as *const u16).to_string() }.unwrap_or_default() } else { String::new() };
             if wp.0 as u32 == SPI_SETWORKAREA.0 { with_host(|h| h.place_all()); }
-            if area == "ImmersiveColorSet"||wp.0 as u32==SPI_SETHIGHCONTRAST.0 { with_host(|h| { h.update_palette();for window in &h.fences{fence::apply_glass(window.hwnd);}h.render_all(); }); }
+            if matches!(area.as_str(),"ImmersiveColorSet"|"WindowsThemeElement"|"UserPreferencesMask"|"")||wp.0 as u32==SPI_SETHIGHCONTRAST.0 { with_host(|h| { h.update_palette();for window in &h.fences{fence::apply_glass(window.hwnd);}h.render_all(); }); }
             if area == "ShellState" { unsafe { SetTimer(Some(hwnd), TIMER_DESKTOP, 250, None); } }
             return LRESULT(0);
         }
@@ -646,6 +648,8 @@ unsafe extern "system" fn fence_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARA
             return LRESULT(0);
         }
         WM_MOUSEACTIVATE => return LRESULT(MA_ACTIVATE as isize),
+        WM_SHOWWINDOW => shadow::sync(hwnd,Some(wp.0 != 0)),
+        WM_WINDOWPOSCHANGED => shadow::sync(hwnd,Some(unsafe{IsWindowVisible(hwnd)}.as_bool())),
         // Resizes happen inside host calls, so the shape is kept here, outside the host borrow.
         WM_SIZE => fence::shape_window(hwnd),
         _ => {}

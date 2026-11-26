@@ -3,6 +3,7 @@ use super::*;
 use anyhow::ensure;
 use std::{ffi::c_void,fs,path::Path,thread,time::{Duration,Instant}};
 use aura_fences_model::desktop::{DesktopConfig,Fence,FenceSource,FenceView,Placement};
+use windows::Win32::Foundation::RECT;
 use windows::Win32::UI::{Input::KeyboardAndMouse::{GetCapture,SetCapture,ReleaseCapture,VK_HOME,VK_DOWN},Shell::{NIN_SELECT,NINF_KEY}};
 #[link(name="user32")]unsafe extern "system"{
     fn CreateDesktopW(name:*const u16,device:*const u16,mode:*const c_void,flags:u32,access:u32,attributes:*const c_void)->*mut c_void;
@@ -227,4 +228,45 @@ fn native_fence_cut_appearance_and_paste_selection()->Result<()>{
     let restored=unsafe{SetProcessWindowStation(original)}!=0;let desktop_closed=unsafe{CloseDesktop(desktop)}!=0;let station_closed=unsafe{CloseWindowStation(station)}!=0;
     let report=serde_json::json!({"state":if result.is_ok()&&restored&&desktop_closed&&station_closed{"passed"}else{"failed"},"checks":result.as_ref().map_err(|error|format!("{error:#}")),"station_restored":restored,"desktop_closed":desktop_closed,"station_closed":station_closed});
     fs::write(root.join("verification.current.json"),serde_json::to_vec_pretty(&report)?)?;println!("{report}");result?;ensure!(restored&&desktop_closed&&station_closed,"clipboard fixture cleanup failed");Ok(())
+}
+
+#[test]
+fn shadow_window_is_not_a_foreign_application_for_layer_repair(){
+    assert!(super::desktop_layer_class(super::shadow::CLASS_NAME));
+    assert!(!super::desktop_layer_class("Unrelated.Application.Window"));
+}
+
+#[test]
+#[ignore="Native shadow lifecycle on a private desktop"]
+fn native_fence_shadow_moves_hides_and_destroys()->Result<()>{
+    let name=wide(&format!("AuraFences.ShadowTest.{}",std::process::id()));
+    let desktop=unsafe{CreateDesktopW(name.as_ptr(),std::ptr::null(),std::ptr::null(),0,0x000f00ff,std::ptr::null())};
+    ensure!(!desktop.is_null(),"CreateDesktop failed");let raw=desktop as usize;
+    let result=thread::spawn(move||->Result<()>{
+        ensure!(unsafe{SetThreadDesktop(raw as *mut c_void)}!=0,"SetThreadDesktop failed");
+        let instance=HINSTANCE(unsafe{GetModuleHandleW(None)?}.0);let class=w!("AuraFences.ShadowTestOwner");
+        unsafe{RegisterClassW(&WNDCLASSW{hInstance:instance,lpfnWndProc:Some(fence_proc),lpszClassName:class,..Default::default()});}
+        let owner=unsafe{CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE|WS_EX_LAYERED,class,w!(""),WS_POPUP,50,60,320,240,None,None,Some(instance),None)}?;
+        unsafe{SetWindowLongPtrW(owner,GWLP_USERDATA,1);}
+        let result=(||->Result<()>{
+            let mut shadow=super::shadow::Shadow::new(owner).context("shadow window")?;
+            let child=shadow.hwnd();let dpi=unsafe{windows::Win32::UI::HiDpi::GetDpiForWindow(owner)}.max(96);
+            ensure!(shadow.update(dpi,24,65),"layered shadow update failed");
+            ensure!(!unsafe{IsWindowVisible(child)}.as_bool(),"shadow shown before owner");
+            unsafe{let _=ShowWindow(owner,SW_SHOWNOACTIVATE);}
+            ensure!(unsafe{IsWindowVisible(child)}.as_bool(),"shadow did not follow owner show");
+            ensure!(unsafe{SendMessageW(child,WM_NCHITTEST,None,None)}.0==HTTRANSPARENT as isize,"shadow intercepted mouse");
+            let mut a=RECT::default();let mut b=RECT::default();unsafe{GetWindowRect(owner,&mut a)?;GetWindowRect(child,&mut b)?;}
+            let margin=((18u64*u64::from(dpi)+48)/96).min(256) as i32;
+            ensure!(b.left==a.left-margin&&b.top==a.top-margin,"shadow origin did not match owner");
+            unsafe{SetWindowPos(owner,None,220,180,350,260,SWP_NOZORDER|SWP_NOACTIVATE)?;}
+            ensure!(shadow.update(dpi,24,65),"resized shadow update failed");
+            unsafe{GetWindowRect(owner,&mut a)?;GetWindowRect(child,&mut b)?;}
+            ensure!(b.left==a.left-margin&&b.top==a.top-margin&&b.right-b.left==a.right-a.left+2*margin,"shadow did not follow resize");
+            unsafe{let _=ShowWindow(owner,SW_HIDE);}
+            ensure!(!unsafe{IsWindowVisible(child)}.as_bool(),"shadow remained after owner hide");
+            drop(shadow);ensure!(!unsafe{IsWindow(Some(child))}.as_bool(),"shadow leaked after drop");Ok(())
+        })();let _=unsafe{DestroyWindow(owner)};result
+    }).join().map_err(|_|anyhow::anyhow!("shadow test panicked")).and_then(|value|value);
+    let closed=unsafe{CloseDesktop(desktop)}!=0;result?;ensure!(closed,"private desktop did not close");Ok(())
 }

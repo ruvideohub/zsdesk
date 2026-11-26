@@ -18,12 +18,14 @@ pub const EDGE: i32 = 6;
 thread_local! {
     /// Frosted glass is enabled for fence surfaces.
     static BLUR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static ACRYLIC: std::cell::Cell<(bool,bool)> = const { std::cell::Cell::new((false,true)) };
     static CORNER_RADIUS: std::cell::Cell<u8> = const { std::cell::Cell::new(24) };
     static LAYOUT: std::cell::Cell<(u16,u8,u8)> = const { std::cell::Cell::new((100,6,0)) };
     static EDGE_HIGHLIGHT: std::cell::Cell<u8> = const { std::cell::Cell::new(55) };
 }
 
 pub fn set_blur(on: bool) { BLUR.with(|b| b.set(on)); }
+pub fn set_blur_style(acrylic:bool,dark:bool) { ACRYLIC.with(|v|v.set((acrylic,dark))); }
 pub fn set_corner_radius(radius: u8) { CORNER_RADIUS.with(|r| r.set(radius.min(40))); }
 pub fn set_layout(icon_scale:u16,padding:u8,spacing:u8) {
     LAYOUT.with(|v|v.set((icon_scale.clamp(50,200),padding.min(24),spacing.min(32))));
@@ -33,7 +35,8 @@ pub fn set_edge_highlight(value:u8) { EDGE_HIGHLIGHT.with(|v|v.set(value.min(100
 /// Applies or removes the frosted-glass blur and the matching rounded window region.
 pub fn apply_glass(hwnd: HWND) {
     let on = BLUR.with(std::cell::Cell::get) && !is_desktop_item(hwnd);
-    aura_windows::theme::set_blur_behind(hwnd, on);
+    let (acrylic,dark)=ACRYLIC.with(std::cell::Cell::get);
+    aura_windows::theme::set_blur_behind_with_acrylic(hwnd,on,acrylic,dark);
     shape_window(hwnd);
 }
 
@@ -351,6 +354,7 @@ pub struct FenceWin {
     pub standalone: bool,
     pub interaction: Option<Interaction>,
     pub surface: Option<Surface>,
+    pub shadow: Option<super::shadow::Shadow>,
     pub notify: Option<ChangeNotify>,
     pub notify_path: Option<std::path::PathBuf>,
     pub drop: Option<aura_windows::ole::DropRegistration>,
@@ -387,7 +391,7 @@ impl FenceWin {
     }
     pub fn new(id: u64) -> Self {
         let mut value=Self { id, hwnd: HWND::default(), dpi: 96, entries: Vec::new(), selection: HashSet::new(), anchor: None, focus: None,
-            hover: FenceHit::None, scroll: 0, zoom_remainder: 0, standalone: false, interaction: None, surface: None, notify: None, notify_path: None, drop: None,
+            hover: FenceHit::None, scroll: 0, zoom_remainder: 0, standalone: false, interaction: None, surface: None, shadow: None, notify: None, notify_path: None, drop: None,
             drop_hover: None, rename: None, message: None,notice:None,cut_keys:HashSet::new(),pending_selection:None,operation_epoch:0, tracking: false, peek: false, peek_blocked: false,
             tabs: Vec::new(), ghost: false, merge_hover: None, drop_tab: None };
         value.advance_operation_epoch();value

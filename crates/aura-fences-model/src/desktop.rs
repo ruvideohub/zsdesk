@@ -214,6 +214,9 @@ pub struct DesktopSettings {
     /// Intensity of the frame highlight, in percent.
     #[serde(default = "default_edge_highlight")]
     pub edge_highlight: u8,
+    /// Optional external shadow intensity; old profiles keep the former look.
+    #[serde(default)]
+    pub shadow_strength: u8,
     /// 文件夹格子内双击子文件夹时在格子内打开。
     pub browse_inside: bool,
     /// 鼠标悬停时临时展开折叠的格子，移开后自动收起。
@@ -228,6 +231,9 @@ pub struct DesktopSettings {
     /// Frosted glass: the desktop behind a fence is blurred.
     #[serde(default)]
     pub blur: bool,
+    /// Optional acrylic blur, with classic blur as a fallback on older systems.
+    #[serde(default)]
+    pub acrylic_blur: bool,
 }
 
 fn default_true() -> bool { true }
@@ -240,8 +246,8 @@ impl Default for DesktopSettings {
     fn default() -> Self {
         Self { organize: false, icons_hidden_by_aura: false, hidden: false, double_click_toggle: true,
             theme: FenceTheme::Dark, opacity: 55, corner_radius: default_corner_radius(), icon_scale: default_icon_scale(),
-            inner_padding: default_inner_padding(), icon_spacing: 0, edge_highlight: default_edge_highlight(), browse_inside: true, hover_expand: true, hide_tray: false, show_counts: false,
-            blur: false }
+            inner_padding: default_inner_padding(), icon_spacing: 0, edge_highlight: default_edge_highlight(), shadow_strength: 0, browse_inside: true, hover_expand: true, hide_tray: false, show_counts: false,
+            blur: false, acrylic_blur: false }
     }
 }
 
@@ -292,6 +298,7 @@ impl DesktopConfig {
         self.settings.inner_padding = self.settings.inner_padding.min(24);
         self.settings.icon_spacing = self.settings.icon_spacing.min(32);
         self.settings.edge_highlight = self.settings.edge_highlight.min(100);
+        self.settings.shadow_strength = self.settings.shadow_strength.min(100);
     }
     pub fn fence(&self, id: u64) -> Option<&Fence> { self.fences.iter().chain(&self.released_items).find(|f| f.id == id) }
     pub fn fence_mut(&mut self, id: u64) -> Option<&mut Fence> { self.fences.iter_mut().chain(&mut self.released_items).find(|f| f.id == id) }
@@ -795,9 +802,18 @@ mod tests {
     #[test]
     fn old_appearance_profiles_keep_layout_defaults() {
         let mut json=serde_json::to_value(DesktopConfig::default()).unwrap();
-        for key in ["icon_scale","inner_padding","icon_spacing","edge_highlight"] {json["settings"].as_object_mut().unwrap().remove(key);}
+        for key in ["icon_scale","inner_padding","icon_spacing","edge_highlight","shadow_strength","acrylic_blur"] {json["settings"].as_object_mut().unwrap().remove(key);}
         let cfg:DesktopConfig=serde_json::from_value(json).unwrap();
         assert_eq!((cfg.settings.icon_scale,cfg.settings.inner_padding,cfg.settings.icon_spacing,cfg.settings.edge_highlight),(100,6,0,55));
+        assert_eq!(cfg.settings.shadow_strength,0);assert!(!cfg.settings.acrylic_blur);
+    }
+    #[test]
+    fn shadow_and_acrylic_round_trip_and_normalize() {
+        let mut cfg=DesktopConfig::default();cfg.settings.shadow_strength=170;cfg.settings.acrylic_blur=true;
+        let serialized=serde_json::to_string(&cfg).unwrap();
+        let mut restored:DesktopConfig=serde_json::from_str(&serialized).unwrap();
+        assert_eq!(restored.settings.shadow_strength,170);assert!(restored.settings.acrylic_blur);
+        restored.normalize();assert_eq!(restored.settings.shadow_strength,100);assert!(restored.settings.acrylic_blur);
     }
     #[test]
     fn per_fence_appearance_is_optional_and_round_trips() {

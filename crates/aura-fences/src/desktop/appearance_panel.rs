@@ -16,12 +16,13 @@ const CHANGE:u32=WM_APP+705;
 const FINISH:u32=WM_APP+706;
 const BLUR_ID:usize=200;
 const DONE_ID:usize=201;
+const ACRYLIC_ID:usize=202;
 thread_local!{static OPEN:Cell<bool>=const{Cell::new(false)};}
 
 unsafe extern "system" fn proc(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRESULT {
     match msg {
         WM_HSCROLL => {let _=unsafe{PostMessageW(Some(hwnd),CHANGE,WPARAM(0),lp)};LRESULT(0)}
-        WM_COMMAND if wp.0 & 0xffff == BLUR_ID => {let _=unsafe{PostMessageW(Some(hwnd),CHANGE,WPARAM(BLUR_ID),LPARAM(0))};LRESULT(0)}
+        WM_COMMAND if wp.0 & 0xffff == BLUR_ID || wp.0 & 0xffff == ACRYLIC_ID => {let _=unsafe{PostMessageW(Some(hwnd),CHANGE,WPARAM(wp.0 & 0xffff),LPARAM(0))};LRESULT(0)}
         WM_COMMAND if wp.0 & 0xffff == DONE_ID => {let _=unsafe{PostMessageW(Some(hwnd),FINISH,WPARAM(0),LPARAM(0))};LRESULT(0)}
         WM_CLOSE|WM_DESTROY => {let _=unsafe{PostMessageW(Some(hwnd),FINISH,WPARAM(0),LPARAM(0))};LRESULT(0)}
         _=>unsafe{DefWindowProcW(hwnd,msg,wp,lp)},
@@ -53,9 +54,9 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,mut apply:im
     if !unsafe{GetMonitorInfoW(monitor,&mut info)}.as_bool(){return;}
     let(mut dx,mut dy)=(96,96);
     let dpi=if unsafe{GetDpiForMonitor(monitor,MDT_EFFECTIVE_DPI,&mut dx,&mut dy)}.is_ok(){dx.max(96)}else{96};
-    let work=info.rcWork;let scale=(dpi as f32/96.0).min((work.right-work.left) as f32/520.0).min((work.bottom-work.top) as f32/510.0).max(0.5);
+    let work=info.rcWork;let scale=(dpi as f32/96.0).min((work.right-work.left) as f32/520.0).min((work.bottom-work.top) as f32/598.0).max(0.5);
     let px=|x:i32|(x as f32*scale).round() as i32;
-    let (width,height)=(px(500),px(490));
+    let (width,height)=(px(500),px(578));
     let left=(point.x-width/2).clamp(work.left,(work.right-width).max(work.left));
     let top=(point.y-height/2).clamp(work.top,(work.bottom-height).max(work.top));
     let Ok(instance)=(unsafe{GetModuleHandleW(None)}) else{return};
@@ -71,7 +72,7 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,mut apply:im
     let caption=text("更改立即生效");
     if child(w!("STATIC"),&caption,WINDOW_STYLE(0),0,20,12,450,22).is_none(){return;}
     let mut sliders=Vec::new();
-    for (i,control) in Control::ALL[..6].iter().copied().enumerate(){
+    for (i,control) in Control::ALL[..7].iter().copied().enumerate(){
         let y=42+i as i32*53;let label=text(control.label());
         if child(w!("STATIC"),&label,WINDOW_STYLE(0),0,20,y+4,190,24).is_none(){return;}
         let Some(track)=child(TRACKBAR_CLASSW,&label,WS_TABSTOP|WINDOW_STYLE((TBS_HORZ|TBS_NOTICKS) as u32),100+i,210,y,200,32) else{return};
@@ -84,19 +85,23 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,mut apply:im
         sliders.push((control,track,number));
     }
     let blur=text(Control::Blur.label());
-    let Some(checkbox)=child(w!("BUTTON"),&blur,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),BLUR_ID,20,365,320,28) else{return};
+    let Some(checkbox)=child(w!("BUTTON"),&blur,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),BLUR_ID,20,418,320,28) else{return};
     unsafe{SendMessageW(checkbox,BM_SETCHECK,Some(WPARAM(value.blur as usize)),None);}
+    let acrylic=text(Control::Acrylic.label());
+    let Some(acrylic_box)=child(w!("BUTTON"),&acrylic,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),ACRYLIC_ID,20,453,430,28) else{return};
+    unsafe{SendMessageW(acrylic_box,BM_SETCHECK,Some(WPARAM(value.acrylic_blur as usize)),None);}
     let done=text("完成");
-    if child(w!("BUTTON"),&done,WS_TABSTOP|WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),DONE_ID,355,403,110,30).is_none(){return;}
+    if child(w!("BUTTON"),&done,WS_TABSTOP|WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),DONE_ID,355,491,110,30).is_none(){return;}
     unsafe{let _=ShowWindow(hwnd,SW_SHOWNORMAL);let _=SetForegroundWindow(hwnd);let _=SetFocus(Some(sliders[0].1));}
     loop {
         let mut msg=MSG::default();let result=unsafe{GetMessageW(&mut msg,None,0,0)}.0;
         if result==0{unsafe{PostQuitMessage(msg.wParam.0 as i32)};break;}if result<0{break;}
         if msg.hwnd==hwnd && msg.message==FINISH{break;}
         if msg.hwnd==hwnd && msg.message==CHANGE {
-            if msg.wParam.0==BLUR_ID {
-                let checked=unsafe{SendMessageW(checkbox,BM_GETCHECK,None,None)}.0!=0;
-                if checked!=value.blur {Control::Blur.set(&mut value,i32::from(checked));apply(&value);}
+            if msg.wParam.0==BLUR_ID || msg.wParam.0==ACRYLIC_ID {
+                let (control,box_hwnd)=if msg.wParam.0==BLUR_ID {(Control::Blur,checkbox)} else {(Control::Acrylic,acrylic_box)};
+                let checked=unsafe{SendMessageW(box_hwnd,BM_GETCHECK,None,None)}.0!=0;
+                if i32::from(checked)!=control.get(&value) {control.set(&mut value,i32::from(checked));apply(&value);}
             } else if let Some((control,track,number))=sliders.iter().find(|(_,track,_)|track.0 as isize==msg.lParam.0) {
                 let old=control.get(&value);let next=unsafe{SendMessageW(*track,TBM_GETPOS,None,None)}.0 as i32;
                 control.set(&mut value,next);

@@ -222,6 +222,27 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/fences-rounded-mask-tests.exe
           exit $LASTEXITCODE
+      - name: Fences shadow and blur policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-fences/src/desktop/shadow_mask.rs -o target/fences-shadow-mask-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/fences-shadow-mask-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --edition 2021 --test crates/aura-windows/src/blur_policy.rs -o target/fences-blur-policy-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/fences-blur-policy-tests.exe
+          exit $LASTEXITCODE
+      - name: Fences native shadow lifecycle (private desktop)
+        shell: pwsh
+        working-directory: aura
+        run: |
+          $output = cargo test --locked --release -p aura-fences --bin Fences -- --ignored --exact desktop::window_message_regression::native_fence_shadow_moves_hides_and_destroys 2>&1
+          $code = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host $_ }
+          if ($code -ne 0) { exit $code }
+          if (-not ($output | Select-String -SimpleMatch '1 passed; 0 failed')) { throw 'Native shadow test did not execute' }
       - name: Dock appbar policy tests
         shell: pwsh
         working-directory: aura

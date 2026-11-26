@@ -176,23 +176,35 @@ pub fn round_corners(hwnd: HWND, small: bool) {
 /// frosted glass); the window's own alpha still decides how much shows through.
 /// Returns whether the system accepted the change.
 pub fn set_blur_behind(hwnd: HWND, enabled: bool) -> bool {
-    let enabled=enabled&&transparency_available();
+    set_blur_behind_with_acrylic(hwnd, enabled, false, true)
+}
+
+/// Opt-in acrylic for compatible systems, falling back to the previous blur
+/// when the accent API rejects acrylic. A successful API call does not prove
+/// the compositor actually displays the effect (notably on layered windows).
+pub fn set_blur_behind_with_acrylic(hwnd:HWND,enabled:bool,acrylic:bool,dark:bool)->bool {
+    use crate::blur_policy::{choose,Mode};
     #[repr(C)]
     struct AccentPolicy { state: u32, flags: u32, gradient: u32, animation: u32 }
     #[repr(C)]
     struct CompositionData { attribute: u32, data: *mut core::ffi::c_void, size: usize }
     type SetAttribute = unsafe extern "system" fn(HWND, *mut CompositionData) -> i32;
-    const ACCENT_DISABLED: u32 = 0;
-    const ACCENT_ENABLE_BLURBEHIND: u32 = 3;
-    const WCA_ACCENT_POLICY: u32 = 19;
-    if hwnd.0.is_null() { return false; }
-    let Ok(user32) = (unsafe { windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll")) }) else { return false };
-    let Some(function) = (unsafe { GetProcAddress(user32, PCSTR(c"SetWindowCompositionAttribute".as_ptr().cast())) }) else { return false };
-    // SAFETY: the exported function has had this signature since Windows 7.
-    let set: SetAttribute = unsafe { std::mem::transmute(function) };
-    let mut accent = AccentPolicy { state: if enabled { ACCENT_ENABLE_BLURBEHIND } else { ACCENT_DISABLED }, flags: 0, gradient: 0, animation: 0 };
-    let mut data = CompositionData { attribute: WCA_ACCENT_POLICY, data: (&mut accent as *mut AccentPolicy).cast(), size: std::mem::size_of::<AccentPolicy>() };
-    unsafe { set(hwnd, &mut data) != 0 }
+    const WCA_ACCENT_POLICY:u32=19;
+    if hwnd.0.is_null(){return false;}
+    let Ok(user32)=(unsafe{windows::Win32::System::LibraryLoader::GetModuleHandleW(w!("user32.dll"))}) else{return false};
+    let Some(function)=(unsafe{GetProcAddress(user32,PCSTR(c"SetWindowCompositionAttribute".as_ptr().cast()))}) else{return false};
+    let set:SetAttribute=unsafe{std::mem::transmute(function)};
+    let mode=choose(enabled,transparency_available(),acrylic,if acrylic {os_build()} else {0});
+    let apply=|mode:Mode|{
+        // AccentPolicy gradient is ABGR. Keep acrylic tint neutral; the
+        // per-fence colour remains in its independently composited surface.
+        let gradient=if dark {0x66282020} else {0x66FAF6F6};
+        let mut accent=AccentPolicy{state:match mode{Mode::Disabled=>0,Mode::Classic=>3,Mode::Acrylic=>4},flags:0,
+            gradient:if mode==Mode::Acrylic{gradient}else{0},animation:0};
+        let mut data=CompositionData{attribute:WCA_ACCENT_POLICY,data:(&mut accent as *mut AccentPolicy).cast(),size:std::mem::size_of::<AccentPolicy>()};
+        unsafe{set(hwnd,&mut data)!=0}
+    };
+    if mode==Mode::Acrylic && !apply(mode) {apply(Mode::Classic)} else if mode!=Mode::Acrylic {apply(mode)} else {true}
 }
 
 /// Enables the Mica backdrop on Windows 11 22H2+. Returns whether it applies.

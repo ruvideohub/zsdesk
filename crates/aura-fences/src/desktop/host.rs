@@ -405,8 +405,10 @@ impl DesktopHost {
 
     pub fn update_palette(&mut self) {
         let dark = self.fence_dark();
+        super::fence::set_blur_style(self.config.settings.acrylic_blur,dark);
         aura_windows::flyout::refresh_system();
-        self.palette = FencePalette::new(if dark { Mode::Dark } else { Mode::Light }, self.config.settings.opacity);
+        let opacity=aura_windows::blur_policy::effective_opacity(self.config.settings.opacity,aura_windows::theme::transparency_available());
+        self.palette = FencePalette::new(if dark { Mode::Dark } else { Mode::Light }, opacity);
         if let Some(accent) = aura_windows::theme::system_accent(dark) { self.palette = self.palette.with_accent(accent); }
     }
 
@@ -415,19 +417,21 @@ impl DesktopHost {
     pub fn apply_appearance(&mut self, value:&aura_fences_model::desktop::DesktopSettings) {
         let old_blur=self.config.settings.blur;
         let old_radius=self.config.settings.corner_radius;
+        let old_acrylic=self.config.settings.acrylic_blur;
         let s=&mut self.config.settings;
         s.icon_scale=value.icon_scale.clamp(50,200);s.icon_spacing=value.icon_spacing.min(32);
         s.inner_padding=value.inner_padding.min(24);s.opacity=value.opacity.clamp(10,100);
-        s.corner_radius=value.corner_radius.min(40);s.edge_highlight=value.edge_highlight.min(100);s.blur=value.blur;
+        s.corner_radius=value.corner_radius.min(40);s.edge_highlight=value.edge_highlight.min(100);s.shadow_strength=value.shadow_strength.min(100);s.blur=value.blur;s.acrylic_blur=value.acrylic_blur;
         super::fence::set_layout(s.icon_scale,s.inner_padding,s.icon_spacing);
         super::fence::set_corner_radius(s.corner_radius);super::fence::set_edge_highlight(s.edge_highlight);
         super::fence::set_blur(s.blur);
-        let glass_changed=old_blur!=s.blur || old_radius!=s.corner_radius;
+        let glass_changed=old_blur!=s.blur || old_radius!=s.corner_radius || old_acrylic!=s.acrylic_blur;
+        self.update_palette();
         for win in &mut self.fences {
             if glass_changed { super::fence::apply_glass(win.hwnd); }
             if let Some(f)=self.config.fence(win.id) {win.clamp_scroll(f);}
         }
-        self.update_palette();self.schedule_save();self.render_all();
+        self.schedule_save();self.render_all();
     }
 
     pub fn schedule_save(&self) { unsafe { SetTimer(Some(self.hwnd), TIMER_SAVE, 400, None); } }
@@ -1217,7 +1221,7 @@ impl DesktopHost {
         }
         let mode = if self.fence_dark() { Mode::Dark } else { Mode::Light };
         let mut palette = if let Some(opacity) = fence.surface_opacity {
-            FencePalette::new(mode, opacity)
+            FencePalette::new(mode, aura_windows::blur_policy::effective_opacity(opacity,aura_windows::theme::transparency_available()))
         } else { self.palette };
         if let Some(accent) = aura_windows::theme::system_accent(mode == Mode::Dark) { palette = palette.with_accent(accent); }
         palette = palette.with_surface_tint(mode, fence.accent.rgb());
@@ -1243,6 +1247,11 @@ impl DesktopHost {
             }
             slot.bitmap.as_ref().map(|(_, b)| b.clone())
         });
+        let shadow_strength=if win.ghost {(u16::from(self.config.settings.shadow_strength)*3/5) as u8} else {self.config.settings.shadow_strength};
+        if !win.standalone && shadow_strength>0 && !aura_windows::theme::high_contrast() {
+            if win.shadow.is_none() {win.shadow=super::shadow::Shadow::new(win.hwnd);}
+            if win.shadow.as_mut().is_some_and(|shadow|!shadow.update(win.dpi,self.config.settings.corner_radius,shadow_strength)){win.shadow=None;}
+        } else {win.shadow=None;}
         self.fences[index] = win;
         self.prune_icon_cache();
         presented
@@ -2524,7 +2533,9 @@ impl DesktopHost {
             }
             id if id.starts_with("theme-") => {
                 self.config.settings.theme = match id { "theme-light" => FenceTheme::Light, "theme-system" => FenceTheme::System, _ => FenceTheme::Dark };
-                self.update_palette(); self.schedule_save(); self.render_all();
+                self.update_palette();
+                if self.config.settings.blur && self.config.settings.acrylic_blur {for window in &self.fences {super::fence::apply_glass(window.hwnd);}}
+                self.schedule_save(); self.render_all();
             }
             id if id.starts_with("opacity-") => {
                 self.config.settings.opacity = id[8..].parse().unwrap_or(55);
