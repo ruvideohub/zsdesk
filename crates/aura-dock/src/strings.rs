@@ -115,10 +115,16 @@ fn lookup(text: &str) -> Option<&'static str> {
 
         // ---------------------------------------------------------------- widgets
         "Widgets on the Panel" => "Виджеты на панели",
+        "Clock on the Desktop" => "Часы на рабочем столе",
+        "Desktop Widgets" => "Виджеты рабочего стола",
+        "Dock Widgets" => "Виджеты док-бара",
+        "System Load" => "Нагрузка системы",
+        "Back" => "Назад",
         "More Widgets…" => "Другие виджеты…",
         "Clock" => "Часы",
         "Today's Forecast" => "Погода на сегодня",
         "Calendar" => "Календарь",
+        "Notes" => "Заметки",
         "Resource Monitor" => "Монитор ресурсов",
         "Battery" => "Батарея",
         "Now Playing Compact" => "Сейчас играет",

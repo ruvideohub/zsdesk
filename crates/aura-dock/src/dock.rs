@@ -240,10 +240,11 @@ const CMD_BATTERY_HIDE: usize = 3667;
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
 /// Widgets one click away from the panel's own menu: the everyday ones.
-const DOCK_WIDGETS: [&str; 8] = [
+const DOCK_WIDGETS: [&str; 9] = [
     "clock",
     "weather-hourly",
     "month",
+    "notes",
     "resource-monitor",
     "battery",
     "now-playing-compact",
@@ -2343,19 +2344,22 @@ impl Dock {
         m.push(MenuItem::item("Automatically Hide the Dock", CMD_AUTOHIDE).checked(self.cfg.auto_hide));
         m.push(MenuItem::item("Magnification", CMD_MAGNIFY).checked(self.cfg.magnify));
         m.push(MenuItem::item("Hide the Windows Taskbar", CMD_TASKBAR).checked(self.cfg.hide_windows_taskbar));
-        m.push(MenuItem::item("Clock on the Desktop", CMD_CLOCK_DESKTOP).checked(self.cfg.desktop_clock));
-        m.push(MenuItem::item("Карточка нагрузки на рабочем столе", CMD_SYSTEM_DESKTOP).checked(self.cfg.desktop_system));
-        m.push(MenuItem::item("Сеть на рабочем столе", CMD_NETWORK_DESKTOP).checked(self.cfg.desktop_network));
-        m.push(MenuItem::item("Батарея на рабочем столе", CMD_BATTERY_DESKTOP).checked(self.cfg.desktop_battery));
-        m.push(MenuItem::sep());
-        // Widgets: the everyday ones are one click away, the rest live in the gallery.
-        m.push(MenuItem::header("Widgets on the Panel"));
+        m.push(MenuItem::submenu("Desktop Widgets", vec![
+            MenuItem::item("Clock on the Desktop", CMD_CLOCK_DESKTOP).checked(self.cfg.desktop_clock),
+            MenuItem::item("System Load", CMD_SYSTEM_DESKTOP).checked(self.cfg.desktop_system),
+            MenuItem::item("Network", CMD_NETWORK_DESKTOP).checked(self.cfg.desktop_network),
+            MenuItem::item("Battery", CMD_BATTERY_DESKTOP).checked(self.cfg.desktop_battery),
+        ]));
+        let mut dock_widgets = Vec::new();
         for (index, id) in DOCK_WIDGETS.iter().enumerate() {
             let id: &str = id;
             let Some(def) = crate::widgets::catalog::get(id) else { continue };
             let present = self.cfg.pins.iter().any(|p| matches!(p, Pin::Widget { widget, .. } if widget.as_str() == id));
-            m.push(MenuItem::item(def.name, CMD_WIDGET_TOGGLE_BASE + index).checked(present));
+            dock_widgets.push(MenuItem::item(def.name, CMD_WIDGET_TOGGLE_BASE + index).checked(present));
         }
+        dock_widgets.push(MenuItem::sep());
+        dock_widgets.push(MenuItem::item("More Widgets…", CMD_WIDGET_ADD));
+        m.push(MenuItem::submenu("Dock Widgets", dock_widgets));
         m.push(MenuItem::sep());
         m.push(MenuItem::item("Dock Settings…", CMD_SETTINGS));
         if crate::updater::installed() {
@@ -2981,6 +2985,19 @@ impl Dock {
         }
     }
 
+    fn menu_action(&mut self, action: crate::menu::MenuAction) {
+        match action {
+            crate::menu::MenuAction::Command(cmd) => self.menu_choose(Some(cmd)),
+            crate::menu::MenuAction::Close => self.menu_choose(None),
+            action => {
+                if let Err(e) = self.menu.navigate(&self.compositor, &self.gfx, &self.backdrop, action) {
+                    trace!("submenu failed: {e:?}");
+                    self.menu_choose(None);
+                }
+            }
+        }
+    }
+
     /// Messages for pop-up windows (menus, previews, stacks, Launchpad, Settings).
     fn popup_message(&mut self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         if hwnd == self.mini_tray.hwnd() {
@@ -3525,12 +3542,12 @@ impl Dock {
             match msg {
                 WM_MOUSEMOVE => self.menu.on_move(&self.compositor, x, y),
                 WM_LBUTTONUP | WM_RBUTTONUP => {
-                    if let Some(cmd) = self.menu.on_click(x, y) {
-                        self.menu_choose(Some(cmd));
+                    if let Some(action) = self.menu.on_click(x, y) {
+                        self.menu_action(action);
                     }
                 }
                 WM_KEYDOWN => match self.menu.on_key(&self.compositor, wp.0 as u16) {
-                    Some(cmd) => self.menu_choose(cmd),
+                    Some(action) => self.menu_action(action),
                     None => {}
                 },
                 WM_ACTIVATE => {

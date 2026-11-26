@@ -5,7 +5,7 @@
 use windows::core::{Interface, Result};
 use windows::UI::Composition::*;
 use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_RETURN, VK_SPACE, VK_UP};
+use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_ESCAPE, VK_LEFT, VK_RETURN, VK_RIGHT, VK_SPACE, VK_UP};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 use crate::gfx::{Gfx, TextStyle};
@@ -27,12 +27,20 @@ pub struct MenuItem {
     pub checked: bool,
     pub enabled: bool,
     pub danger: bool,
+    pub children: Vec<MenuItem>,
+    pub(crate) back: bool,
 }
 
 impl MenuItem {
     pub fn item(label: impl Into<String>, cmd: usize) -> Self {
         let label = crate::strings::tr_owned(label.into());
-        Self { kind: Kind::Item, label, shortcut: None, cmd, checked: false, enabled: true, danger: false }
+        Self { kind: Kind::Item, label, shortcut: None, cmd, checked: false, enabled: true, danger: false, children: Vec::new(), back: false }
+    }
+    pub fn submenu(label: impl Into<String>, children: Vec<MenuItem>) -> Self {
+        Self { children, ..Self::item(label, 0) }
+    }
+    fn back() -> Self {
+        Self { back: true, ..Self::item("Back", 0) }
     }
     pub fn sep() -> Self {
         Self { kind: Kind::Separator, ..Self::item("", 0) }
@@ -54,6 +62,15 @@ impl MenuItem {
     }
 }
 
+#[derive(Debug)]
+pub enum MenuAction { Command(usize), Open(Vec<MenuItem>), Back, Close }
+
+fn action_for(item: &MenuItem) -> MenuAction {
+    if item.back { MenuAction::Back }
+    else if !item.children.is_empty() { MenuAction::Open(item.children.clone()) }
+    else { MenuAction::Command(item.cmd) }
+}
+
 struct Row {
     y: f32,
     h: f32,
@@ -70,6 +87,10 @@ pub struct Menu {
     panel_w: f32,
     scale: f32,
     restore_focus: HWND,
+    trail: Vec<Vec<MenuItem>>,
+    anchor: POINT,
+    above: bool,
+    monitor: RECT,
     pub open: bool,
 }
 
@@ -85,6 +106,10 @@ impl Menu {
             panel_w: 0.0,
             scale: 1.0,
             restore_focus: HWND::default(),
+            trail: Vec::new(),
+            anchor: POINT::default(),
+            above: false,
+            monitor: RECT::default(),
             open: false,
         })
     }
@@ -106,6 +131,21 @@ impl Menu {
         scale: f32,
         monitor: RECT,
     ) -> Result<()> {
+        self.trail.clear();
+        self.show_view(c, gfx, backdrop, items, anchor, above, scale, monitor)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn show_view(
+        &mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush,
+        items: Vec<MenuItem>, anchor: POINT, above: bool, scale: f32, monitor: RECT,
+    ) -> Result<()> {
+        if !self.open {
+            self.restore_focus = unsafe { GetForegroundWindow() };
+        }
+        self.anchor = anchor;
+        self.above = above;
+        self.monitor = monitor;
         let s = scale;
         self.scale = s;
         self.items = items;
@@ -136,7 +176,8 @@ impl Menu {
                     let weight = if it.kind == Kind::Header { 600 } else { 400 };
                     let px = if it.kind == Kind::Header { 11.5 } else { 13.0 } * s;
                     let (lab, lw, lh) = ui::text(c, gfx, &it.label, &TextStyle { px, weight, color: col, max_w: Some(300.0 * s), ..Default::default() })?;
-                    let sc = match &it.shortcut {
+                    let arrow = if !it.children.is_empty() { Some("›") } else if it.back { Some("‹") } else { None };
+                    let sc = match arrow.or(it.shortcut.as_deref()) {
                         Some(t) => Some(ui::text(c, gfx, t, &TextStyle { px: 12.0 * s, color: theme::text_3(), ..Default::default() })?),
                         None => None,
                     };
@@ -214,7 +255,6 @@ impl Menu {
         root.SetOpacity(0.0)?;
         ui::animate_scalar(c, &root.cast()?, "Opacity", 1.0, 110)?;
 
-        self.restore_focus = unsafe { GetForegroundWindow() };
         self.popup.show(r, true);
         self.open = true;
         Ok(())
@@ -277,18 +317,32 @@ impl Menu {
         self.set_hover(c, r);
     }
 
-    /// A click: returns the command to run (the caller hides the menu).
-    pub fn on_click(&mut self, x: f32, y: f32) -> Option<usize> {
+    /// A click opens a submenu, returns to its parent, or runs a command.
+    pub fn on_click(&mut self, x: f32, y: f32) -> Option<MenuAction> {
         let r = self.row_at(x, y)?;
         if self.selectable(r) {
-            Some(self.items[self.rows[r].item].cmd)
+            Some(action_for(&self.items[self.rows[r].item]))
         } else {
             None
         }
     }
 
-    /// Keyboard: returns Some(Some(cmd)) to run a command, Some(None) to close, None to keep open.
-    pub fn on_key(&mut self, c: &Compositor, vk: u16) -> Option<Option<usize>> {
+    pub fn navigate(&mut self, c: &Compositor, gfx: &Gfx, backdrop: &CompositionBrush, action: MenuAction) -> Result<()> {
+        let items = match action {
+            MenuAction::Open(children) => {
+                self.trail.push(self.items.clone());
+                let mut items = vec![MenuItem::back(), MenuItem::sep()];
+                items.extend(children);
+                items
+            }
+            MenuAction::Back => match self.trail.pop() { Some(items) => items, None => return Ok(()) },
+            _ => return Ok(()),
+        };
+        self.show_view(c, gfx, backdrop, items, self.anchor, self.above, self.scale, self.monitor)
+    }
+
+    /// Arrow keys navigate, Enter activates, Escape returns to the parent or closes.
+    pub fn on_key(&mut self, c: &Compositor, vk: u16) -> Option<MenuAction> {
         let n = self.rows.len();
         let step = |from: Option<usize>, d: i32| -> Option<usize> {
             let mut i = from.map(|v| v as i32).unwrap_or(if d > 0 { -1 } else { n as i32 });
@@ -309,11 +363,34 @@ impl Menu {
             self.set_hover(c, r);
             None
         } else if vk == VK_RETURN.0 || vk == VK_SPACE.0 {
-            self.hover.map(|r| Some(self.items[self.rows[r].item].cmd))
+            self.hover.map(|r| action_for(&self.items[self.rows[r].item]))
+        } else if vk == VK_RIGHT.0 {
+            self.hover.and_then(|r| { let item = &self.items[self.rows[r].item]; if item.children.is_empty() { None } else { Some(action_for(item)) } })
+        } else if vk == VK_LEFT.0 {
+            if self.trail.is_empty() { None } else { Some(MenuAction::Back) }
         } else if vk == VK_ESCAPE.0 {
-            Some(None)
+            Some(if self.trail.is_empty() { MenuAction::Close } else { MenuAction::Back })
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn menu_item_actions_preserve_commands_and_submenus() {
+        let child = MenuItem::item("Clock", 42).checked(true);
+        let parent = MenuItem::submenu("Desktop Widgets", vec![child]);
+        match action_for(&parent) {
+            MenuAction::Open(children) => {
+                assert_eq!(children.len(), 1);
+                assert!(children[0].checked);
+                assert!(matches!(action_for(&children[0]), MenuAction::Command(42)));
+            }
+            other => panic!("unexpected action: {other:?}"),
+        }
+        assert!(matches!(action_for(&MenuItem::back()), MenuAction::Back));
     }
 }
