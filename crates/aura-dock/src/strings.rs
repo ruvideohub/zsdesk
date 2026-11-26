@@ -123,6 +123,7 @@ fn lookup(text: &str) -> Option<&'static str> {
         "More Widgets…" => "Другие виджеты…",
         "Clock" => "Часы",
         "Today's Forecast" => "Погода на сегодня",
+        "Weather" => "Погода",
         "Calendar" => "Календарь",
         "Notes" => "Заметки",
         "Edit notes…" => "Редактировать заметки…",

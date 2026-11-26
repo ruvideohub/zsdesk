@@ -275,6 +275,9 @@ pub struct Config {
     pub desktop_notes: bool,
     pub notes_pos: Option<[i32; 2]>,
     pub notes_locked: bool,
+    pub desktop_weather: bool,
+    pub desktop_weather_pos: Option<[i32; 2]>,
+    pub desktop_weather_locked: bool,
 
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
@@ -367,6 +370,9 @@ impl Default for Config {
             desktop_notes: false,
             notes_pos: None,
             notes_locked: false,
+            desktop_weather: false,
+            desktop_weather_pos: None,
+            desktop_weather_locked: false,
             cc_pin_added: false,
             tray_order: Vec::new(),
             tray_hidden: Vec::new(),
@@ -608,6 +614,20 @@ mod tests {
         assert!(restored.desktop_notes && restored.notes_locked);
         assert_eq!(restored.notes_pos, Some([-45, 200]));
         assert!(!restored.desktop_calendar && restored.calendar_pos.is_none());
+    }
+
+    #[test]
+    fn desktop_weather_defaults_off_and_keeps_existing_location() {
+        let mut cfg: Config = serde_json::from_str(r#"{"weather_city":"Berlin","weather_lat":52.5,"weather_lon":13.4}"#).unwrap();
+        assert!(!cfg.desktop_weather && !cfg.desktop_weather_locked && cfg.desktop_weather_pos.is_none());
+        cfg.desktop_weather = true;
+        cfg.desktop_weather_pos = Some([-100, 250]);
+        cfg.desktop_weather_locked = true;
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(restored.desktop_weather && restored.desktop_weather_locked);
+        assert_eq!(restored.desktop_weather_pos, Some([-100, 250]));
+        assert_eq!(restored.weather_city, "Berlin");
+        assert_eq!((restored.weather_lat, restored.weather_lon), (52.5, 13.4));
     }
 
     #[test]

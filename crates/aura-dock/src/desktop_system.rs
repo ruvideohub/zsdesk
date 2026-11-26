@@ -30,17 +30,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::config::ClockCorner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { System, Network, Battery, Calendar, Notes }
+pub enum Kind { System, Network, Battery, Calendar, Notes, Weather }
 
 impl Kind {
     fn title(self) -> &'static str {
-        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" } }
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" }, Self::Weather => if crate::strings::russian() { "Погода" } else { "Weather" } }
     }
     fn menu_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU, Self::Weather => crate::dock::WM_APP_WEATHER_MENU }
     }
     fn moved_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED, Self::Weather => crate::dock::WM_APP_WEATHER_MOVED }
     }
 }
 
@@ -97,6 +97,7 @@ impl Prefs {
             Kind::Battery => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.battery_pos.map(|[x,y]| (x,y)), locked: cfg.battery_locked },
             Kind::Calendar => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.calendar_pos.map(|[x,y]| (x,y)), locked: cfg.calendar_locked },
             Kind::Notes => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.notes_pos.map(|[x,y]| (x,y)), locked: cfg.notes_locked },
+            Kind::Weather => Self { corner: ClockCorner::BottomRight, scale: 1.0, pos: cfg.desktop_weather_pos.map(|[x,y]| (x,y)), locked: cfg.desktop_weather_locked },
         }
     }
 
@@ -143,6 +144,9 @@ struct SystemState {
     sampler: laminar_sys::stats::Sampler,
     /// The first reading has no delta behind it and is drawn as «…».
     sampled: bool,
+    /// Weather requests are kept in the card process, never on its UI thread.
+    weather: Option<crate::desktop_weather::Worker>,
+    weather_city: String,
     /// Pointer offset inside the card while dragging.
     drag: Option<(i32, i32)>,
 }
@@ -192,6 +196,19 @@ impl SystemState {
             };
             return vec![Meter { label, fill: 0.0, text }];
         }
+        if self.kind == Kind::Weather {
+            let worker = self.weather.as_mut().expect("weather worker belongs to weather card");
+            worker.poll();
+            use crate::desktop_weather::Status;
+            let label = match worker.status { Status::Loading => "loading", Status::Ready => "ready", Status::Unavailable => "error", Status::Stale => "stale" };
+            let mut result = vec![Meter { label, fill: 0.0, text: self.weather_city.clone() }];
+            if let Some(w) = &worker.data {
+                result.push(Meter { label: "temp", fill: 0.0, text: format!("{:.0}°", w.temp_c) });
+                result.push(Meter { label: "description", fill: 0.0, text: crate::desktop_weather::description(w.code, crate::strings::russian()).into() });
+                result.push(Meter { label: "range", fill: 0.0, text: format!("↑ {:.0}°   ↓ {:.0}°", w.high_c, w.low_c) });
+            }
+            return result;
+        }
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
@@ -199,7 +216,7 @@ impl SystemState {
             Kind::System => meters(&stats, first),
             Kind::Network => network_meters(&stats, first),
             Kind::Battery => battery_meters(),
-            Kind::Calendar | Kind::Notes => unreachable!("text cards return before sampling"),
+            Kind::Calendar | Kind::Notes | Kind::Weather => unreachable!("other cards return before sampling"),
         }
     }
 }
@@ -308,6 +325,9 @@ impl DesktopSystem {
             let target = c.cast::<ICompositorDesktopInterop>()?.CreateDesktopWindowTarget(hwnd, true)?;
             let root = c.CreateContainerVisual()?;
             target.SetRoot(&root)?;
+            let cfg = if kind == Kind::Weather { Some(crate::config::Config::load().unwrap_or_default()) } else { None };
+            let weather = cfg.as_ref().map(|c| crate::desktop_weather::Worker::new(c.weather_lat, c.weather_lon));
+            let weather_city = cfg.map(|c| c.weather_city).unwrap_or_default();
             let state = Box::new(SystemState {
                 hwnd,
                 root,
@@ -321,6 +341,8 @@ impl DesktopSystem {
                 drawn: Vec::new(),
                 sampler: laminar_sys::stats::Sampler::new(),
                 sampled: false,
+                weather,
+                weather_city,
                 drag: None,
             });
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, &*state as *const SystemState as isize);
@@ -376,10 +398,28 @@ impl DesktopSystem {
             Kind::Battery => ("ПИТАНИЕ УСТРОЙСТВА", "\u{E83E}"),
             Kind::Calendar => (if crate::strings::russian() { "ТЕКУЩИЙ МЕСЯЦ" } else { "THIS MONTH" }, "\u{E787}"),
             Kind::Notes => (if crate::strings::russian() { "ЗАМЕТКИ НА РАБОЧЕМ СТОЛЕ" } else { "DESKTOP NOTES" }, "\u{E70B}"),
+            Kind::Weather => (if crate::strings::russian() { "ТЕКУЩАЯ ПОГОДА" } else { "CURRENT WEATHER" }, "\u{E706}"),
         };
         style::header(c, gfx, root, self.state.kind.title(), subtitle, glyph, k)?;
 
         match self.state.kind {
+            Kind::Weather => {
+                let russian = crate::strings::russian();
+                let city = &meters[0];
+                style::fitted_text(c, gfx, root, &city.text, 22.0*k, 59.0*k, 224.0*k, 12.0*k, 600, theme::text_2(), false)?;
+                if meters.len() == 4 {
+                    style::text(c, gfx, root, &meters[1].text, 21.0*k, 79.0*k, 100.0*k, 32.0*k, 600, theme::text(), true, false)?;
+                    style::fitted_text(c, gfx, root, &meters[2].text, 121.0*k, 84.0*k, 126.0*k, 12.0*k, 600, theme::text(), false)?;
+                    style::text(c, gfx, root, &meters[3].text, 121.0*k, 105.0*k, 126.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
+                    if city.label == "stale" {
+                        style::text(c, gfx, root, if russian { "Данные могут устареть" } else { "Data may be out of date" }, 22.0*k, 139.0*k, 224.0*k, 10.0*k, 500, theme::text_2(), false, false)?;
+                    }
+                } else {
+                    let message = if city.label == "error" { if russian { "Нет данных — повторим запрос" } else { "Unavailable — retrying" } }
+                        else if russian { "Загрузка погоды…" } else { "Loading weather…" };
+                    style::text(c, gfx, root, message, 22.0*k, 91.0*k, 224.0*k, 12.0*k, 500, theme::text_2(), false, false)?;
+                }
+            }
             Kind::Notes => {
                 let note = &meters[0];
                 let russian = crate::strings::russian();
