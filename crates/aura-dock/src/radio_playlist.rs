@@ -84,6 +84,29 @@ pub fn parse(bytes: &[u8]) -> Result<Vec<Station>, Error> {
     Ok(stations)
 }
 
+/// A local user-selected M3U may be plain (no header or EXTINF names).
+/// Never expose query strings as labels, and do not treat HLS segments as stations.
+pub fn parse_user(bytes: &[u8]) -> Result<Vec<Station>, Error> {
+    if bytes.len() > MAX_PLAYLIST_BYTES { return Err(Error::TooLarge); }
+    let text = std::str::from_utf8(bytes).map_err(|_| Error::InvalidUtf8)?.trim_start_matches('\u{feff}');
+    let mut name: Option<String> = None;
+    let mut seen = HashSet::new();
+    let mut stations = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.starts_with("#EXT-X-") { return Err(Error::NotStationPlaylist); }
+        if let Some(info) = line.strip_prefix("#EXTINF:") { name = extinf_title(info); continue; }
+        if line.is_empty() || line.starts_with('#') { continue; }
+        let title = name.take();
+        if !is_web_url(line) || !seen.insert(line.to_owned()) { continue; }
+        if stations.len() == MAX_STATIONS { return Err(Error::TooManyStations); }
+        let host = line.split_once("://").map(|(_, s)| s.split(['/', '?', '#']).next().unwrap_or("Station")).unwrap_or("Station");
+        stations.push(Station { name: title.unwrap_or_else(|| host.chars().take(MAX_NAME_CHARS).collect()), url: line.to_owned() });
+    }
+    if stations.is_empty() { return Err(Error::NotStationPlaylist); }
+    Ok(stations)
+}
+
 /// The title follows the first comma outside quoted attributes.
 fn extinf_title(info: &str) -> Option<String> {
     let mut quoted = false;
@@ -161,6 +184,16 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+    #[test]
+    fn imported_plain_playlists_and_hls_safety() {
+        let s = parse_user(b"https://one.example/live?token=secret\n#EXTINF:-1,Named\nhttp://two.example/radio\nhttps://one.example/live?token=secret\n").unwrap();
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].name, "one.example");
+        assert_eq!(s[1].name, "Named");
+        assert!(!s[0].name.contains("secret"));
+        assert_eq!(parse_user(b"#EXTM3U\n#EXT-X-TARGETDURATION:6\nhttps://x/segment.ts"), Err(Error::NotStationPlaylist));
+        assert_eq!(parse_user(b"not a playlist"), Err(Error::NotStationPlaylist));
     }
     #[test]
     fn too_many_stations_is_an_error_not_silent_truncation() {

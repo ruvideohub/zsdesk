@@ -13,7 +13,7 @@ pub fn path() -> std::path::PathBuf { crate::config::dir().join("radio-playlist.
 fn read_bounded(path: &Path) -> Option<(Vec<u8>, Vec<Station>)> {
     let mut bytes = Vec::new();
     std::fs::File::open(path).ok()?.take((radio_playlist::MAX_PLAYLIST_BYTES + 1) as u64).read_to_end(&mut bytes).ok()?;
-    let stations = radio_playlist::parse(&bytes).ok()?;
+    let stations = radio_playlist::parse_user(&bytes).ok()?;
     if stations.is_empty() { return None; }
     Some((bytes, stations))
 }
