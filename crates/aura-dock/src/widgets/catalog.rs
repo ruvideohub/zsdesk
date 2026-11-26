@@ -310,7 +310,6 @@ pub static ALL: &[Def] = &[
     dock(w("timer", "Timer", "A countdown. Click to start or pause; right-click to choose its length.", &[Productivity], Face::Timer(TimerKind::Countdown)), 2.2),
     dock(w("stopwatch", "Stopwatch", "Click to start or pause; right-click to reset.", &[Productivity], Face::Timer(TimerKind::Stopwatch)), 2.2),
     dock(w("online-radio", "Online Radio", "Internet radio from Pervii; click play to load stations.", &[Media], Face::Tool(ToolKind::Radio)), 3.5),
-    w("notes", "Notes", "Your notes file. Click to edit it.", &[Productivity], Face::Tool(ToolKind::Notes)),
     w("next-event", "Up Next", "Your next calendar event (any calendar with a private iCal link).", &[Productivity], Face::Next),
     tall(w("agenda", "Agenda", "Your upcoming events.", &[Productivity], Face::List { conn: "calendar", badge: B_CAL, open: "" })),
     dock(w("whatsapp", "WhatsApp", "Shows when WhatsApp has new messages. Click to open it.", &[Productivity], Face::Tool(ToolKind::WhatsApp)), 1.0),

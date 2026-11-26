@@ -312,6 +312,7 @@ impl DesktopSystem {
             let instance = GetModuleHandleW(None)?;
             let class = WNDCLASSW {
                 lpfnWndProc: Some(procedure),
+                hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, windows::Win32::UI::WindowsAndMessaging::IDC_ARROW).unwrap_or_default(),
                 lpszClassName: CLASS,
                 ..Default::default()
             };
@@ -343,7 +344,7 @@ impl DesktopSystem {
             let state = Box::new(SystemState {
                 hwnd,
                 root,
-                backdrop: crate::desktop_style::backdrop(c),
+                backdrop: crate::desktop_style::backdrop(c, dpi),
                 _target: target,
                 dock,
                 monitor,

@@ -103,6 +103,7 @@ fn prepare(dock: Option<HWND>) -> Result<Option<(Compositor, Gfx, windows::Win32
     crate::composition_apartment()?;
     let cfg = crate::config::Config::load().unwrap_or_default();
     crate::strings::set_language(&cfg.language);
+    crate::desktop_style::configure(&cfg);
     crate::desktop_environment::apply(crate::desktop_environment::read(cfg.match_windows_theme));
     let (monitor, dpi) = match crate::displays::all().first().copied() {
         Some(d) => (d.rect, d.dpi),

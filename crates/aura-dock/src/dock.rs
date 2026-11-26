@@ -2375,8 +2375,6 @@ impl Dock {
             MenuItem::item("Network", CMD_NETWORK_DESKTOP).checked(self.cfg.desktop_network),
             MenuItem::item("Battery", CMD_BATTERY_DESKTOP).checked(self.cfg.desktop_battery),
             MenuItem::item("Calendar", CMD_CALENDAR_DESKTOP).checked(self.cfg.desktop_calendar),
-            MenuItem::item("Notes", CMD_NOTES_DESKTOP).checked(self.cfg.desktop_notes),
-            MenuItem::item("Edit notes…", CMD_NOTES_EDIT),
             MenuItem::item("Weather", CMD_WEATHER_DESKTOP).checked(self.cfg.desktop_weather),
             MenuItem::item("Change Location…", CMD_WEATHER_LOCATION),
             MenuItem::item("Online Radio", CMD_RADIO_DESKTOP).checked(self.cfg.desktop_radio),
@@ -5844,6 +5842,12 @@ impl Dock {
             }
             self.refresh(true);
         }
+        // The cards are separate processes; restart with the saved panel appearance.
+        if old.corner_radius != self.cfg.corner_radius || old.glass_tint != self.cfg.glass_tint || old.extra_blur != self.cfg.extra_blur {
+            self.restart_clock();
+            self.restart_system();
+            for index in [0, 1, 2, 4, 5] { self.restart_extra(index); }
+        }
         if old.per_display_windows != self.cfg.per_display_windows {
             self.rescan();
         }
@@ -6842,7 +6846,7 @@ impl Dock {
         use std::os::windows::process::CommandExt;
         if !self.is_main_dock() { return; }
         if let Some(mut child) = self.extra_hosts[index].take() { let _ = child.kill(); let _ = child.wait(); }
-        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
+        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => false, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
         if !enabled { return; }
         let Ok(panel) = std::env::current_exe() else { return };
         let exe = panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()).unwrap_or(panel);
@@ -6859,7 +6863,7 @@ impl Dock {
     pub(super) fn supervise_extras(&mut self) {
         if !self.is_main_dock() { return; }
         for i in 0..6 {
-            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
+            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => false, 4 => self.cfg.desktop_weather, 5 => self.cfg.desktop_radio, _ => false };
             if !enabled { continue; }
             let running = self.extra_hosts[i].as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
             let now = Instant::now();

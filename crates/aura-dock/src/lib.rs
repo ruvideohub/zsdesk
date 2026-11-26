@@ -159,7 +159,6 @@ pub fn run() -> Result<()> {
             "network" => host::run_system(dock_arg(&args), desktop_system::Kind::Network),
             "battery" => host::run_system(dock_arg(&args), desktop_system::Kind::Battery),
             "calendar" => host::run_system(dock_arg(&args), desktop_system::Kind::Calendar),
-            "notes" => host::run_system(dock_arg(&args), desktop_system::Kind::Notes),
             "weather" => host::run_system(dock_arg(&args), desktop_system::Kind::Weather),
             "radio" => host::run_system(dock_arg(&args), desktop_system::Kind::Radio),
             other => {
@@ -296,7 +295,6 @@ pub fn run_widgets() -> Result<()> {
         "network" => host::run_system(dock, desktop_system::Kind::Network),
         "battery" => host::run_system(dock, desktop_system::Kind::Battery),
         "calendar" => host::run_system(dock, desktop_system::Kind::Calendar),
-        "notes" => host::run_system(dock, desktop_system::Kind::Notes),
         "weather" => host::run_system(dock, desktop_system::Kind::Weather),
         "radio" => host::run_system(dock, desktop_system::Kind::Radio),
         _ => host::run_clock(dock),

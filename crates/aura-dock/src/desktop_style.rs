@@ -4,10 +4,24 @@ use crate::ui::{self, theme, v2, v3};
 use windows::core::{Interface, Result};
 use windows::UI::Composition::{CompositionBrush, Compositor, ContainerVisual};
 
-pub fn backdrop(c: &Compositor) -> Option<CompositionBrush> {
+use std::sync::atomic::{AtomicU32, Ordering};
+static TINT: AtomicU32 = AtomicU32::new(0.24_f32.to_bits());
+static RADIUS: AtomicU32 = AtomicU32::new(18.0_f32.to_bits());
+static BLUR: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
+pub fn configure(cfg: &crate::config::Config) {
+    TINT.store(cfg.glass_tint.clamp(0.0, 0.9).to_bits(), Ordering::Relaxed);
+    RADIUS.store(cfg.corner_radius.clamp(0.0, 64.0).to_bits(), Ordering::Relaxed);
+    BLUR.store(cfg.extra_blur.max(0.0).to_bits(), Ordering::Relaxed);
+}
+
+pub fn backdrop(c: &Compositor, dpi: f32) -> Option<CompositionBrush> {
     c.CreateHostBackdropBrush()
         .ok()
-        .and_then(|brush| brush.cast().ok())
+        .and_then(|brush| brush.cast::<CompositionBrush>().ok())
+        .map(|brush| {
+            let blur = f32::from_bits(BLUR.load(Ordering::Relaxed));
+            if blur > 0.5 { crate::effects::blurred_backdrop(c, &brush, blur * dpi / 2.0).unwrap_or(brush) } else { brush }
+        })
 }
 
 /// The background has a deliberately opaque fallback if host backdrop is unavailable.
@@ -19,7 +33,7 @@ pub fn surface(
     h: f32,
     k: f32,
 ) -> Result<()> {
-    let radius = (f32::from(aura_core::desktop_style::CORNER_RADIUS_DIP) * k).min(w.min(h) / 2.0);
+    let radius = (f32::from_bits(RADIUS.load(Ordering::Relaxed)) * k).min(w.min(h) / 2.0);
     let environment = crate::desktop_card_policy::Environment {
         light: theme::light(),
         high_contrast: theme::high_contrast(),
@@ -27,7 +41,12 @@ pub fn surface(
         system_colors: [0; 3],
     };
     let glass = if environment.glass(backdrop.is_some()) {
-        backdrop.and_then(|b| ui::glass(c, b, theme::surface(0.72), radius).ok())
+        backdrop.and_then(|b| {
+            let tint = f32::from_bits(TINT.load(Ordering::Relaxed));
+            let [r, g, b_color] = if theme::light() { aura_core::desktop_style::SURFACE_LIGHT } else { aura_core::desktop_style::SURFACE_DARK };
+            let alpha = if theme::light() { (tint + 0.12).min(0.92) } else { tint };
+            ui::glass(c, b, ui::rgba(r, g, b_color, alpha), radius).ok()
+        })
     } else {
         None
     };

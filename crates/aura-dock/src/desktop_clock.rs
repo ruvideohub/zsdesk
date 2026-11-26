@@ -256,6 +256,7 @@ impl DesktopClock {
             let instance = GetModuleHandleW(None)?;
             let class = WNDCLASSW {
                 lpfnWndProc: Some(procedure),
+                hCursor: windows::Win32::UI::WindowsAndMessaging::LoadCursorW(None, windows::Win32::UI::WindowsAndMessaging::IDC_ARROW).unwrap_or_default(),
                 hInstance: instance.into(),
                 lpszClassName: CLASS,
                 ..Default::default()
@@ -288,7 +289,7 @@ impl DesktopClock {
             let state = Box::new(ClockState {
                 hwnd,
                 root,
-                backdrop: crate::desktop_style::backdrop(c),
+                backdrop: crate::desktop_style::backdrop(c, dpi),
                 _target: target,
                 dock,
                 monitor,
