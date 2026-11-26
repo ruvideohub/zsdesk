@@ -30,17 +30,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::config::ClockCorner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { System, Network, Battery, Calendar }
+pub enum Kind { System, Network, Battery, Calendar, Notes }
 
 impl Kind {
     fn title(self) -> &'static str {
-        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" } }
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" } }
     }
     fn menu_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU }
     }
     fn moved_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED }
     }
 }
 
@@ -96,6 +96,7 @@ impl Prefs {
             Kind::Network => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.network_pos.map(|[x,y]| (x,y)), locked: cfg.network_locked },
             Kind::Battery => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.battery_pos.map(|[x,y]| (x,y)), locked: cfg.battery_locked },
             Kind::Calendar => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.calendar_pos.map(|[x,y]| (x,y)), locked: cfg.calendar_locked },
+            Kind::Notes => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.notes_pos.map(|[x,y]| (x,y)), locked: cfg.notes_locked },
         }
     }
 
@@ -184,6 +185,13 @@ impl SystemState {
             let now = crate::widgets::Now::get();
             return vec![Meter { label: "date", fill: 0.0, text: now.ymd() }];
         }
+        if self.kind == Kind::Notes {
+            let (label, text) = match crate::desktop_notes::read(&crate::widgets::hub::notes_path()) {
+                Ok(text) => ("notes", text),
+                Err(_) => ("error", String::new()),
+            };
+            return vec![Meter { label, fill: 0.0, text }];
+        }
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
@@ -191,7 +199,7 @@ impl SystemState {
             Kind::System => meters(&stats, first),
             Kind::Network => network_meters(&stats, first),
             Kind::Battery => battery_meters(),
-            Kind::Calendar => unreachable!("calendar returns before sampling"),
+            Kind::Calendar | Kind::Notes => unreachable!("text cards return before sampling"),
         }
     }
 }
@@ -367,10 +375,28 @@ impl DesktopSystem {
             Kind::Network => ("СКОРОСТЬ СОЕДИНЕНИЯ", "\u{E701}"),
             Kind::Battery => ("ПИТАНИЕ УСТРОЙСТВА", "\u{E83E}"),
             Kind::Calendar => (if crate::strings::russian() { "ТЕКУЩИЙ МЕСЯЦ" } else { "THIS MONTH" }, "\u{E787}"),
+            Kind::Notes => (if crate::strings::russian() { "ЗАМЕТКИ НА РАБОЧЕМ СТОЛЕ" } else { "DESKTOP NOTES" }, "\u{E70B}"),
         };
         style::header(c, gfx, root, self.state.kind.title(), subtitle, glyph, k)?;
 
         match self.state.kind {
+            Kind::Notes => {
+                let note = &meters[0];
+                let russian = crate::strings::russian();
+                let placeholder = if note.label == "error" {
+                    if russian { "Не удалось прочитать заметки" } else { "Unable to read notes" }
+                } else if note.text.trim().is_empty() {
+                    if russian { "Нет заметок — откройте меню карточки" } else { "No notes — open the card menu" }
+                } else { "" };
+                if !placeholder.is_empty() {
+                    style::text(c, gfx, root, placeholder, 22.0*k, 67.0*k, 224.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
+                } else {
+                    for (line, value) in note.text.lines().take(5).enumerate() {
+                        style::text(c, gfx, root, value, 22.0*k, (64.0 + line as f32 * 18.0)*k,
+                            224.0*k, 12.0*k, 500, theme::text(), false, false)?;
+                    }
+                }
+            }
             Kind::Calendar => {
                 let now = crate::widgets::Now::get();
                 let russian = crate::strings::russian();

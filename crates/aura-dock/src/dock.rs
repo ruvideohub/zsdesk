@@ -109,6 +109,8 @@ pub const WM_APP_BATTERY_MENU: u32 = WM_APP + 18;
 pub const WM_APP_BATTERY_MOVED: u32 = WM_APP + 19;
 pub const WM_APP_CALENDAR_MENU: u32 = WM_APP + 42;
 pub const WM_APP_CALENDAR_MOVED: u32 = WM_APP + 43;
+pub const WM_APP_NOTES_MENU: u32 = WM_APP + 44;
+pub const WM_APP_NOTES_MOVED: u32 = WM_APP + 45;
 /// Re-check whether the pointer is over the dock (after a drag that bypassed hover tracking).
 const WM_APP_RESYNC_HOVER: u32 = WM_APP + 5;
 /// The tray icons changed (see tray.rs).
@@ -241,6 +243,10 @@ const CMD_BATTERY_HIDE: usize = 3667;
 const CMD_CALENDAR_DESKTOP: usize = 3668;
 const CMD_CALENDAR_LOCK: usize = 3669;
 const CMD_CALENDAR_HIDE: usize = 3670;
+const CMD_NOTES_DESKTOP: usize = 3671;
+const CMD_NOTES_LOCK: usize = 3672;
+const CMD_NOTES_HIDE: usize = 3673;
+const CMD_NOTES_EDIT: usize = 3674;
 /// Widgets on the panel: the section header's list once, then the gallery.
 const CMD_WIDGET_ADD: usize = 81;
 const CMD_WIDGET_TOGGLE_BASE: usize = 3700;
@@ -787,8 +793,8 @@ struct Dock {
     system_host: Option<std::process::Child>,
     /// When the load card may be started again after it died.
     system_retry_at: Instant,
-    extra_hosts: [Option<std::process::Child>; 3],
-    extra_retry_at: [Instant; 3],
+    extra_hosts: [Option<std::process::Child>; 4],
+    extra_retry_at: [Instant; 4],
     /// The y the panel's bottom edge sits on. The monitor's bottom edge, unless Windows'
     /// own taskbar is on screen: then it is the top of that taskbar, so the panel goes
     /// above it instead of underneath.
@@ -2354,6 +2360,8 @@ impl Dock {
             MenuItem::item("Network", CMD_NETWORK_DESKTOP).checked(self.cfg.desktop_network),
             MenuItem::item("Battery", CMD_BATTERY_DESKTOP).checked(self.cfg.desktop_battery),
             MenuItem::item("Calendar", CMD_CALENDAR_DESKTOP).checked(self.cfg.desktop_calendar),
+            MenuItem::item("Notes", CMD_NOTES_DESKTOP).checked(self.cfg.desktop_notes),
+            MenuItem::item("Edit notes…", CMD_NOTES_EDIT),
         ]));
         let mut dock_widgets = Vec::new();
         for (index, id) in DOCK_WIDGETS.iter().enumerate() {
@@ -2754,6 +2762,16 @@ impl Dock {
             CMD_CALENDAR_DESKTOP => self.save_and_apply(|c| c.desktop_calendar = !c.desktop_calendar),
             CMD_CALENDAR_HIDE => self.save_and_apply(|c| c.desktop_calendar = false),
             CMD_CALENDAR_LOCK => self.save_and_apply(|c| c.calendar_locked = !c.calendar_locked),
+            CMD_NOTES_DESKTOP => self.save_and_apply(|c| c.desktop_notes = !c.desktop_notes),
+            CMD_NOTES_HIDE => self.save_and_apply(|c| c.desktop_notes = false),
+            CMD_NOTES_LOCK => self.save_and_apply(|c| c.notes_locked = !c.notes_locked),
+            CMD_NOTES_EDIT => {
+                let path = crate::widgets::hub::notes_path();
+                match crate::desktop_notes::ensure_file(&path) {
+                    Ok(()) => crate::apps::edit_file(&path),
+                    Err(error) => self.notice(&[if crate::strings::russian() { "Не удалось открыть заметки".into() } else { "Unable to open notes".into() }, error.to_string()]),
+                }
+            }
             CMD_NETWORK_HIDE => self.save_and_apply(|c| c.desktop_network = false),
             CMD_BATTERY_HIDE => self.save_and_apply(|c| c.desktop_battery = false),
             CMD_NETWORK_LOCK => self.save_and_apply(|c| c.network_locked = !c.network_locked),
@@ -5725,6 +5743,7 @@ impl Dock {
         self.restart_extra(0);
         self.restart_extra(1);
         self.restart_extra(2);
+        self.restart_extra(3);
         if self.launchpad.open {
             // Panels take their glass tint when they open: reopen with the new tint,
             // keeping the Launchpad Settings section the user was on.
@@ -5806,6 +5825,9 @@ impl Dock {
         if old.desktop_calendar != self.cfg.desktop_calendar || old.calendar_pos != self.cfg.calendar_pos || old.calendar_locked != self.cfg.calendar_locked || old.language != self.cfg.language {
             self.restart_extra(2);
         }
+        if old.desktop_notes != self.cfg.desktop_notes || old.notes_pos != self.cfg.notes_pos || old.notes_locked != self.cfg.notes_locked || old.language != self.cfg.language {
+            self.restart_extra(3);
+        }
         if old.desktop_system != self.cfg.desktop_system
             || old.system_corner != self.cfg.system_corner
             || (old.system_scale - self.cfg.system_scale).abs() > f32::EPSILON
@@ -5840,7 +5862,7 @@ impl Dock {
         self.hub.shutdown();
         self.helpers.stop();
         // The desktop cards live in their own processes: they go with the panel.
-        for host in [self.clock_host.take(), self.system_host.take(), self.extra_hosts[0].take(), self.extra_hosts[1].take(), self.extra_hosts[2].take()].into_iter().flatten() {
+        for host in [self.clock_host.take(), self.system_host.take(), self.extra_hosts[0].take(), self.extra_hosts[1].take(), self.extra_hosts[2].take(), self.extra_hosts[3].take()].into_iter().flatten() {
             let mut child = host;
             let _ = child.kill();
             let _ = child.wait();
@@ -6133,6 +6155,15 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_APP_CALENDAR_MOVED => {
             let (x, y) = (wp.0 as i32, lp.0 as i32);
             with_dock(|d| d.save_and_apply(|c| c.calendar_pos = Some([x, y])));
+            return LRESULT(0);
+        }
+        WM_APP_NOTES_MENU => {
+            with_dock(|d| d.extra_menu(3));
+            return LRESULT(0);
+        }
+        WM_APP_NOTES_MOVED => {
+            let (x, y) = (wp.0 as i32, lp.0 as i32);
+            with_dock(|d| d.save_and_apply(|c| c.notes_pos = Some([x, y])));
             return LRESULT(0);
         }
         WM_APP_SYSTEM_MENU => {
@@ -6751,11 +6782,11 @@ impl Dock {
         use std::os::windows::process::CommandExt;
         if !self.is_main_dock() { return; }
         if let Some(mut child) = self.extra_hosts[index].take() { let _ = child.kill(); let _ = child.wait(); }
-        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, _ => false };
+        let enabled = match index { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, _ => false };
         if !enabled { return; }
         let Ok(panel) = std::env::current_exe() else { return };
         let exe = panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()).unwrap_or(panel);
-        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", _ => return };
+        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", 3 => "notes", _ => return };
         match std::process::Command::new(exe).arg("--component").arg(component)
             .arg("--dock").arg(format!("{:#x}", self.hwnd.0 as isize))
             .arg("--parent").arg(std::process::id().to_string())
@@ -6767,8 +6798,8 @@ impl Dock {
 
     pub(super) fn supervise_extras(&mut self) {
         if !self.is_main_dock() { return; }
-        for i in 0..3 {
-            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, _ => false };
+        for i in 0..4 {
+            let enabled = match i { 0 => self.cfg.desktop_network, 1 => self.cfg.desktop_battery, 2 => self.cfg.desktop_calendar, 3 => self.cfg.desktop_notes, _ => false };
             if !enabled { continue; }
             let running = self.extra_hosts[i].as_mut().is_some_and(|c| matches!(c.try_wait(), Ok(None)));
             let now = Instant::now();
@@ -6784,13 +6815,16 @@ impl Dock {
             0 => (self.cfg.desktop_network, self.cfg.network_locked, "Сеть", CMD_NETWORK_LOCK, CMD_NETWORK_HIDE),
             1 => (self.cfg.desktop_battery, self.cfg.battery_locked, "Батарея", CMD_BATTERY_LOCK, CMD_BATTERY_HIDE),
             2 => (self.cfg.desktop_calendar, self.cfg.calendar_locked, if crate::strings::russian() { "Календарь" } else { "Calendar" }, CMD_CALENDAR_LOCK, CMD_CALENDAR_HIDE),
+            3 => (self.cfg.desktop_notes, self.cfg.notes_locked, if crate::strings::russian() { "Заметки" } else { "Notes" }, CMD_NOTES_LOCK, CMD_NOTES_HIDE),
             _ => return,
         };
         if enabled {
-            let english_calendar = index == 2 && !crate::strings::russian();
-            self.open_menu_at_cursor(vec![MenuItem::header(title),
-                MenuItem::item(if english_calendar { "Lock position" } else { "Закрепить положение" }, lock).checked(locked),
-                MenuItem::item(if english_calendar { "Hide card" } else { "Скрыть карточку" }, hide).danger()]);
+            let english = index >= 2 && !crate::strings::russian();
+            let mut items = vec![MenuItem::header(title)];
+            if index == 3 { items.push(MenuItem::item(if english { "Edit notes…" } else { "Редактировать заметки…" }, CMD_NOTES_EDIT)); }
+            items.push(MenuItem::item(if english { "Lock position" } else { "Закрепить положение" }, lock).checked(locked));
+            items.push(MenuItem::item(if english { "Hide card" } else { "Скрыть карточку" }, hide).danger());
+            self.open_menu_at_cursor(items);
         }
     }
 
@@ -7073,8 +7107,8 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
             clock_retry_at: Instant::now(),
             system_host: None,
             system_retry_at: Instant::now(),
-            extra_hosts: [None, None, None],
-            extra_retry_at: [Instant::now(), Instant::now(), Instant::now()],
+            extra_hosts: [None, None, None, None],
+            extra_retry_at: [Instant::now(), Instant::now(), Instant::now(), Instant::now()],
             floor_y: 0,
             panel_top: false,
             band_topmost: false,

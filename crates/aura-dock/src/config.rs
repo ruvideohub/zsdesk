@@ -272,6 +272,9 @@ pub struct Config {
     pub desktop_calendar: bool,
     pub calendar_pos: Option<[i32; 2]>,
     pub calendar_locked: bool,
+    pub desktop_notes: bool,
+    pub notes_pos: Option<[i32; 2]>,
+    pub notes_locked: bool,
 
     /// The control centre button was put on the panel once. After that it's the user's
     /// call: drop it from the widget menu and it stays dropped.
@@ -361,6 +364,9 @@ impl Default for Config {
             desktop_calendar: false,
             calendar_pos: None,
             calendar_locked: false,
+            desktop_notes: false,
+            notes_pos: None,
+            notes_locked: false,
             cc_pin_added: false,
             tray_order: Vec::new(),
             tray_hidden: Vec::new(),
@@ -589,6 +595,19 @@ mod tests {
         assert!(restored.desktop_calendar && restored.calendar_locked);
         assert_eq!(restored.calendar_pos, Some([-830, 145]));
         assert_eq!(restored.pins[0].app(), Some("dock-only"));
+    }
+
+    #[test]
+    fn desktop_notes_defaults_off_and_is_independent_of_calendar() {
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(!cfg.desktop_notes && !cfg.notes_locked && cfg.notes_pos.is_none());
+        cfg.desktop_notes = true;
+        cfg.notes_pos = Some([-45, 200]);
+        cfg.notes_locked = true;
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert!(restored.desktop_notes && restored.notes_locked);
+        assert_eq!(restored.notes_pos, Some([-45, 200]));
+        assert!(!restored.desktop_calendar && restored.calendar_pos.is_none());
     }
 
     #[test]

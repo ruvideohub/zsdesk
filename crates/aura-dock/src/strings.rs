@@ -125,6 +125,7 @@ fn lookup(text: &str) -> Option<&'static str> {
         "Today's Forecast" => "Погода на сегодня",
         "Calendar" => "Календарь",
         "Notes" => "Заметки",
+        "Edit notes…" => "Редактировать заметки…",
         "Online Radio" => "Онлайн-радио",
         "Loading stations…" => "Загрузка станций…",
         "Playlist stream unsupported" => "Вложенный плейлист не поддерживается",
