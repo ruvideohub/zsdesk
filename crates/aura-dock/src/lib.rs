@@ -16,6 +16,8 @@ mod appbar_policy;
 mod apps;
 mod config;
 mod control_center;
+mod desktop_card_policy;
+mod desktop_environment;
 mod desktop_clock;
 mod desktop_layer;
 mod desktop_layer_policy;

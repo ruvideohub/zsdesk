@@ -44,6 +44,23 @@ pub mod theme {
     use std::sync::atomic::{AtomicBool, Ordering};
     use windows::UI::Color;
     static LIGHT: AtomicBool = AtomicBool::new(false);
+    // Only the separate desktop-widget hosts set these; the Dock process keeps
+    // its existing palette until it explicitly adopts the same policy.
+    static DESKTOP_HIGH_CONTRAST: AtomicBool = AtomicBool::new(false);
+    static DESKTOP_TRANSPARENCY: AtomicBool = AtomicBool::new(true);
+    pub fn set_desktop_accessibility(high_contrast: bool, transparency: bool) {
+        DESKTOP_HIGH_CONTRAST.store(high_contrast, Ordering::Relaxed);
+        DESKTOP_TRANSPARENCY.store(transparency, Ordering::Relaxed);
+    }
+    pub fn high_contrast() -> bool { DESKTOP_HIGH_CONTRAST.load(Ordering::Relaxed) }
+    pub fn transparency() -> bool { DESKTOP_TRANSPARENCY.load(Ordering::Relaxed) }
+    fn system_color(which: windows::Win32::Graphics::Gdi::SYS_COLOR_INDEX) -> Color {
+        let c = unsafe { windows::Win32::Graphics::Gdi::GetSysColor(which) };
+        rgba((c & 255) as u8, ((c >> 8) & 255) as u8, ((c >> 16) & 255) as u8, 1.0)
+    }
+    fn color_tuple(c: Color) -> (f32, f32, f32, f32) {
+        (c.R as f32 / 255.0, c.G as f32 / 255.0, c.B as f32 / 255.0, c.A as f32 / 255.0)
+    }
     pub fn set_light(on: bool) {
         LIGHT.store(on, Ordering::Relaxed);
     }
@@ -59,14 +76,17 @@ pub mod theme {
     }
     /// Primary, secondary and tertiary text.
     pub fn text() -> (f32, f32, f32, f32) {
+        if high_contrast() { return color_tuple(system_color(windows::Win32::Graphics::Gdi::COLOR_WINDOWTEXT)); }
         let (r, g, b) = ink_rgb();
         (r, g, b, if light() { 0.92 } else { 1.0 })
     }
     pub fn text_2() -> (f32, f32, f32, f32) {
+        if high_contrast() { return text(); }
         let (r, g, b) = ink_rgb();
         (r, g, b, if light() { 0.62 } else { 0.62 })
     }
     pub fn text_3() -> (f32, f32, f32, f32) {
+        if high_contrast() { return text(); }
         let (r, g, b) = ink_rgb();
         (r, g, b, if light() { 0.45 } else { 0.40 })
     }
@@ -76,6 +96,9 @@ pub mod theme {
     /// A translucent fill that contrasts with the glass (cards, tracks, hover): white on
     /// dark glass, near-black on light glass. `a` is the dark-theme opacity.
     pub fn ink(a: f32) -> Color {
+        if high_contrast() {
+            return if a >= 0.18 { system_color(windows::Win32::Graphics::Gdi::COLOR_WINDOWTEXT) } else { rgba(0, 0, 0, 0.0) };
+        }
         if light() {
             rgba(20, 20, 30, a * 0.6)
         } else {
@@ -84,6 +107,7 @@ pub mod theme {
     }
     /// Glass tint for panels, menus and pop-ups.
     pub fn surface(a: f32) -> Color {
+        if high_contrast() { return system_color(windows::Win32::Graphics::Gdi::COLOR_WINDOW); }
         let [r,g,b] = if light() { aura_core::desktop_style::SURFACE_LIGHT } else { aura_core::desktop_style::SURFACE_DARK };
         rgba(r, g, b, if light() { (a + 0.08).min(1.0) } else { a })
     }
@@ -96,6 +120,7 @@ pub mod theme {
         }
     }
     pub fn accent() -> Color {
+        if high_contrast() { return system_color(windows::Win32::Graphics::Gdi::COLOR_HIGHLIGHT); }
         rgba(10, 132, 255, 1.0)
     }
     /// The accent as (r, g, b, a) for text and glyphs.

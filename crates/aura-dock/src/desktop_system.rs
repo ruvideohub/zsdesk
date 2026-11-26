@@ -54,7 +54,7 @@ const CARD_H: f32 = 168.0;
 const MARGIN: f32 = 24.0;
 /// Where the three rows sit, and how tall a meter bar is.
 const ROWS: [f32; 3] = [62.0, 94.0, 126.0];
-const BAR_H: f32 = 4.0;
+const BAR_H: f32 = 5.0;
 const NETWORK_TILE_X: [f32; 2] = [18.0, 137.0];
 const NETWORK_TILE_W: f32 = 113.0;
 const NETWORK_TILE_Y: f32 = 62.0;
@@ -362,10 +362,7 @@ impl DesktopSystem {
                     let y = ROWS[index] * k;
                     style::text(c, gfx, root, meter.label, 21.0*k, y, 74.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
                     style::text(c, gfx, root, &meter.text, 100.0*k, y, 147.0*k, 11.0*k, 600, theme::text(), false, true)?;
-                    style::rect(c, root, 21.0*k, y + 19.0*k, 226.0*k, BAR_H*k, 2.0*k, theme::ink(0.11))?;
-                    if meter.fill > 0.0 {
-                        style::rect(c, root, 21.0*k, y + 19.0*k, (226.0*k*meter.fill).max(4.0*k), BAR_H*k, 2.0*k, theme::accent())?;
-                    }
+                    style::meter(c, root, 21.0*k, y + 19.0*k, 226.0*k, BAR_H*k, meter.fill)?;
                 }
             }
             Kind::Network => {
@@ -373,7 +370,7 @@ impl DesktopSystem {
                 // not empty progress bars that would suggest a connection limit.
                 for (i, meter) in meters.iter().enumerate() {
                     let x = NETWORK_TILE_X[i] * k;
-                    style::rect(c, root, x, NETWORK_TILE_Y*k, NETWORK_TILE_W*k, NETWORK_TILE_H*k, 16.0*k, theme::ink(0.065))?;
+                    style::tile(c, root, x, NETWORK_TILE_Y*k, NETWORK_TILE_W*k, NETWORK_TILE_H*k, 16.0*k, k)?;
                     let label = if i == 0 { "↓  ПОЛУЧЕНИЕ" } else { "↑  ОТПРАВКА" };
                     style::text(c, gfx, root, label, x + 12.0*k, 73.0*k, 91.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
                     style::fitted_text(c, gfx, root, &meter.text, x + 12.0*k, 101.0*k, 91.0*k, 15.0*k, 600, theme::text(), true)?;
@@ -387,13 +384,10 @@ impl DesktopSystem {
                     if has_details {
                         style::text(c, gfx, root, &meters[1].text, 22.0*k, 103.0*k, 116.0*k,
                             11.0*k, 500, theme::text_2(), false, false)?;
-                        style::rect(c, root, 151.0*k, 65.0*k, 97.0*k, 55.0*k, 15.0*k, theme::ink(0.065))?;
+                        style::tile(c, root, 151.0*k, 65.0*k, 97.0*k, 55.0*k, 15.0*k, k)?;
                         style::text(c, gfx, root, "ОСТАЛОСЬ", 162.0*k, 72.0*k, 76.0*k, 9.0*k, 600, theme::text_2(), false, false)?;
-                        style::text(c, gfx, root, &meters[2].text, 162.0*k, 91.0*k, 76.0*k, 12.0*k, 600, theme::text(), false, false)?;
-                        style::rect(c, root, 21.0*k, 138.0*k, 226.0*k, 5.0*k, 2.5*k, theme::ink(0.11))?;
-                        if charge.fill > 0.0 {
-                            style::rect(c, root, 21.0*k, 138.0*k, (226.0*k*charge.fill).max(5.0*k), 5.0*k, 2.5*k, theme::accent())?;
-                        }
+                        style::fitted_text(c, gfx, root, &meters[2].text, 162.0*k, 91.0*k, 76.0*k, 12.0*k, 600, theme::text(), false)?;
+                        style::meter(c, root, 21.0*k, 138.0*k, 226.0*k, 5.0*k, charge.fill)?;
                     }
                 }
             }

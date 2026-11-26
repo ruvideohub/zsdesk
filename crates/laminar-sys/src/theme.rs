@@ -35,6 +35,12 @@ pub fn apps_use_dark() -> bool {
     read_dword(PERSONALIZE, "AppsUseLightTheme") == Some(0)
 }
 
+/// Windows' per-user transparency preference; unavailable values keep the
+/// historical enabled default. High contrast is checked by the caller.
+pub fn transparency_enabled() -> bool {
+    read_dword(PERSONALIZE, "EnableTransparency").unwrap_or(1) != 0
+}
+
 /// True when the system (taskbar/Start) uses dark mode (`SystemUsesLightTheme == 0`).
 pub fn system_uses_dark() -> bool {
     read_dword(PERSONALIZE, "SystemUsesLightTheme") == Some(0)

@@ -48,7 +48,9 @@ impl Card for DesktopSystem {
 
 /// The one-second message loop both cards run in: draw, keep the card under the app in front,
 /// and quit when the panel that owns it is gone.
-fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) -> Result<()> {
+fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx, match_windows_theme: bool) -> Result<()> {
+    let mut appearance = crate::desktop_environment::read(match_windows_theme);
+    crate::desktop_environment::apply(appearance);
     card.repaint(compositor, gfx)?;
     let window = card.hwnd();
     unsafe {
@@ -72,7 +74,14 @@ fn pump<C: Card>(dock: HWND, mut card: C, compositor: &Compositor, gfx: &Gfx) ->
             crate::desktop_layer::keep_below_windows(window);
             if sampled.elapsed() >= Duration::from_secs(1) {
                 sampled = Instant::now();
-                let _ = card.tick(compositor, gfx);
+                let next = crate::desktop_environment::read(match_windows_theme);
+                if next != appearance {
+                    appearance = next;
+                    crate::desktop_environment::apply(appearance);
+                    let _ = card.repaint(compositor, gfx);
+                } else {
+                    let _ = card.tick(compositor, gfx);
+                }
             }
             continue;
         }
@@ -93,12 +102,7 @@ fn prepare(dock: Option<HWND>) -> Result<Option<(Compositor, Gfx, windows::Win32
     crate::dpi_aware();
     crate::composition_apartment()?;
     let cfg = crate::config::Config::load().unwrap_or_default();
-    let light = match std::env::var("LAMINAR_THEME").ok().as_deref() {
-        Some("light") => true,
-        Some("dark") => false,
-        _ => cfg.match_windows_theme && !laminar_sys::theme::apps_use_dark(),
-    };
-    crate::ui::theme::set_light(light);
+    crate::desktop_environment::apply(crate::desktop_environment::read(cfg.match_windows_theme));
     let (monitor, dpi) = match crate::displays::all().first().copied() {
         Some(d) => (d.rect, d.dpi),
         None => {
@@ -130,7 +134,7 @@ pub fn run_system(dock: Option<HWND>, kind: crate::desktop_system::Kind) -> Resu
     let cfg = crate::config::Config::load().unwrap_or_default();
     let prefs = crate::desktop_system::Prefs::for_kind(&cfg, kind);
     let card = DesktopSystem::new(&compositor, monitor, dpi, prefs, dock, kind)?;
-    pump(dock, card, &compositor, &gfx)
+    pump(dock, card, &compositor, &gfx, cfg.match_windows_theme)
 }
 
 /// Draw the desktop clock until the panel it belongs to is gone.
@@ -147,7 +151,7 @@ pub fn run_clock(dock: Option<HWND>) -> Result<()> {
     let cfg = crate::config::Config::load().unwrap_or_default();
     let prefs = Prefs::from_config(&cfg);
     let clock = DesktopClock::new(&compositor, monitor, dpi, prefs, dock)?;
-    pump(dock, clock, &compositor, &gfx)
+    pump(dock, clock, &compositor, &gfx, cfg.match_windows_theme)
 }
 
 /// Timer id for the card's one-second refresh.

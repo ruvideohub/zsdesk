@@ -243,6 +243,14 @@ jobs:
           $output | ForEach-Object { Write-Host $_ }
           if ($code -ne 0) { exit $code }
           if (-not ($output | Select-String -SimpleMatch '1 passed; 0 failed')) { throw 'Native shadow test did not execute' }
+      - name: Desktop widget appearance policy tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/aura-dock/src/desktop_card_policy.rs -o target/desktop-card-policy-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/desktop-card-policy-tests.exe
+          exit $LASTEXITCODE
       - name: Dock appbar policy tests
         shell: pwsh
         working-directory: aura

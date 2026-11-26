@@ -465,11 +465,23 @@ impl FenceWin {
             let hovered = !matches!(self.hover, FenceHit::None);
             if !self.standalone {
             cv.round(outer, radius, col(palette.background));
-            // Title bar.
+            // Keep the selected surface colour and opacity uniform across the
+            // header; a quiet divider gives structure without another opaque
+            // layer. High contrast retains the native raised-title colour.
             let title = RectF::new(0.0, 0.0, w as f32, g.title.height as f32);
-            cv.push_clip(title);
-            cv.round(outer, radius, col(palette.title));
-            cv.pop_clip();
+            let high_contrast = aura_windows::theme::high_contrast();
+            if high_contrast {
+                cv.push_clip(title);
+                cv.round(outer, radius, col(palette.title));
+                cv.pop_clip();
+            }
+            if g.content.height > 0 {
+                let inset = sf(12.0).min((w as f32 - 2.0).max(0.0) / 2.0);
+                let line = RectF::new(inset, (title.h - sf(1.0)).max(0.0),
+                    (w as f32 - 2.0 * inset).max(0.0), sf(1.0).max(1.0));
+                let color = if high_contrast { col(palette.border) } else { col(palette.border).with_alpha(0.6) };
+                cv.fill(line, color);
+            }
             let renaming_title = matches!(self.rename, Some((_, RenameTarget::Title)));
             if self.merge_hover.is_some() {
                 cv.push_clip(title);
@@ -572,16 +584,19 @@ impl FenceWin {
                     // Nonzero alpha only over the icon's own cell. The rest of
                     // the desktop remains native and receives clicks normally.
                     if self.standalone { cv.fill(r, Color::rgba8(0, 0, 0, 1)); }
+                    let item_radius = sf(if self.standalone { 4.0 } else { f32::from(aura_core::desktop_style::ITEM_RADIUS_DIP) })
+                        .min(r.w.min(r.h) / 2.0).max(0.0);
+                    let selection_stroke = if self.standalone { 1.0 } else { sf(1.0).max(1.0) };
                     if self.drop_hover == Some(i) {
-                        cv.round(r, sf(4.0), col(palette.selected));
-                        cv.stroke_round(r, sf(4.0), col(palette.accent), sf(1.5));
+                        cv.round(r, item_radius, col(palette.selected));
+                        cv.stroke_round(r, item_radius, col(palette.accent), sf(1.5));
                     } else if selected {
-                        cv.round(r, sf(4.0), col(palette.selected));
-                        cv.stroke_round(r, sf(4.0), col(palette.selected_border), 1.0);
+                        cv.round(r, item_radius, col(palette.selected));
+                        cv.stroke_round(r, item_radius, col(palette.selected_border), selection_stroke);
                     } else if self.hover == FenceHit::Item(i) {
-                        cv.round(r, sf(4.0), col(palette.hover));
+                        cv.round(r, item_radius, col(palette.hover));
                     }
-                    if self.focus == Some(i) && selected { cv.stroke_round(r, sf(4.0), col(palette.selected_border), 1.0); }
+                    if self.focus == Some(i) && selected { cv.stroke_round(r, item_radius, col(palette.selected_border), selection_stroke); }
                     let icon_rect = rf(cell.icon);
                     let opacity = if entry.ghosted || self.cut_keys.contains(&entry.key) { 0.5 } else { 1.0 };
                     match bitmap {
