@@ -979,9 +979,11 @@ impl Launchpad {
             None => (content, oy, false),
         };
         let rows = section_rows(sec);
-        Self::rect(c, content, pad, y, row_w, rows.len() as f32 * 56.0 * s, 14.0 * s, theme::ink(0.06))?;
+        let row_h = aura_core::desktop_style::SETTINGS_ROW_DIP as f32 * s;
+        let group_radius = aura_core::desktop_style::SETTINGS_GROUP_RADIUS_DIP as f32 * s;
+        Self::rect(c, content, pad, y, row_w, rows.len() as f32 * row_h, group_radius, theme::ink(aura_core::desktop_style::SETTINGS_GROUP_INK))?;
         for (k, row) in rows.iter().enumerate() {
-            let ry = y + k as f32 * 56.0 * s;
+            let ry = y + k as f32 * row_h;
             if k > 0 {
                 Self::rect(c, content, pad + 14.0 * s, ry, row_w - 28.0 * s, 1.0, 0.0, theme::hair())?;
             }

@@ -5,7 +5,7 @@ use std::cell::Cell;
 use aura_fences_model::{appearance::Control, desktop::{DesktopSettings,FenceTheme}};
 use windows::{core::{w,PCWSTR}, Win32::{
     Foundation::{COLORREF,HWND,LPARAM,LRESULT,POINT,WPARAM},
-    Graphics::Gdi::{CreateSolidBrush,DeleteObject,FillRect,GetMonitorInfoW,MonitorFromPoint,GetStockObject,SetBkColor,SetTextColor,SetBkMode,HBRUSH,HDC,TRANSPARENT,DEFAULT_GUI_FONT,COLOR_WINDOW,MONITORINFO,MONITOR_DEFAULTTONEAREST},
+    Graphics::Gdi::{CreateSolidBrush,DeleteObject,FillRect,GetMonitorInfoW,MonitorFromPoint,GetStockObject,SetBkColor,SetTextColor,SetBkMode,SelectObject,RoundRect,HBRUSH,HDC,TRANSPARENT,NULL_PEN,DEFAULT_GUI_FONT,COLOR_WINDOW,MONITORINFO,MONITOR_DEFAULTTONEAREST},
     System::LibraryLoader::GetModuleHandleW,
     UI::{Controls::{InitCommonControlsEx,INITCOMMONCONTROLSEX,ICC_BAR_CLASSES,TRACKBAR_CLASSW,TBS_HORZ,TBS_NOTICKS,TBM_SETPOS,TBM_SETRANGEMIN,TBM_SETRANGEMAX},
         HiDpi::{GetDpiForMonitor,MDT_EFFECTIVE_DPI}, Input::KeyboardAndMouse::{EnableWindow,SetFocus}, WindowsAndMessaging::*},
@@ -24,6 +24,9 @@ thread_local!{
     // Native controls remain keyboard/UIA accessible. In high contrast the
     // system owns all colors; otherwise the panel uses the shared Dock tokens.
     static PANEL_BRUSH:Cell<isize>=const{Cell::new(0)};
+    static GROUP_BRUSH:Cell<isize>=const{Cell::new(0)};
+    static GROUP_BG:Cell<u32>=const{Cell::new(0)};
+    static PANEL_SCALE:Cell<f32>=const{Cell::new(1.0)};
     static PANEL_FG:Cell<u32>=const{Cell::new(0)};
     static PANEL_BG:Cell<u32>=const{Cell::new(0)};
 }
@@ -34,25 +37,51 @@ impl PaletteGuard {
         if !aura_windows::theme::high_contrast() {
             let [r,g,b]=if dark {aura_core::desktop_style::SURFACE_DARK} else {aura_core::desktop_style::SURFACE_LIGHT};
             let bg=rgb(r,g,b); let fg=if dark {rgb(242,242,246)} else {rgb(27,27,32)};
+            let [r,g,b]=aura_core::desktop_style::settings_group_surface(dark);
+            let group=rgb(r,g,b);
             let brush=unsafe{CreateSolidBrush(bg)};
+            let group_brush=unsafe{CreateSolidBrush(group)};
             PANEL_BRUSH.with(|v|v.set(brush.0 as isize));PANEL_BG.with(|v|v.set(bg.0));PANEL_FG.with(|v|v.set(fg.0));
+            GROUP_BRUSH.with(|v|v.set(group_brush.0 as isize));GROUP_BG.with(|v|v.set(group.0));
         }
         Self
     }
 }
-impl Drop for PaletteGuard { fn drop(&mut self) { let brush=PANEL_BRUSH.with(|v|v.replace(0)); if brush!=0 {let _=unsafe{DeleteObject(HBRUSH(brush as *mut _).into())};} } }
+impl Drop for PaletteGuard { fn drop(&mut self) {
+    for brush in [PANEL_BRUSH.with(|v|v.replace(0)),GROUP_BRUSH.with(|v|v.replace(0))] {
+        if brush!=0 {let _=unsafe{DeleteObject(HBRUSH(brush as *mut _).into())};}
+    }
+} }
 
 unsafe extern "system" fn proc(hwnd:HWND,msg:u32,wp:WPARAM,lp:LPARAM)->LRESULT {
     match msg {
         WM_ERASEBKGND if PANEL_BRUSH.with(|v|v.get())!=0 => {
             let mut r=windows::Win32::Foundation::RECT::default();
-            if unsafe{GetClientRect(hwnd,&mut r)}.is_ok(){unsafe{FillRect(HDC(wp.0 as *mut _),&r,HBRUSH(PANEL_BRUSH.with(|v|v.get()) as *mut _));}}
+            if unsafe{GetClientRect(hwnd,&mut r)}.is_ok(){unsafe{
+                let dc=HDC(wp.0 as *mut _);
+                FillRect(dc,&r,HBRUSH(PANEL_BRUSH.with(|v|v.get()) as *mut _));
+                let group=GROUP_BRUSH.with(|v|v.get());
+                if group!=0 {
+                    let old_brush=SelectObject(dc,HBRUSH(group as *mut _).into());
+                    let old_pen=SelectObject(dc,GetStockObject(NULL_PEN));
+                    let scale=PANEL_SCALE.with(|v|v.get());
+                    let px=|x:i32| (x as f32*scale).round() as i32;
+                    let radius=px(aura_core::desktop_style::SETTINGS_GROUP_RADIUS_DIP*2);
+                    for (top,bottom) in [(34,76),(78,470),(477,584)] {
+                        let _=RoundRect(dc,px(12),px(top),px(488),px(bottom),radius,radius);
+                    }
+                    let _=SelectObject(dc,old_pen);let _=SelectObject(dc,old_brush);
+                }
+            }}
             LRESULT(1)
         }
         WM_CTLCOLORSTATIC|WM_CTLCOLORBTN if PANEL_BRUSH.with(|v|v.get())!=0 => {
             let dc=HDC(wp.0 as *mut _);
-            unsafe{SetTextColor(dc,COLORREF(PANEL_FG.with(|v|v.get())));SetBkColor(dc,COLORREF(PANEL_BG.with(|v|v.get())));SetBkMode(dc,TRANSPARENT);}
-            LRESULT(PANEL_BRUSH.with(|v|v.get()))
+            let id=unsafe{GetDlgCtrlID(HWND(lp.0 as *mut _))};
+            let in_group=id!=300 && id!=DONE_ID as i32 && GROUP_BRUSH.with(|v|v.get())!=0;
+            let bg=if in_group {GROUP_BG.with(|v|v.get())} else {PANEL_BG.with(|v|v.get())};
+            unsafe{SetTextColor(dc,COLORREF(PANEL_FG.with(|v|v.get())));SetBkColor(dc,COLORREF(bg));SetBkMode(dc,TRANSPARENT);}
+            LRESULT(if in_group {GROUP_BRUSH.with(|v|v.get())} else {PANEL_BRUSH.with(|v|v.get())})
         }
         WM_HSCROLL => {let _=unsafe{PostMessageW(Some(hwnd),CHANGE,WPARAM(0),lp)};LRESULT(0)}
         WM_COMMAND if wp.0 & 0xffff == BLUR_ID || wp.0 & 0xffff == ACRYLIC_ID || wp.0 & 0xffff == COUNTS_ID || (wp.0 & 0xffff == THEME_ID && (wp.0 >> 16) as u16 == CBN_SELCHANGE as u16) => {let _=unsafe{PostMessageW(Some(hwnd),CHANGE,WPARAM(wp.0 & 0xffff),LPARAM(0))};LRESULT(0)}
@@ -88,9 +117,10 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
     if !unsafe{GetMonitorInfoW(monitor,&mut info)}.as_bool(){return;}
     let(mut dx,mut dy)=(96,96);
     let dpi=if unsafe{GetDpiForMonitor(monitor,MDT_EFFECTIVE_DPI,&mut dx,&mut dy)}.is_ok(){dx.max(96)}else{96};
-    let work=info.rcWork;let scale=(dpi as f32/96.0).min((work.right-work.left) as f32/520.0).min((work.bottom-work.top) as f32/670.0).max(0.5);
+    let work=info.rcWork;let scale=(dpi as f32/96.0).min((work.right-work.left) as f32/520.0).min((work.bottom-work.top) as f32/710.0).max(0.5);
     let px=|x:i32|(x as f32*scale).round() as i32;
-    let (width,height)=(px(500),px(650));
+    PANEL_SCALE.with(|v|v.set(scale));
+    let (width,height)=(px(500),px(690));
     let left=(point.x-width/2).clamp(work.left,(work.right-width).max(work.left));
     let top=(point.y-height/2).clamp(work.top,(work.bottom-height).max(work.top));
     let Ok(instance)=(unsafe{GetModuleHandleW(None)}) else{return};
@@ -107,7 +137,7 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
         Some(result)
     };
     let caption=text("更改立即生效");
-    if child(w!("STATIC"),&caption,WINDOW_STYLE(0),0,20,12,450,22).is_none(){return;}
+    if child(w!("STATIC"),&caption,WINDOW_STYLE(0),300,20,12,450,22).is_none(){return;}
     let theme_label=text("外观主题");
     if child(w!("STATIC"),&theme_label,WINDOW_STYLE(0),0,20,42,190,24).is_none(){return;}
     let empty=wide("");
@@ -119,7 +149,7 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
     unsafe{SendMessageW(theme_box,CB_SETCURSEL,Some(WPARAM(selection)),None);}
     let mut sliders=Vec::new();
     for (i,control) in Control::ALL[..7].iter().copied().enumerate(){
-        let y=82+i as i32*53;let label=text(control.label());
+        let y=82+i as i32*aura_core::desktop_style::SETTINGS_ROW_DIP;let label=text(control.label());
         if child(w!("STATIC"),&label,WINDOW_STYLE(0),0,20,y+4,190,24).is_none(){return;}
         let Some(track)=child(TRACKBAR_CLASSW,&label,WS_TABSTOP|WINDOW_STYLE((TBS_HORZ|TBS_NOTICKS) as u32),100+i,210,y,200,32) else{return};
         let (min,max)=control.range();
@@ -131,16 +161,16 @@ pub(super) fn show(owner:HWND,point:POINT,mut value:DesktopSettings,dark:bool,mu
         sliders.push((control,track,number));
     }
     let blur=text(Control::Blur.label());
-    let Some(checkbox)=child(w!("BUTTON"),&blur,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),BLUR_ID,20,458,320,28) else{return};
+    let Some(checkbox)=child(w!("BUTTON"),&blur,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),BLUR_ID,20,484,320,28) else{return};
     unsafe{SendMessageW(checkbox,BM_SETCHECK,Some(WPARAM(value.blur as usize)),None);}
     let acrylic=text("额外背景模糊");
-    let Some(acrylic_box)=child(w!("BUTTON"),&acrylic,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),ACRYLIC_ID,20,493,430,28) else{return};
+    let Some(acrylic_box)=child(w!("BUTTON"),&acrylic,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),ACRYLIC_ID,20,519,430,28) else{return};
     unsafe{SendMessageW(acrylic_box,BM_SETCHECK,Some(WPARAM(value.acrylic_blur as usize)),None);let _=EnableWindow(acrylic_box,value.blur);}
     let counts=text("显示文件数量");
-    let Some(counts_box)=child(w!("BUTTON"),&counts,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),COUNTS_ID,20,528,430,28) else{return};
+    let Some(counts_box)=child(w!("BUTTON"),&counts,WS_TABSTOP|WINDOW_STYLE(BS_AUTOCHECKBOX as u32),COUNTS_ID,20,554,430,28) else{return};
     unsafe{SendMessageW(counts_box,BM_SETCHECK,Some(WPARAM(value.show_counts as usize)),None);}
     let done=text("完成");
-    if child(w!("BUTTON"),&done,WS_TABSTOP|WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),DONE_ID,355,566,110,30).is_none(){return;}
+    if child(w!("BUTTON"),&done,WS_TABSTOP|WINDOW_STYLE(BS_DEFPUSHBUTTON as u32),DONE_ID,355,598,110,30).is_none(){return;}
     unsafe{let _=ShowWindow(hwnd,SW_SHOWNORMAL);let _=SetForegroundWindow(hwnd);let _=SetFocus(Some(sliders[0].1));}
     loop {
         let mut msg=MSG::default();let result=unsafe{GetMessageW(&mut msg,None,0,0)}.0;

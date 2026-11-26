@@ -119,6 +119,8 @@ pub struct Fence {
     #[serde(default)] pub accent: FenceAccent,
     /// Optional per-fence background opacity; None follows global appearance.
     #[serde(default)] pub surface_opacity: Option<u8>,
+    /// Optional shadow intensity; None follows the shared Fences setting.
+    #[serde(default)] pub shadow_strength: Option<u8>,
 }
 
 /// A fence's optional surface tint. Neutral follows the shared appearance.
@@ -176,7 +178,7 @@ impl Fence {
         let sort = if source == FenceSource::Desktop { FenceSort::Manual } else { FenceSort::Name };
         Self { id, title: title.into(), source, placement, collapsed: false, locked: false, view: FenceView::Icons,
             icon_size: IconSize::Medium, sort, descending: false, members: Vec::new(), rule: None, catch_all: false, auto_released:false, browse: None,
-            group: 0, tab_active: false, accent: FenceAccent::Neutral, surface_opacity: None }
+            group: 0, tab_active: false, accent: FenceAccent::Neutral, surface_opacity: None, shadow_strength: None }
     }
     /// An inactive tab: its window stays hidden behind the group's active tab.
     pub fn is_hidden_tab(&self) -> bool { self.group != 0 && !self.tab_active }
@@ -277,6 +279,7 @@ impl DesktopConfig {
             fence.placement.width = fence.placement.width.max(MIN_FENCE_W);
             fence.placement.height = fence.placement.height.max(MIN_FENCE_H);
             fence.surface_opacity = fence.surface_opacity.map(|v| v.clamp(10, 100));
+            fence.shadow_strength = fence.shadow_strength.map(|v| v.min(100));
             fence.members.dedup();
             fence.members.truncate(5000);
         }
@@ -820,11 +823,22 @@ mod tests {
         let old = r#"{"id":1,"title":"one","source":"Desktop","placement":{"monitor":"","x":0,"y":0,"width":240,"height":160}}"#;
         let mut fence: Fence = serde_json::from_str(old).unwrap();
         assert_eq!(fence.surface_opacity, None);
+        assert_eq!(fence.shadow_strength, None);
         fence.surface_opacity = Some(30);
+        fence.shadow_strength = Some(170);
         fence.accent = FenceAccent::Blue;
         let restored: Fence = serde_json::from_str(&serde_json::to_string(&fence).unwrap()).unwrap();
         assert_eq!(restored.surface_opacity, Some(30));
-        assert_eq!(restored.accent, FenceAccent::Blue);
+        assert_eq!(restored.shadow_strength, Some(170));
+        let mut cfg = DesktopConfig::default();
+        cfg.settings.shadow_strength = 46;
+        cfg.fences.push(restored);
+        cfg.normalize();
+        assert_eq!(cfg.fences[0].shadow_strength, Some(100));
+        assert_eq!(cfg.settings.shadow_strength, 46);
+        cfg.fences[0].shadow_strength = None;
+        assert_eq!(cfg.fences[0].shadow_strength.unwrap_or(cfg.settings.shadow_strength), 46);
+        assert_eq!(cfg.fences[0].accent, FenceAccent::Blue);
     }
 
     fn fence(id: u64, rule: Option<Category>, catch_all: bool) -> Fence {

@@ -1221,8 +1221,18 @@ impl DesktopHost {
                 self.cut_paths.contains(&super::clipboard::path_key(entry.path.as_ref()?)).then(||entry.key.clone())
             }));
         }
+        // Create the masked material before drawing, so a missing compositor or
+        // unsupported effect uses an opaque, readable surface instead of
+        // silently showing unblurred wallpaper through translucent text.
+        let wants_glass = !win.standalone && self.config.settings.blur && aura_windows::theme::transparency_available();
+        if wants_glass {
+            if win.glass.is_none() {win.glass=super::glass_layer::Glass::new(win.hwnd);}
+            if win.glass.as_mut().is_some_and(|glass|!glass.update(win.dpi,self.config.settings.corner_radius,self.config.settings.acrylic_blur)){win.glass=None;}
+        } else {win.glass=None;}
         let mode = if self.fence_dark() { Mode::Dark } else { Mode::Light };
-        let mut palette = if let Some(opacity) = fence.surface_opacity {
+        let mut palette = if wants_glass && win.glass.is_none() {
+            FencePalette::new(mode, 100)
+        } else if let Some(opacity) = fence.surface_opacity {
             FencePalette::new(mode, aura_windows::blur_policy::effective_opacity(opacity,aura_windows::theme::transparency_available()))
         } else { self.palette };
         if let Some(accent) = aura_windows::theme::system_accent(mode == Mode::Dark) { palette = palette.with_accent(accent); }
@@ -1249,14 +1259,8 @@ impl DesktopHost {
             }
             slot.bitmap.as_ref().map(|(_, b)| b.clone())
         });
-        // Blur is a separate Composition surface clipped to the same radius as
-        // the foreground. If composition is unavailable, keep the surface
-        // translucent without re-enabling the old rectangular accent policy.
-        if !win.standalone && self.config.settings.blur && aura_windows::theme::transparency_available() {
-            if win.glass.is_none() {win.glass=super::glass_layer::Glass::new(win.hwnd);}
-            if win.glass.as_mut().is_some_and(|glass|!glass.update(win.dpi,self.config.settings.corner_radius,self.config.settings.acrylic_blur)){win.glass=None;}
-        } else {win.glass=None;}
-        let shadow_strength=if win.ghost {(u16::from(self.config.settings.shadow_strength)*3/5) as u8} else {self.config.settings.shadow_strength};
+        let shadow_base=fence.shadow_strength.unwrap_or(self.config.settings.shadow_strength);
+        let shadow_strength=if win.ghost {(u16::from(shadow_base)*3/5) as u8} else {shadow_base};
         if !win.standalone && shadow_strength>0 && !aura_windows::theme::high_contrast() {
             if win.shadow.is_none() {win.shadow=super::shadow::Shadow::new(win.hwnd);}
             if win.shadow.as_mut().is_some_and(|shadow|!shadow.update(win.dpi,self.config.settings.corner_radius,shadow_strength)){win.shadow=None;}
@@ -2353,6 +2357,11 @@ impl DesktopHost {
             opacity.push(entry(&label, &format!("fence-opacity-{value}"), true, fence.surface_opacity == Some(value)));
         }
         appearance.push(submenu(aura_core::i18n::text("透明度"), opacity));
+        let mut shadow = vec![entry(aura_core::i18n::text("使用全局外观"), "fence-shadow-default", true, fence.shadow_strength.is_none()), MenuItemSpec::Separator];
+        for value in [0u8, 25, 50, 75, 100] {
+            shadow.push(entry(&format!("{value}%"), &format!("fence-shadow-{value}"), true, fence.shadow_strength == Some(value)));
+        }
+        appearance.push(submenu(aura_core::i18n::text("外部阴影"), shadow));
         items.push(submenu(aura_core::i18n::text("外观"), appearance));
         items.push(entry(aura_core::i18n::text("相同大小"), "same-size", true, false));
         items.push(entry(aura_core::i18n::text("复制格子"), "duplicate", true, false));
@@ -2517,6 +2526,12 @@ impl DesktopHost {
             id if id.starts_with("fence-opacity-") => {
                 let opacity = id.strip_prefix("fence-opacity-").and_then(|value| value.parse::<u8>().ok()).map(|v|v.clamp(10,100));
                 if let Some(fence) = self.config.fence_mut(fid) { fence.surface_opacity = opacity; }
+                self.schedule_save();
+                self.render(fid);
+            }
+            id if id.starts_with("fence-shadow-") => {
+                let strength = id.strip_prefix("fence-shadow-").and_then(|value| value.parse::<u8>().ok()).map(|v|v.min(100));
+                if let Some(fence) = self.config.fence_mut(fid) { fence.shadow_strength = strength; }
                 self.schedule_save();
                 self.render(fid);
             }
