@@ -41,6 +41,8 @@ features = [
     "Graphics",
     "Graphics_DirectX",
     "Graphics_Effects",
+    "Media_Core",
+    "Media_Playback",
     "System",
     "UI",
     "UI_Composition",
