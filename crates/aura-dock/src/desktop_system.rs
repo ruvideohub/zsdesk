@@ -30,17 +30,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::config::ClockCorner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { System, Network, Battery }
+pub enum Kind { System, Network, Battery, Calendar }
 
 impl Kind {
     fn title(self) -> &'static str {
-        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея" }
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" } }
     }
     fn menu_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU }
     }
     fn moved_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED }
     }
 }
 
@@ -50,6 +50,7 @@ use crate::ui::theme;
 /// The card at its normal size, in device-independent pixels.
 const CARD_W: f32 = 268.0;
 const CARD_H: f32 = 168.0;
+const CALENDAR_H: f32 = 240.0;
 /// Distance from the corner of the screen.
 const MARGIN: f32 = 24.0;
 /// Where the three rows sit, and how tall a meter bar is.
@@ -94,6 +95,7 @@ impl Prefs {
             Kind::System => Self::from_config(cfg),
             Kind::Network => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.network_pos.map(|[x,y]| (x,y)), locked: cfg.network_locked },
             Kind::Battery => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.battery_pos.map(|[x,y]| (x,y)), locked: cfg.battery_locked },
+            Kind::Calendar => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.calendar_pos.map(|[x,y]| (x,y)), locked: cfg.calendar_locked },
         }
     }
 
@@ -153,7 +155,8 @@ impl SystemState {
     /// The card's size in physical pixels.
     fn size(&self) -> (i32, i32) {
         let k = self.k();
-        ((CARD_W * k).round() as i32, (CARD_H * k).round() as i32)
+        let h = if self.kind == Kind::Calendar { CALENDAR_H } else { CARD_H };
+        ((CARD_W * k).round() as i32, (h * k).round() as i32)
     }
 
     /// Move the card into the corner the settings ask for.
@@ -177,6 +180,10 @@ impl SystemState {
     /// Read the three numbers. The processor needs two samples, so the first tick draws it
     /// as «…» and the second one shows the truth.
     fn measure(&mut self) -> Vec<Meter> {
+        if self.kind == Kind::Calendar {
+            let now = crate::widgets::Now::get();
+            return vec![Meter { label: "date", fill: 0.0, text: now.ymd() }];
+        }
         let stats = self.sampler.sample();
         let first = !self.sampled;
         self.sampled = true;
@@ -184,6 +191,7 @@ impl SystemState {
             Kind::System => meters(&stats, first),
             Kind::Network => network_meters(&stats, first),
             Kind::Battery => battery_meters(),
+            Kind::Calendar => unreachable!("calendar returns before sampling"),
         }
     }
 }
@@ -348,7 +356,7 @@ impl DesktopSystem {
         }
 
         let k = self.state.k();
-        let (card_w, card_h) = (CARD_W * k, CARD_H * k);
+        let (card_w, card_h) = (CARD_W * k, if self.state.kind == Kind::Calendar { CALENDAR_H * k } else { CARD_H * k });
         let root = &self.state.root;
         root.Children()?.RemoveAll()?;
 
@@ -358,10 +366,30 @@ impl DesktopSystem {
             Kind::System => ("НАГРУЗКА УСТРОЙСТВА", "\u{E7F4}"),
             Kind::Network => ("СКОРОСТЬ СОЕДИНЕНИЯ", "\u{E701}"),
             Kind::Battery => ("ПИТАНИЕ УСТРОЙСТВА", "\u{E83E}"),
+            Kind::Calendar => (if crate::strings::russian() { "ТЕКУЩИЙ МЕСЯЦ" } else { "THIS MONTH" }, "\u{E787}"),
         };
         style::header(c, gfx, root, self.state.kind.title(), subtitle, glyph, k)?;
 
         match self.state.kind {
+            Kind::Calendar => {
+                let now = crate::widgets::Now::get();
+                let russian = crate::strings::russian();
+                let label = crate::desktop_calendar::month_label(now.year, now.month, russian);
+                style::text(c, gfx, root, &label, 22.0*k, 59.0*k, 224.0*k, 14.0*k, 600, theme::text(), false, false)?;
+                let start = if russian { 1 } else { 0 };
+                let weekday_names = if russian { ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"] } else { ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] };
+                for (col, label) in weekday_names.iter().enumerate() {
+                    style::text(c, gfx, root, label, (28.0 + col as f32 * 31.0)*k, 82.0*k, 25.0*k, 10.0*k, 600, theme::text_2(), false, false)?;
+                }
+                for (day, col, row) in crate::desktop_calendar::cells(now.days_in_month(), now.first_weekday(), start) {
+                    let x = (23.0 + col as f32 * 31.0)*k;
+                    let y = (101.0 + row as f32 * 21.0)*k;
+                    let today = day == now.day;
+                    if today { style::rect(c, root, x, y, 25.0*k, 20.0*k, 10.0*k, theme::accent())?; }
+                    style::text(c, gfx, root, &day.to_string(), x + if day < 10 { 9.0*k } else { 5.5*k }, y + 2.0*k,
+                        20.0*k, 11.0*k, if today { 700 } else { 500 }, if today { theme::accent_text() } else { theme::text() }, false, false)?;
+                }
+            }
             Kind::System => {
                 for (index, meter) in meters.iter().enumerate() {
                     let y = ROWS[index] * k;
@@ -471,8 +499,8 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                         let _ = GetCursorPos(&mut pointer);
                     }
                     let (w, h) = state.size();
-                    let x = (pointer.x - grab_x).clamp(state.monitor.left, state.monitor.right - w);
-                    let y = (pointer.y - grab_y).clamp(state.monitor.top, state.monitor.bottom - h);
+                    let x = (pointer.x - grab_x).clamp(state.monitor.left, (state.monitor.right - w).max(state.monitor.left));
+                    let y = (pointer.y - grab_y).clamp(state.monitor.top, (state.monitor.bottom - h).max(state.monitor.top));
                     unsafe {
                         let _ = SetWindowPos(hwnd, None, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
                     }

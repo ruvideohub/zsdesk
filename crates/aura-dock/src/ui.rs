@@ -123,6 +123,11 @@ pub mod theme {
         if high_contrast() { return system_color(windows::Win32::Graphics::Gdi::COLOR_HIGHLIGHT); }
         rgba(10, 132, 255, 1.0)
     }
+    /// Text on an accent fill must follow the system's highlight-text colour in high contrast.
+    pub fn accent_text() -> (f32, f32, f32, f32) {
+        if high_contrast() { color_tuple(system_color(windows::Win32::Graphics::Gdi::COLOR_HIGHLIGHTTEXT)) }
+        else { WHITE }
+    }
     /// The accent as (r, g, b, a) for text and glyphs.
     pub fn accent_f() -> (f32, f32, f32, f32) {
         let c = accent();

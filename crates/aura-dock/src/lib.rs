@@ -17,6 +17,7 @@ mod apps;
 mod config;
 mod control_center;
 mod desktop_card_policy;
+mod desktop_calendar;
 mod desktop_environment;
 mod desktop_clock;
 mod desktop_layer;
@@ -153,6 +154,7 @@ pub fn run() -> Result<()> {
             "system" => host::run_system(dock_arg(&args), desktop_system::Kind::System),
             "network" => host::run_system(dock_arg(&args), desktop_system::Kind::Network),
             "battery" => host::run_system(dock_arg(&args), desktop_system::Kind::Battery),
+            "calendar" => host::run_system(dock_arg(&args), desktop_system::Kind::Calendar),
             other => {
                 eprintln!("unknown component: {other}");
                 Ok(())
@@ -286,6 +288,7 @@ pub fn run_widgets() -> Result<()> {
         "system" => host::run_system(dock, desktop_system::Kind::System),
         "network" => host::run_system(dock, desktop_system::Kind::Network),
         "battery" => host::run_system(dock, desktop_system::Kind::Battery),
+        "calendar" => host::run_system(dock, desktop_system::Kind::Calendar),
         _ => host::run_clock(dock),
     }
 }
