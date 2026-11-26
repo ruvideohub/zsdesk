@@ -8,6 +8,7 @@
 //! process or its desktop thread exits unexpectedly.
 
 mod fence;
+mod appearance_panel;
 mod rounded_mask;
 mod host;
 mod menu_worker;
@@ -704,10 +705,17 @@ fn dispatch_application_menu(fence: u64, owner: HWND, command: u32, ids: &[Strin
 fn run_after(after: After) {
     let hold=match &after{After::ItemMenu{fence,..}|After::FenceMenu{fence,..}|After::FolderSystemMenu{fence,..}|After::Drag{fence}|After::ReturnToDesktop{fence,..}
         |After::Open{fence,..}|After::Verb{fence,..}|After::History{fence,..}|After::Rename{fence,..}|After::AddTab{fence,..}|After::TabList{fence,..}=>Some(*fence),
-        After::DeleteFence(id)=>Some(*id),After::PickFolder{replace}=>*replace,After::PickFolderTab{to}=>Some(*to),_=>None};
+        After::DeleteFence(id)=>Some(*id),After::Appearance{fence,..}=>*fence,After::PickFolder{replace}=>*replace,After::PickFolderTab{to}=>Some(*to),_=>None};
     let _hold=hold.map(FenceModal::begin);
     match after {
         After::Nothing => {}
+        After::Appearance { fence, point } => {
+            let initial = with_host(|host| (host.hwnd,host.config.settings.clone(),
+                fence.and_then(|id|host.win_index(id).map(|i|host.fences[i].hwnd))));
+            if let Some((host,settings,window))=initial {
+                appearance_panel::show(window.unwrap_or(host),point,settings,|value| {with_host(|host|host.apply_appearance(value));});
+            }
+        }
         After::ItemMenu { fence, point } => item_menu(fence, point),
         After::FenceMenu { fence, point } => fence_menu(fence, point),
         After::FolderSystemMenu { fence, point } => folder_system_menu(fence, point),

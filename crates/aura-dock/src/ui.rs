@@ -84,11 +84,8 @@ pub mod theme {
     }
     /// Glass tint for panels, menus and pop-ups.
     pub fn surface(a: f32) -> Color {
-        if light() {
-            rgba(246, 246, 250, (a + 0.08).min(1.0))
-        } else {
-            rgba(32, 32, 40, a)
-        }
+        let [r,g,b] = if light() { aura_core::desktop_style::SURFACE_LIGHT } else { aura_core::desktop_style::SURFACE_DARK };
+        rgba(r, g, b, if light() { (a + 0.08).min(1.0) } else { a })
     }
     /// The tint over the whole screen behind Launchpad.
     pub fn scrim(a: f32) -> Color {

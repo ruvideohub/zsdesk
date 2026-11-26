@@ -6,3 +6,5 @@
 #![forbid(unsafe_code)]
 
 pub mod desktop;
+
+pub mod appearance;

@@ -1028,11 +1028,9 @@ impl Dock {
         blur.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
         let t = c.CreateSpriteVisual()?;
         // Light theme: pale glass, a little denser so dark icons and dots read on any wallpaper.
-        let tint_color = if crate::ui::theme::light() {
-            Color { A: ((tint + 0.12).min(0.92) * 255.0) as u8, R: 244, G: 244, B: 248 }
-        } else {
-            Color { A: (tint * 255.0) as u8, R: 30, G: 30, B: 38 }
-        };
+        let light = crate::ui::theme::light();
+        let [r, g, b] = if light { aura_core::desktop_style::SURFACE_LIGHT } else { aura_core::desktop_style::SURFACE_DARK };
+        let tint_color = Color { A: (if light { (tint + 0.12).min(0.92) } else { tint } * 255.0) as u8, R: r, G: g, B: b };
         t.SetBrush(&c.CreateColorBrushWithColor(tint_color)?)?;
         t.SetRelativeSizeAdjustment(v2(1.0, 1.0))?;
         cont.Children()?.InsertAtTop(&blur)?;

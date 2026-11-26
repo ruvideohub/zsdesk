@@ -206,9 +206,10 @@ impl FencePalette {
     }
     fn configured(mode:Mode,opacity:u8)->Self{
         let a = (opacity.clamp(10, 100) as u32 * 255 / 100) as u8;
+        let [r,g,b] = match mode { Mode::Dark => aura_core::desktop_style::SURFACE_DARK, Mode::Light => aura_core::desktop_style::SURFACE_LIGHT };
         match mode {
             Mode::Dark => Self {
-                background: Color::rgba(0x20, 0x22, 0x27, a),
+                background: Color::rgba(r, g, b, a),
                 title: Color::rgba(0x14, 0x16, 0x1A, (a as u32 * 2 / 5) as u8),
                 border: Color::rgba(0xFF, 0xFF, 0xFF, 0x1C),
                 text: Color::rgb(0xF5, 0xF6, 0xF8),
@@ -221,7 +222,7 @@ impl FencePalette {
                 accent: Color::rgb(0x60, 0xCD, 0xFF),
             },
             Mode::Light => Self {
-                background: Color::rgba(0xF7, 0xF9, 0xFC, a),
+                background: Color::rgba(r, g, b, a),
                 title: Color::rgba(0xFF, 0xFF, 0xFF, (a as u32 / 5) as u8),
                 border: Color::rgba(0, 0, 0, 0x1A),
                 text: Color::rgba(0, 0, 0, 0xE4),

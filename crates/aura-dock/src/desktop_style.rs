@@ -10,7 +10,7 @@ pub fn backdrop(c: &Compositor) -> Option<CompositionBrush> {
 
 /// The background has a deliberately opaque fallback if host backdrop is unavailable.
 pub fn surface(c: &Compositor, root: &ContainerVisual, backdrop: Option<&CompositionBrush>, w: f32, h: f32, k: f32) -> Result<()> {
-    let radius = 24.0 * k;
+    let radius = f32::from(aura_core::desktop_style::CORNER_RADIUS_DIP) * k;
     let glass = backdrop.and_then(|b| ui::glass(c, b, theme::surface(0.72), radius).ok());
     if let Some((body, geometry)) = glass {
         body.SetSize(v2(w, h))?;

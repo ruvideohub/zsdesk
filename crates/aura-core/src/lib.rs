@@ -11,3 +11,5 @@ pub mod atomic_file;
 pub mod error;
 pub mod model;
 pub mod path;
+
+pub mod desktop_style;

@@ -19,10 +19,16 @@ thread_local! {
     /// Frosted glass is enabled for fence surfaces.
     static BLUR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static CORNER_RADIUS: std::cell::Cell<u8> = const { std::cell::Cell::new(24) };
+    static LAYOUT: std::cell::Cell<(u16,u8,u8)> = const { std::cell::Cell::new((100,6,0)) };
+    static EDGE_HIGHLIGHT: std::cell::Cell<u8> = const { std::cell::Cell::new(55) };
 }
 
 pub fn set_blur(on: bool) { BLUR.with(|b| b.set(on)); }
 pub fn set_corner_radius(radius: u8) { CORNER_RADIUS.with(|r| r.set(radius.min(40))); }
+pub fn set_layout(icon_scale:u16,padding:u8,spacing:u8) {
+    LAYOUT.with(|v|v.set((icon_scale.clamp(50,200),padding.min(24),spacing.min(32))));
+}
+pub fn set_edge_highlight(value:u8) { EDGE_HIGHLIGHT.with(|v|v.set(value.min(100))); }
 
 /// Applies or removes the frosted-glass blur and the matching rounded window region.
 pub fn apply_glass(hwnd: HWND) {
@@ -181,18 +187,22 @@ impl Geometry {
         g.more = Rect::new(width - s(32), s(3), s(28), title_h - s(6));
         g.back = if browsing { Rect::new(s(4), s(3), s(28), title_h - s(6)) } else { Rect::default() };
         g.content = Rect::new(s(4), title_h, (width - s(8)).max(0), (height - title_h - s(4)).max(0));
-        g.icon_px = s(fence.icon_size.pixels());
+        let (icon_scale, padding, spacing) = LAYOUT.with(std::cell::Cell::get);
+        let icon_dip = (fence.icon_size.pixels() * i32::from(icon_scale) / 100).max(16);
+        g.icon_px = s(icon_dip);
         if collapsed || g.content.height <= 0 { g.content.height = 0; return g; }
-        let pad = s(6);
+        let pad = s(i32::from(padding)).min((g.content.width / 2 - 1).max(0));
+        let spacing = s(i32::from(spacing));
         let inner_w = (g.content.width - pad * 2).max(1);
         match fence.view {
             FenceView::Icons => {
-                let icon = g.icon_px;
-                let min_cell = icon + s(36);
+                let icon = g.icon_px.min((inner_w - s(8)).max(1));
+                g.icon_px = icon;
+                let min_cell = icon + s(36) + spacing;
                 let columns = (inner_w / min_cell).max(1);
                 let cell_w = inner_w / columns;
                 let label_h = s(34);
-                let cell_h = icon + s(10) + label_h;
+                let cell_h = icon + s(10) + label_h + spacing;
                 {
                     let x = g.content.x + pad;
                     let y = g.content.y + pad - scroll;
@@ -205,8 +215,8 @@ impl Geometry {
                 g.content_height = rows * cell_h + pad * 2;
             }
             FenceView::List => {
-                let row_h = s(26);
-                let icon = s(20);
+                let icon = s((20 * i32::from(icon_scale) / 100).max(10)).min((inner_w-s(8)).max(1));
+                let row_h = (icon + s(6) + spacing).max(s(26));
                 g.icon_px=icon;
                 {
                     let y = g.content.y + pad - scroll;
@@ -609,7 +619,8 @@ impl FenceWin {
                 }
             }
             let highlight = drop_all || self.merge_hover.is_some();
-            let border = if highlight { col(palette.accent) } else { col(palette.border) };
+            let mut border = if highlight { col(palette.accent) } else { col(palette.border) };
+            if !highlight && !aura_windows::theme::high_contrast() { border.a = (border.a * f32::from(EDGE_HIGHLIGHT.with(std::cell::Cell::get)) / 55.0).clamp(0.0, 1.0); }
             if !self.standalone { cv.stroke_round(outer, radius, border, if highlight { sf(2.0) } else { 1.0 }); }
         });
         if drawn.is_err() { return false; }
@@ -685,6 +696,23 @@ mod tests {
                 assert_eq!(cell.cell,large.cells.at(i).cell);
             }
             println!("layout {:?}: entries={}, fixed_grid_bytes={}, former_cell_bytes={}, visible_slots={}",view,large.cells.len(),std::mem::size_of::<Cells>(),large.cells.len()*std::mem::size_of::<Cell>(),large.cells.visible(large.content).count());
+        }
+    }
+
+    #[test]
+    fn appearance_layout_changes_size_padding_and_spacing_at_different_dpis() {
+        struct Restore; impl Drop for Restore {fn drop(&mut self){set_layout(100,6,0);}}
+        let _restore=Restore;
+        for dpi in [96,144,192] {
+            set_layout(100,6,0);
+            let base=Geometry::new(scale(340,dpi),scale(360,dpi),dpi,&fence(),12,0,false);
+            set_layout(150,14,12);
+            let changed=Geometry::new(scale(340,dpi),scale(360,dpi),dpi,&fence(),12,0,false);
+            assert!(changed.icon_px>base.icon_px);
+            assert!(changed.cells.at(0).cell.x>base.cells.at(0).cell.x);
+            assert!(changed.cells.at(0).cell.height>base.cells.at(0).cell.height);
+            assert!(changed.columns()<=base.columns());
+            for cell in changed.cells.iter() {assert!(cell.icon.x>=changed.content.x && cell.icon.right()<=changed.content.right());}
         }
     }
 

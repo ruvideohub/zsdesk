@@ -89,6 +89,7 @@ pub(super) const TRAY_ID:u32=1;
 /// Work that must run outside the host borrow (modal menus, Shell UI, drag loops).
 pub enum After {
     Nothing,
+    Appearance { fence:Option<u64>, point:POINT },
     ItemMenu { fence: u64, point: POINT },
     FenceMenu { fence: u64, point: POINT },
     FolderSystemMenu { fence: u64, point: POINT },
@@ -334,6 +335,8 @@ impl DesktopHost {
         host.update_palette();
         super::fence::set_blur(host.config.settings.blur);
         super::fence::set_corner_radius(host.config.settings.corner_radius);
+        super::fence::set_layout(host.config.settings.icon_scale, host.config.settings.inner_padding, host.config.settings.icon_spacing);
+        super::fence::set_edge_highlight(host.config.settings.edge_highlight);
         host
     }
 
@@ -405,6 +408,26 @@ impl DesktopHost {
         aura_windows::flyout::refresh_system();
         self.palette = FencePalette::new(if dark { Mode::Dark } else { Mode::Light }, self.config.settings.opacity);
         if let Some(accent) = aura_windows::theme::system_accent(dark) { self.palette = self.palette.with_accent(accent); }
+    }
+
+    /// Apply only appearance fields: a long-lived settings window must not
+    /// overwrite unrelated changes made by the desktop host while it is open.
+    pub fn apply_appearance(&mut self, value:&aura_fences_model::desktop::DesktopSettings) {
+        let old_blur=self.config.settings.blur;
+        let old_radius=self.config.settings.corner_radius;
+        let s=&mut self.config.settings;
+        s.icon_scale=value.icon_scale.clamp(50,200);s.icon_spacing=value.icon_spacing.min(32);
+        s.inner_padding=value.inner_padding.min(24);s.opacity=value.opacity.clamp(10,100);
+        s.corner_radius=value.corner_radius.min(40);s.edge_highlight=value.edge_highlight.min(100);s.blur=value.blur;
+        super::fence::set_layout(s.icon_scale,s.inner_padding,s.icon_spacing);
+        super::fence::set_corner_radius(s.corner_radius);super::fence::set_edge_highlight(s.edge_highlight);
+        super::fence::set_blur(s.blur);
+        let glass_changed=old_blur!=s.blur || old_radius!=s.corner_radius;
+        for win in &mut self.fences {
+            if glass_changed { super::fence::apply_glass(win.hwnd); }
+            if let Some(f)=self.config.fence(win.id) {win.clamp_scroll(f);}
+        }
+        self.update_palette();self.schedule_save();self.render_all();
     }
 
     pub fn schedule_save(&self) { unsafe { SetTimer(Some(self.hwnd), TIMER_SAVE, 400, None); } }
@@ -1250,7 +1273,7 @@ impl DesktopHost {
             let repaint=self.fences.iter().filter_map(|win|{
                 if self.config.settings.hidden&&!win.standalone{return None;}
                 let fence=self.config.fence(win.id)?;if win.collapsed(fence)||fence.is_hidden_tab(){return None;}
-                let geometry=win.geometry(fence);let px=if fence.view==FenceView::List{scale(20,win.dpi)}else{geometry.icon_px};
+                let geometry=win.geometry(fence);let px=geometry.icon_px;
                 geometry.cells.visible(geometry.content).any(|(index,cell)|{
                     if cell.cell.bottom()<geometry.content.y||cell.cell.y>geometry.content.bottom(){return false;}
                     let Some(entry)=win.entries.get(index)else{return false;};let key=(entry.key.clone(),px);
@@ -1281,7 +1304,7 @@ impl DesktopHost {
             let Some(fence) = self.config.fence(win.id) else { continue };
             if win.collapsed(fence) || fence.is_hidden_tab() { continue; }
             let geometry = win.geometry(fence);
-            let px = if fence.view == FenceView::List { scale(20, win.dpi) } else { geometry.icon_px };
+            let px = geometry.icon_px;
             for (index, cell) in geometry.cells.visible(geometry.content) {
                 if cell.cell.bottom() >= geometry.content.y && cell.cell.y <= geometry.content.bottom() {
                     if let Some(entry) = win.entries.get(index) { keys.insert((entry.key.clone(), px)); }
@@ -1599,7 +1622,7 @@ impl DesktopHost {
         }
         let missing_visible_icon = if !self.config.settings.hidden && !win.collapsed(&fence) {
             let geometry = win.geometry(&fence);
-            let px = if fence.view == FenceView::List { scale(20, win.dpi) } else { geometry.icon_px };
+            let px = geometry.icon_px;
             geometry.cells.visible(geometry.content).any(|(i, cell)| cell.cell.bottom() >= geometry.content.y && cell.cell.y <= geometry.content.bottom()
                 && win.entries.get(i).is_some_and(|e| !self.icons.contains_key(&(e.key.clone(), px))))
         } else { false };
@@ -2359,6 +2382,8 @@ impl DesktopHost {
             entry(if s.hidden { aura_core::i18n::text("显示全部格子") } else { aura_core::i18n::text("隐藏全部格子") }, "toggle-hidden", true, false),
             entry(aura_core::i18n::text("双击桌面空白处隐藏/显示格子"), "double-click", true, s.double_click_toggle),
             submenu(aura_core::i18n::text("外观"), vec![
+                entry(aura_core::i18n::text("外观设置…"), "appearance-panel", true, false),
+                MenuItemSpec::Separator,
                 entry(aura_core::i18n::text("显示文件数量"), "show-counts", true, s.show_counts),
                 MenuItemSpec::Separator,
                 entry(aura_core::i18n::text("深色"), "theme-dark", true, s.theme == FenceTheme::Dark),
@@ -2400,6 +2425,7 @@ impl DesktopHost {
     pub fn menu_command(&mut self, fence_id: Option<u64>, id: &str, point: POINT) -> After {
         let fid = fence_id.unwrap_or(0);
         match id {
+            "appearance-panel" => return After::Appearance {fence:fence_id,point},
             "folder-system-menu" if self.target_folder(fid).is_some()=>return After::FolderSystemMenu{fence:fid,point},
             "paste" if self.target_folder(fid).is_some()=>return After::Verb{fence:fid,verb:"paste",background:true},
             "profile-folder"|"profile-default"=>return After::ProfileDirectory{reset:id=="profile-default"},

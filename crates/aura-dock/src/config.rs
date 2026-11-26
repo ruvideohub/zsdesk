@@ -294,7 +294,7 @@ impl Default for Config {
             top_edge_gap: 8.0,
             bottom_edge_gap: 8.0,
             window_gap: 0.0,
-            corner_radius: 24.0,
+            corner_radius: f32::from(aura_core::desktop_style::CORNER_RADIUS_DIP),
             glass_tint: 0.24,
             edge_highlight: 0.55,
             match_windows_theme: true,
