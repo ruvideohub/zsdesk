@@ -1,6 +1,10 @@
 //! Widget state that lives as long as the dock: connector feeds (fetched on worker
 //! threads), timers, screen time, keep-awake, microphone and brightness.
 
+#[cfg(test)]
+#[path = "hub_spawn_tests.rs"]
+mod spawn_tests;
+
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -247,14 +251,31 @@ impl Hub {
     }
 
     fn run(&self, job: Job) {
+        self.run_with(job, |task| {
+            std::thread::Builder::new().name("laminar-widget-job".into()).spawn(task).map(|_| ())
+        });
+    }
+
+    // The injected spawner also makes startup failure deterministic in tests.
+    fn run_with(&self, job: Job, spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> std::io::Result<()>) {
+        let failed_brightness = matches!(&job, Job::SetBrightness);
+        let fallback = match &job {
+            Job::Fetch(id, _) => Some(Reply::Feed(id.clone(), Err(FeedError::Failed("Background worker unavailable".into())))),
+            Job::Mic | Job::SetMic(_) => Some(Reply::Mic(None)),
+            Job::Brightness => Some(Reply::Brightness(None)),
+            Job::SetBrightness => Some(Reply::Touched),
+            Job::RadioCatalogue => Some(Reply::RadioCatalogue(None)),
+            Job::RadioChoose => Some(Reply::RadioChoose(crate::radio_import::Choice::Failed)),
+            Job::Output => Some(Reply::Output(None)),
+            Job::Geocode(city) => Some(Reply::Geocode(city.clone(), None)),
+            Job::ApplyWallpaper(_) => None,
+        };
         let out = self.replies.clone();
         let hwnd = self.hwnd;
         let target = self.brightness_target.clone();
         let busy = self.brightness_busy.clone();
         let refused = self.brightness_refused.clone();
-        std::thread::Builder::new()
-            .name("laminar-widget-job".into())
-            .spawn(move || {
+        let task = Box::new(move || {
                 laminar_sys::com_init_sta();
                 let r = match job {
                     Job::Fetch(id, params) => Some(Reply::Feed(id.clone(), fetch_with_secrets(&id, params))),
@@ -315,8 +336,18 @@ impl Hub {
                         let _ = PostMessageW(Some(HWND(hwnd as _)), WM_APP_WIDGETS, WPARAM(0), LPARAM(0));
                     }
                 }
-            })
-            .ok();
+            });
+        if let Err(error) = spawn(task) {
+            eprintln!("widget background worker could not start: {error}");
+            if failed_brightness {
+                self.brightness_busy.store(false, Ordering::SeqCst);
+                self.brightness_refused.store(true, Ordering::SeqCst);
+            }
+            if let Some(reply) = fallback {
+                self.replies.lock().unwrap().push(reply);
+                unsafe { let _ = PostMessageW(Some(HWND(self.hwnd as _)), WM_APP_WIDGETS, WPARAM(0), LPARAM(0)); }
+            }
+        }
     }
 
     /// Apply finished jobs. Returns true if anything changed (redraw).
