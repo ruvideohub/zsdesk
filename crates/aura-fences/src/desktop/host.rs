@@ -212,6 +212,20 @@ fn retain_decoded_icons(icons:&mut HashMap<IconKey,IconSlot>){
 #[derive(Clone)]
 pub struct Monitor { pub name: String, pub work: RECT, pub dpi: u32, pub primary: bool }
 
+/// Identity of the real Explorer desktop, not the first Shell_TrayWnd (which
+/// can be a replacement taskbar's proxy). Both windows must belong to Explorer.
+fn shell_identity() -> Option<super::shell_identity::ShellIdentity> {
+    let progman = desktop::progman()?;
+    let view = desktop::desktop_defview()?;
+    let mut process = 0;
+    let thread = unsafe { GetWindowThreadProcessId(progman, Some(&mut process)) };
+    let mut view_process = 0;
+    unsafe { GetWindowThreadProcessId(view, Some(&mut view_process)); }
+    (thread != 0 && process != 0 && view_process == process).then_some(super::shell_identity::ShellIdentity {
+        progman: progman.0 as usize, view: view.0 as usize, process, thread,
+    })
+}
+
 #[derive(Clone, Copy)]
 struct DesktopAnchor { hwnd: HWND, process: u32, thread: u32 }
 impl DesktopAnchor {
@@ -289,6 +303,7 @@ pub struct DesktopHost {
     shutting_down: bool,
     desktop_anchor: Option<DesktopAnchor>,
     desktop_exposed: bool,
+    shell_identity: Option<super::shell_identity::ShellIdentity>,
     loader: IconLoader,
     desktop_notify: Option<ChangeNotify>,
     guard: Option<std::process::Child>,
@@ -329,7 +344,7 @@ impl DesktopHost {
         let taskbar_created = unsafe { RegisterWindowMessageW(windows::core::w!("TaskbarCreated")) };
         let mut host = Self { hwnd, config_path, settings_path, last_fence_dark: true, config, fences: Vec::new(), desktop_entries: Vec::new(), #[cfg(test)]desktop_test_entries:None,gfx,
             cut_paths:HashSet::new(),icons: HashMap::new(), icon_clock: 0,icon_batches:0,icon_repaint_requests:0, next_icon_request: 1, icon_content_active: false, shutting_down: false, desktop_anchor: None, desktop_exposed:false,
-            loader, desktop_notify: None, guard: None, pending: Vec::new(), known: HashSet::new(),desktop_snapshot_initialized:false, menu_input_started:None,
+            shell_identity: shell_identity(), loader, desktop_notify: None, guard: None, pending: Vec::new(), known: HashSet::new(),desktop_snapshot_initialized:false, menu_input_started:None,
             modal_holds:HashMap::new(),pending_menu:None,incoming_drag:None,drag_geometry:Vec::new(),drag_anchor:None,last_drop:None,last_drop_route:None,
             taskbar_created, palette: FencePalette::new(Mode::Dark, 55), drop_delegate: None, drop_data: None, internal_drag: None,internal_drag_data:None,drag_has_paths:false,drag_is_internal:false, tray: false,tray_version4:false,
             merge_target: None, tab_hover: None };
@@ -498,19 +513,48 @@ impl DesktopHost {
     pub(super) fn restore_tray_focus(&self){if self.tray{let data=tray_data(self.hwnd);let _=unsafe{Shell_NotifyIconW(NIM_SETFOCUS,&data)};}}
 
     /// Explorer restarted: owned fence windows were destroyed with Progman.
-    pub fn explorer_restarted(&mut self) {
-        self.desktop_anchor = None;
+    /// TaskbarCreated can be broadcast by a replacement taskbar without
+    /// Explorer restarting. Re-register the tray, but do not rebuild live
+    /// fence windows or change icon visibility unless the desktop changed.
+    /// Returns false while Explorer is unavailable; the host retries later.
+    pub fn taskbar_created(&mut self) -> bool {
         self.tray = false;
-        self.tray_version4=false;
+        self.tray_version4 = false;
         self.add_tray();
-        for fence in &mut self.fences { fence.drop = None; fence.hwnd = HWND::default(); }
-        self.fences.clear();
-        if self.config.settings.organize { desktop::set_icons_visible(false); }
+        self.reconcile_shell()
+    }
+
+    pub fn reconcile_shell(&mut self) -> bool {
+        use super::shell_identity::{classify, Observation};
+        let current = shell_identity();
+        match classify(self.shell_identity, current) {
+            Observation::Unavailable => return false,
+            Observation::Unchanged => return true,
+            Observation::Changed => {}
+        }
+        // Never hide icons merely because a taskbar appeared. A valid marker
+        // records our prior ownership; an unavailable desktop is retried.
+        if self.config.settings.organize && self.config.settings.icons_hidden_by_aura {
+            match super::recovery_marker::is_armed(&self.config_path) {
+                Ok(true) => {
+                    if desktop::icons_visible_checked().is_none() { return false; }
+                    let _ = desktop::set_icons_visible(false);
+                    if desktop::icons_visible_checked() != Some(false) { return false; }
+                }
+                Ok(false) => eprintln!("Fences: shell changed without an icon recovery marker; leaving icon visibility unchanged"),
+                Err(error) => eprintln!("Fences: icon recovery marker unavailable after shell change: {error}"),
+            }
+        }
+        self.shell_identity = current;
+        self.desktop_anchor = None;
         self.register_desktop_notify();
         self.refresh_desktop();
+        // sync_windows retains live HWNDs and recreates only windows Explorer
+        // actually destroyed. Never orphan still-live windows on a broadcast.
         self.sync_windows();
         for id in self.config.fences.iter().filter(|f| !f.is_desktop()).map(|f| f.id).collect::<Vec<_>>() { self.refresh_folder(id); }
         self.render_all();
+        true
     }
 
     // ---- organize mode -----------------------------------------------------

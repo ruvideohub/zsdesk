@@ -45,6 +45,41 @@ fn owned_host(root:&Path)->Result<OwnedHost>{
     }
     HOST.with(|slot|*slot.borrow_mut()=Some(host));HOST_HWND.with(|slot|slot.set(hwnd.0 as isize));Ok(owned)
 }
+#[test]
+#[ignore="Native TaskbarCreated regression on a private desktop"]
+fn replacement_taskbar_does_not_orphan_or_duplicate_live_fences()->Result<()>{
+    let root=std::env::temp_dir().join(format!("aura-fences-taskbar-test-{}",std::process::id()));
+    fs::create_dir_all(&root)?;
+    let name=wide(&format!("AuraFences.TaskbarRegression.{}",std::process::id()));
+    let desktop=unsafe{CreateDesktopW(name.as_ptr(),std::ptr::null(),std::ptr::null(),0,0x000f00ff,std::ptr::null())};
+    ensure!(!desktop.is_null(),"CreateDesktop failed");
+    let raw=desktop as usize;let output=root.clone();
+    let result=thread::spawn(move||->Result<()>{
+        ensure!(unsafe{SetThreadDesktop(raw as *mut c_void)}!=0,"SetThreadDesktop failed");
+        unsafe{OleInitialize(None)?;}let _apartment=Apartment;
+        let host=owned_host(&output)?;
+        // The private desktop has no Explorer. A broadcast in this state must
+        // defer shell reconciliation and must not discard any live windows.
+        ensure!(desktop::progman().is_none(),"private desktop unexpectedly has Progman");
+        let before=with_host(|state|serde_json::to_vec(&state.config)).unwrap()?;
+        let message=unsafe{RegisterWindowMessageW(w!("TaskbarCreated"))};
+        ensure!(message!=0,"TaskbarCreated registration failed");
+        for _ in 0..3{unsafe{SendMessageW(host.hwnd,message,None,None);}}
+        ensure!(with_host(|state|state.fences.len())==Some(2),"broadcast duplicated or discarded windows");
+        for (index,window) in host.windows.iter().enumerate(){
+            ensure!(unsafe{IsWindow(Some(*window))}.as_bool(),"original window was destroyed");
+            ensure!(with_host(|state|state.fences[index].hwnd)==Some(*window),"live window was orphaned");
+        }
+        verify_selection()?;
+        ensure!(with_host(|state|serde_json::to_vec(&state.config)).unwrap()?==before,"broadcast changed the profile");
+        ensure!(!output.join("profile/desktop-fences.json").exists(),"broadcast wrote the profile");
+        drop(host);Ok(())
+    }).join().map_err(|_|anyhow::anyhow!("TaskbarCreated test panicked")).and_then(|value|value);
+    let closed=unsafe{CloseDesktop(desktop)}!=0;
+    let _=fs::remove_dir_all(root);
+    result?;ensure!(closed,"private desktop did not close");Ok(())
+}
+
 fn set_interaction(){with_host(|host|host.fences[0].interaction=Some(fence::Interaction::Rubber{start:POINT{x:1,y:1},current:POINT{x:40,y:40},base:host.fences[0].selection.clone()}));}
 fn verify_selection()->Result<()>{
     ensure!(with_host(|host|host.fences[0].selection.len()==1&&host.fences[0].selection.contains("retained-selection"))==Some(true),"cancel changed selection");Ok(())

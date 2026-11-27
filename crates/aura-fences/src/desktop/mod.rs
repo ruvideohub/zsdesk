@@ -22,6 +22,7 @@ mod shadow;
 mod host;
 mod recovery_lock;
 mod recovery_marker;
+mod shell_identity;
 mod menu_worker;
 mod return_to_desktop;
 mod drag_placement;
@@ -165,6 +166,7 @@ const WM_RENAME_REQUEST: u32 = protocol::Message::RenameRequest as u32;
 const WM_FOREGROUND: u32 = protocol::Message::Foreground as u32;
 const WM_REPAIR_LAYER: u32 = protocol::Message::RepairLayer as u32;
 const TIMER_SHARED_THEME: usize = protocol::HostTimer::SharedTheme as usize;
+const TIMER_SHELL_RETRY: usize = protocol::HostTimer::ShellRetry as usize;
 const TIMER_RAISE: usize = protocol::HostTimer::Raise as usize;
 const TIMER_REPAIR_LAYER: usize = protocol::HostTimer::RepairLayer as usize;
 const TIMER_FOREGROUND: usize = protocol::HostTimer::Foreground as usize;
@@ -468,7 +470,9 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
     if let Some(result) = forward_menu_message(msg, wp, lp) { return result; }
     let taskbar_created = with_host(|h| h.taskbar_created).unwrap_or(0);
     if msg == taskbar_created && msg != 0 {
-        with_host(|h| h.explorer_restarted());
+        if with_host(|h| h.taskbar_created()) != Some(true) {
+            unsafe { SetTimer(Some(hwnd), TIMER_SHELL_RETRY, 2000, None); }
+        }
         return LRESULT(0);
     }
     match msg {
@@ -519,6 +523,12 @@ unsafe extern "system" fn host_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
             return LRESULT(0);
         }
         WM_TIMER if wp.0 == TIMER_FOREGROUND => { flush_foreground(hwnd); return LRESULT(0); }
+        WM_TIMER if wp.0 == TIMER_SHELL_RETRY => {
+            if with_host(|h| h.reconcile_shell()) == Some(true) {
+                let _ = unsafe { KillTimer(Some(hwnd), TIMER_SHELL_RETRY) };
+            }
+            return LRESULT(0);
+        }
         WM_CLIPBOARDUPDATE => { clipboard::refresh(hwnd);return LRESULT(0); }
         WM_TIMER if wp.0 == clipboard::TIMER => { clipboard::refresh(hwnd);return LRESULT(0); }
         WM_REPAIR_LAYER | WM_TIMER if msg == WM_REPAIR_LAYER || wp.0 == TIMER_REPAIR_LAYER => {
