@@ -202,8 +202,6 @@ pub struct Hub {
     /// Recent CPU % and network (down, up) bytes/s, oldest first.
     pub cpu_hist: VecDeque<f32>,
     pub net_hist: VecDeque<(f64, f64)>,
-    pub notes: String,
-    notes_at: Option<Instant>,
     /// Decoded pictures: (key, bitmap). Key = file path or a hash of the bytes.
     pub wallpaper_img: Option<(String, IWICBitmapSource)>,
     pub art_img: Option<(u64, IWICBitmapSource)>,
@@ -239,8 +237,6 @@ impl Hub {
             screen_dirty: 0,
             cpu_hist: VecDeque::new(),
             net_hist: VecDeque::new(),
-            notes: String::new(),
-            notes_at: None,
             wallpaper_img: None,
             art_img: None,
             desktop_shown: false,
@@ -471,7 +467,7 @@ impl Hub {
         }
     }
 
-    /// Once a second: timers, screen time, notes. Returns finished timers.
+    /// Once a second: timers and screen time. Returns finished timers.
     pub fn tick(&mut self, fg_app: Option<&str>, now: &super::Now) -> Vec<TimerKind> {
         let mut done = Vec::new();
         for (k, t) in self.timers.iter_mut() {
@@ -498,10 +494,6 @@ impl Hub {
                 }
             }
         }
-        if self.notes_at.map(|t| t.elapsed().as_secs() > 5).unwrap_or(true) {
-            self.notes_at = Some(Instant::now());
-            self.notes = std::fs::read_to_string(notes_path()).unwrap_or_default();
-        }
         done
     }
 
@@ -522,11 +514,6 @@ impl Hub {
             self.set_keep_awake(false);
         }
     }
-}
-
-/// Notes widget file: `%APPDATA%\Laminar\notes.txt`.
-pub fn notes_path() -> std::path::PathBuf {
-    crate::config::dir().join("notes.txt")
 }
 
 fn idle_secs() -> u32 {

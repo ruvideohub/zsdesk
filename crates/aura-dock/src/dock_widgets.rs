@@ -247,15 +247,6 @@ impl Dock {
                 self.close_launchpad();
                 apps::launch(&path);
             }
-            WAct::Notes => {
-                self.close_launchpad();
-                let p = widgets::hub::notes_path();
-                if !p.exists() {
-                    let _ = std::fs::create_dir_all(config::dir());
-                    let _ = std::fs::write(&p, "Notes\n");
-                }
-                apps::edit_file(&p);
-            }
             WAct::WhatsApp => {
                 self.close_launchpad();
                 let win = self.windows.iter().find(|w| w.app.contains("whatsapp") || w.exe.contains("whatsapp")).map(|w| w.hwnd);

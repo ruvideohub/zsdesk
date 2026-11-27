@@ -195,7 +195,6 @@ pub enum WAct {
     SetWallpaper,
     App(String),
     File(String),
-    Notes,
     WhatsApp,
     /// Show the Wi-Fi network list.
     WifiMenu,

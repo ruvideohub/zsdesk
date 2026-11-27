@@ -130,7 +130,6 @@ const G_DESKTOP: &str = "\u{E7F4}";
 const G_SEARCH: &str = "\u{E721}";
 const G_RUN: &str = "\u{E756}";
 const G_TRASH: &str = "\u{E74D}";
-const G_NOTE: &str = "\u{E70B}";
 const G_CHAT: &str = "\u{E8BD}";
 const G_KEYBOARD: &str = "\u{E765}";
 const G_MUSIC: &str = "\u{E8D6}";
@@ -2748,28 +2747,6 @@ fn tool(c: &Canvas, out: &mut Painted, k: ToolKind, x: &Ctx, sh: Shape) {
             }
         }
         ToolKind::Radio => radio_widget(c, out, x, sh),
-        ToolKind::Notes => {
-            out.hits.push(((0.0, 0.0, c.w, c.h), WAct::Notes));
-            let lines: Vec<&str> = x.hub.notes.lines().filter(|l| !l.trim().is_empty()).collect();
-            if dense {
-                let s = Sum::new(Vis::Glyph(G_NOTE, YELLOW), if sh == Shape::Mini { String::new() } else { lines.first().copied().unwrap_or("Notes").to_string() }, if lines.is_empty() { "Click to write".to_string() } else { format!("{} lines", lines.len()) });
-                compact_sum(c, &s, sh);
-                return;
-            }
-            c.rr(14.0, 14.0, 28.0, 28.0, 8.0, YELLOW);
-            c.glyph(G_NOTE, 28.0, 28.0, 13.0, (0.2, 0.2, 0.2, 1.0));
-            let (tx, top) = if sh == Shape::Small { (14.0, 52.0) } else { (52.0, 14.0) };
-            let n = (((c.h - top - 8.0) / 17.0).floor() as usize).max(1);
-            if lines.is_empty() {
-                c.tw("Notes", tx, top, 13.0, 600, c.text1(), c.w - tx - 14.0);
-                c.text("Click to write a note.", tx, top + 20.0, 11.0, 400, c.text2(), Align::Left, c.w - tx - 14.0, Font::Text);
-            } else {
-                c.tw(lines[0], tx, top, 13.0, 600, c.text1(), c.w - tx - 14.0);
-                for (i, l) in lines.iter().skip(1).take(n.saturating_sub(1)).enumerate() {
-                    c.tw(l, tx, top + 20.0 + i as f32 * 17.0, 11.0, 400, c.text2(), c.w - tx - 14.0);
-                }
-            }
-        }
         ToolKind::ScreenTime => {
             let total = x.hub.screen.total();
             let mut apps: Vec<(&String, &u64)> = x.hub.screen.apps.iter().collect();

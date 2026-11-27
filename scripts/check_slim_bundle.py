@@ -22,5 +22,10 @@ for p in ['packaging/windows/aura.iss', 'packaging/windows/install.ps1']:
     for name in bins: assert name in text, (p,name)
 assert 'mod service_start;' not in (root/'crates/aura-fences/src/main.rs').read_text(encoding='utf-8')
 assert 'ensure_own_pin' not in (root/'crates/aura-dock/src/dock.rs').read_text(encoding='utf-8')
+# Removed notes widget must not keep reading or editing its old data file.
+for relative in ('widgets/hub.rs', 'widgets/paint.rs', 'desktop_system.rs', 'dock_widgets.rs'):
+    text = (root / 'crates/aura-dock/src' / relative).read_text(encoding='utf-8')
+    assert all(retired not in text for retired in ('notes_path(', 'ToolKind::Notes', 'WAct::Notes', 'Kind::Notes'))
+assert not (root / 'crates/aura-dock/src/desktop_notes.rs').exists()
 assert all(e['name'] != 'Fences.exe' for e in entries)
 print('Standalone Dock bundle checks passed (static only).')

@@ -272,6 +272,7 @@ pub struct Config {
     pub desktop_calendar: bool,
     pub calendar_pos: Option<[i32; 2]>,
     pub calendar_locked: bool,
+    // Retained only for lossless compatibility with older profiles; never launched.
     pub desktop_notes: bool,
     pub notes_pos: Option<[i32; 2]>,
     pub notes_locked: bool,
@@ -607,6 +608,25 @@ mod tests {
         assert!(restored.desktop_calendar && restored.calendar_locked);
         assert_eq!(restored.calendar_pos, Some([-830, 145]));
         assert_eq!(restored.pins[0].app(), Some("dock-only"));
+    }
+
+    #[test]
+    fn removed_notes_widget_does_not_disturb_other_profile_data() {
+        let mut cfg: Config = serde_json::from_str("{}").unwrap();
+        cfg.desktop_notes = true;
+        cfg.notes_pos = Some([-45, 200]);
+        cfg.launchpad_widgets = vec![WRef::Id("notes".into()), WRef::Id("weather".into())];
+        cfg.right_widgets = vec![WRef::Id("notes".into())];
+        cfg.pins = vec![Pin::Widget { widget: "notes".into(), size: None }, Pin::Id("existing-app".into())];
+        let clean = cfg.sanitized();
+        assert!(clean.desktop_notes);
+        assert_eq!(clean.notes_pos, Some([-45, 200]));
+        assert!(clean.launchpad_widgets.iter().any(|w| w.id() == "weather"));
+        assert!(clean.launchpad_widgets.iter().chain(&clean.right_widgets).all(|w| w.id() != "notes"));
+        assert_eq!(clean.pins, vec![Pin::Id("existing-app".into())]);
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&clean).unwrap()).unwrap();
+        assert!(restored.desktop_notes);
+        assert_eq!(restored.notes_pos, Some([-45, 200]));
     }
 
     #[test]

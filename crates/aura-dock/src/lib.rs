@@ -18,7 +18,6 @@ mod config;
 mod control_center;
 mod desktop_card_policy;
 mod desktop_calendar;
-mod desktop_notes;
 mod desktop_weather;
 mod desktop_radio;
 mod desktop_environment;

@@ -109,8 +109,7 @@ pub const WM_APP_BATTERY_MENU: u32 = WM_APP + 18;
 pub const WM_APP_BATTERY_MOVED: u32 = WM_APP + 19;
 pub const WM_APP_CALENDAR_MENU: u32 = WM_APP + 42;
 pub const WM_APP_CALENDAR_MOVED: u32 = WM_APP + 43;
-pub const WM_APP_NOTES_MENU: u32 = WM_APP + 44;
-pub const WM_APP_NOTES_MOVED: u32 = WM_APP + 45;
+// WM_APP + 44 and 45 are reserved for the retired notes widget.
 pub const WM_APP_WEATHER_MENU: u32 = WM_APP + 46;
 pub const WM_APP_WEATHER_MOVED: u32 = WM_APP + 47;
 pub const WM_APP_RADIO_MENU: u32 = WM_APP + 48;
@@ -248,10 +247,7 @@ const CMD_BATTERY_HIDE: usize = 3667;
 const CMD_CALENDAR_DESKTOP: usize = 3668;
 const CMD_CALENDAR_LOCK: usize = 3669;
 const CMD_CALENDAR_HIDE: usize = 3670;
-const CMD_NOTES_DESKTOP: usize = 3671;
-const CMD_NOTES_LOCK: usize = 3672;
-const CMD_NOTES_HIDE: usize = 3673;
-const CMD_NOTES_EDIT: usize = 3674;
+// Command IDs 3671–3674 belonged to the retired notes widget.
 const CMD_WEATHER_DESKTOP: usize = 3675;
 const CMD_WEATHER_LOCK: usize = 3676;
 const CMD_WEATHER_HIDE: usize = 3677;
@@ -2805,16 +2801,6 @@ impl Dock {
             CMD_WEATHER_HIDE => self.save_and_apply(|c| c.desktop_weather = false),
             CMD_WEATHER_LOCK => self.save_and_apply(|c| c.desktop_weather_locked = !c.desktop_weather_locked),
             CMD_WEATHER_LOCATION => self.open_connect("weather"),
-            CMD_NOTES_DESKTOP => self.save_and_apply(|c| c.desktop_notes = !c.desktop_notes),
-            CMD_NOTES_HIDE => self.save_and_apply(|c| c.desktop_notes = false),
-            CMD_NOTES_LOCK => self.save_and_apply(|c| c.notes_locked = !c.notes_locked),
-            CMD_NOTES_EDIT => {
-                let path = crate::widgets::hub::notes_path();
-                match crate::desktop_notes::ensure_file(&path) {
-                    Ok(()) => crate::apps::edit_file(&path),
-                    Err(error) => self.notice(&[if crate::strings::russian() { "Не удалось открыть заметки".into() } else { "Unable to open notes".into() }, error.to_string()]),
-                }
-            }
             CMD_NETWORK_HIDE => self.save_and_apply(|c| c.desktop_network = false),
             CMD_BATTERY_HIDE => self.save_and_apply(|c| c.desktop_battery = false),
             CMD_NETWORK_LOCK => self.save_and_apply(|c| c.network_locked = !c.network_locked),
@@ -5877,9 +5863,6 @@ impl Dock {
         if old.desktop_calendar != self.cfg.desktop_calendar || old.calendar_pos != self.cfg.calendar_pos || old.calendar_locked != self.cfg.calendar_locked || old.language != self.cfg.language {
             self.restart_extra(2);
         }
-        if old.desktop_notes != self.cfg.desktop_notes || old.notes_pos != self.cfg.notes_pos || old.notes_locked != self.cfg.notes_locked || old.language != self.cfg.language {
-            self.restart_extra(3);
-        }
         if old.desktop_weather != self.cfg.desktop_weather || old.desktop_weather_pos != self.cfg.desktop_weather_pos || old.desktop_weather_locked != self.cfg.desktop_weather_locked || old.language != self.cfg.language || old.weather_city != self.cfg.weather_city || old.weather_lat.to_bits() != self.cfg.weather_lat.to_bits() || old.weather_lon.to_bits() != self.cfg.weather_lon.to_bits() {
             self.restart_extra(4);
         }
@@ -6213,15 +6196,6 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRES
         WM_APP_CALENDAR_MOVED => {
             let (x, y) = (wp.0 as i32, lp.0 as i32);
             with_dock(|d| d.save_and_apply(|c| c.calendar_pos = Some([x, y])));
-            return LRESULT(0);
-        }
-        WM_APP_NOTES_MENU => {
-            with_dock(|d| d.extra_menu(3));
-            return LRESULT(0);
-        }
-        WM_APP_NOTES_MOVED => {
-            let (x, y) = (wp.0 as i32, lp.0 as i32);
-            with_dock(|d| d.save_and_apply(|c| c.notes_pos = Some([x, y])));
             return LRESULT(0);
         }
         WM_APP_WEATHER_MENU => {
@@ -6867,7 +6841,7 @@ impl Dock {
         if !enabled { return; }
         let Ok(panel) = std::env::current_exe() else { return };
         let exe = panel.parent().map(|d| d.join("widgets.exe")).filter(|p| p.is_file()).unwrap_or(panel);
-        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", 3 => "notes", 4 => "weather", 5 => "radio", _ => return };
+        let component = match index { 0 => "network", 1 => "battery", 2 => "calendar", 3 => return, 4 => "weather", 5 => "radio", _ => return };
         match std::process::Command::new(exe).arg("--component").arg(component)
             .arg("--dock").arg(format!("{:#x}", self.hwnd.0 as isize))
             .arg("--parent").arg(std::process::id().to_string())
@@ -6917,7 +6891,6 @@ impl Dock {
             0 => (self.cfg.desktop_network, self.cfg.network_locked, "Сеть", CMD_NETWORK_LOCK, CMD_NETWORK_HIDE),
             1 => (self.cfg.desktop_battery, self.cfg.battery_locked, "Батарея", CMD_BATTERY_LOCK, CMD_BATTERY_HIDE),
             2 => (self.cfg.desktop_calendar, self.cfg.calendar_locked, if crate::strings::russian() { "Календарь" } else { "Calendar" }, CMD_CALENDAR_LOCK, CMD_CALENDAR_HIDE),
-            3 => (self.cfg.desktop_notes, self.cfg.notes_locked, if crate::strings::russian() { "Заметки" } else { "Notes" }, CMD_NOTES_LOCK, CMD_NOTES_HIDE),
             4 => (self.cfg.desktop_weather, self.cfg.desktop_weather_locked, if crate::strings::russian() { "Погода" } else { "Weather" }, CMD_WEATHER_LOCK, CMD_WEATHER_HIDE),
             5 => (self.cfg.desktop_radio, self.cfg.desktop_radio_locked, if crate::strings::russian() { "Радио" } else { "Radio" }, CMD_RADIO_LOCK, CMD_RADIO_HIDE),
             _ => return,
@@ -6925,7 +6898,6 @@ impl Dock {
         if enabled {
             let english = index >= 2 && !crate::strings::russian();
             let mut items = vec![MenuItem::header(title)];
-            if index == 3 { items.push(MenuItem::item(if english { "Edit notes…" } else { "Редактировать заметки…" }, CMD_NOTES_EDIT)); }
             if index == 4 { items.push(MenuItem::item("Change Location…", CMD_WEATHER_LOCATION)); }
             if index == 5 {
                 items.push(MenuItem::item(if english { "Previous station" } else { "Предыдущая станция" }, CMD_RADIO_PREV));

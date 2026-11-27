@@ -30,17 +30,17 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::config::ClockCorner;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind { System, Network, Battery, Calendar, Notes, Weather, Radio }
+pub enum Kind { System, Network, Battery, Calendar, Weather, Radio }
 
 impl Kind {
     fn title(self) -> &'static str {
-        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Notes => if crate::strings::russian() { "Заметки" } else { "Notes" }, Self::Weather => if crate::strings::russian() { "Погода" } else { "Weather" }, Self::Radio => if crate::strings::russian() { "Радио" } else { "Radio" } }
+        match self { Self::System => "Система", Self::Network => "Сеть", Self::Battery => "Батарея", Self::Calendar => if crate::strings::russian() { "Календарь" } else { "Calendar" }, Self::Weather => if crate::strings::russian() { "Погода" } else { "Weather" }, Self::Radio => if crate::strings::russian() { "Радио" } else { "Radio" } }
     }
     fn menu_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Notes => crate::dock::WM_APP_NOTES_MENU, Self::Weather => crate::dock::WM_APP_WEATHER_MENU, Self::Radio => crate::dock::WM_APP_RADIO_MENU }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MENU, Self::Network => crate::dock::WM_APP_NETWORK_MENU, Self::Battery => crate::dock::WM_APP_BATTERY_MENU, Self::Calendar => crate::dock::WM_APP_CALENDAR_MENU, Self::Weather => crate::dock::WM_APP_WEATHER_MENU, Self::Radio => crate::dock::WM_APP_RADIO_MENU }
     }
     fn moved_message(self) -> u32 {
-        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Notes => crate::dock::WM_APP_NOTES_MOVED, Self::Weather => crate::dock::WM_APP_WEATHER_MOVED, Self::Radio => crate::dock::WM_APP_RADIO_MOVED }
+        match self { Self::System => crate::dock::WM_APP_SYSTEM_MOVED, Self::Network => crate::dock::WM_APP_NETWORK_MOVED, Self::Battery => crate::dock::WM_APP_BATTERY_MOVED, Self::Calendar => crate::dock::WM_APP_CALENDAR_MOVED, Self::Weather => crate::dock::WM_APP_WEATHER_MOVED, Self::Radio => crate::dock::WM_APP_RADIO_MOVED }
     }
 }
 
@@ -96,7 +96,6 @@ impl Prefs {
             Kind::Network => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.network_pos.map(|[x,y]| (x,y)), locked: cfg.network_locked },
             Kind::Battery => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.battery_pos.map(|[x,y]| (x,y)), locked: cfg.battery_locked },
             Kind::Calendar => Self { corner: ClockCorner::TopLeft, scale: 1.0, pos: cfg.calendar_pos.map(|[x,y]| (x,y)), locked: cfg.calendar_locked },
-            Kind::Notes => Self { corner: ClockCorner::BottomLeft, scale: 1.0, pos: cfg.notes_pos.map(|[x,y]| (x,y)), locked: cfg.notes_locked },
             Kind::Weather => Self { corner: ClockCorner::BottomRight, scale: 1.0, pos: cfg.desktop_weather_pos.map(|[x,y]| (x,y)), locked: cfg.desktop_weather_locked },
             Kind::Radio => Self { corner: ClockCorner::TopRight, scale: 1.0, pos: cfg.desktop_radio_pos.map(|[x,y]| (x,y)), locked: cfg.desktop_radio_locked },
         }
@@ -192,13 +191,6 @@ impl SystemState {
             let now = crate::widgets::Now::get();
             return vec![Meter { label: "date", fill: 0.0, text: now.ymd() }];
         }
-        if self.kind == Kind::Notes {
-            let (label, text) = match crate::desktop_notes::read(&crate::widgets::hub::notes_path()) {
-                Ok(text) => ("notes", text),
-                Err(_) => ("error", String::new()),
-            };
-            return vec![Meter { label, fill: 0.0, text }];
-        }
         if self.kind == Kind::Weather {
             let worker = self.weather.as_mut().expect("weather worker belongs to weather card");
             worker.poll();
@@ -228,7 +220,7 @@ impl SystemState {
             Kind::System => meters(&stats, first),
             Kind::Network => network_meters(&stats, first),
             Kind::Battery => battery_meters(),
-            Kind::Calendar | Kind::Notes | Kind::Weather | Kind::Radio => unreachable!("other cards return before sampling"),
+            Kind::Calendar | Kind::Weather | Kind::Radio => unreachable!("other cards return before sampling"),
         }
     }
 }
@@ -412,7 +404,6 @@ impl DesktopSystem {
             Kind::Network => ("СКОРОСТЬ СОЕДИНЕНИЯ", "\u{E701}"),
             Kind::Battery => ("ПИТАНИЕ УСТРОЙСТВА", "\u{E83E}"),
             Kind::Calendar => (if crate::strings::russian() { "ТЕКУЩИЙ МЕСЯЦ" } else { "THIS MONTH" }, "\u{E787}"),
-            Kind::Notes => (if crate::strings::russian() { "ЗАМЕТКИ НА РАБОЧЕМ СТОЛЕ" } else { "DESKTOP NOTES" }, "\u{E70B}"),
             Kind::Weather => (if crate::strings::russian() { "ТЕКУЩАЯ ПОГОДА" } else { "CURRENT WEATHER" }, "\u{E706}"),
             Kind::Radio => (if crate::strings::russian() { "ОНЛАЙН-РАДИО" } else { "ONLINE RADIO" }, "\u{E189}"),
         };
@@ -447,23 +438,6 @@ impl DesktopSystem {
                     let message = if city.label == "error" { if russian { "Нет данных — повторим запрос" } else { "Unavailable — retrying" } }
                         else if russian { "Загрузка погоды…" } else { "Loading weather…" };
                     style::text(c, gfx, root, message, 22.0*k, 91.0*k, 224.0*k, 12.0*k, 500, theme::text_2(), false, false)?;
-                }
-            }
-            Kind::Notes => {
-                let note = &meters[0];
-                let russian = crate::strings::russian();
-                let placeholder = if note.label == "error" {
-                    if russian { "Не удалось прочитать заметки" } else { "Unable to read notes" }
-                } else if note.text.trim().is_empty() {
-                    if russian { "Нет заметок — откройте меню карточки" } else { "No notes — open the card menu" }
-                } else { "" };
-                if !placeholder.is_empty() {
-                    style::text(c, gfx, root, placeholder, 22.0*k, 67.0*k, 224.0*k, 11.0*k, 500, theme::text_2(), false, false)?;
-                } else {
-                    for (line, value) in note.text.lines().take(5).enumerate() {
-                        style::text(c, gfx, root, value, 22.0*k, (64.0 + line as f32 * 18.0)*k,
-                            224.0*k, 12.0*k, 500, theme::text(), false, false)?;
-                    }
                 }
             }
             Kind::Calendar => {

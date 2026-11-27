@@ -138,7 +138,6 @@ pub enum ToolKind {
     Run,
     Screenshot,
     Trash,
-    Notes,
     Radio,
     ScreenTime,
     Timeline,
