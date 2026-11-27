@@ -371,7 +371,13 @@ impl DesktopHost {
         self.desktop_notify = None;
         self.save_now();
         if self.config.settings.organize && self.config.settings.icons_hidden_by_aura {
-            self.config.settings.icons_hidden_by_aura = !desktop::set_icons_visible(true);
+            let _ = desktop::set_icons_visible(true);
+            if desktop::icons_visible_checked() == Some(true) {
+                match super::recovery_marker::clear(&self.config_path) {
+                    Ok(()) => self.config.settings.icons_hidden_by_aura = false,
+                    Err(error) => self.notify_error(&format!("Не удалось удалить маркер восстановления значков: {error}")),
+                }
+            }
             self.save_now();
         }
         for fence in &mut self.fences { fence.drop = None; fence.notify = None; if !fence.hwnd.0.is_null() { let _ = unsafe { DestroyWindow(fence.hwnd) }; } }
@@ -536,18 +542,40 @@ impl DesktopHost {
     }
 
     fn hide_icons(&mut self) -> bool {
+        // Never claim ownership of icons already hidden by the user, or guess
+        // while Explorer is unavailable. Only our own changes may be undone.
+        if desktop::icons_visible_checked() != Some(true) {
+            self.notify_error("Значки рабочего стола уже скрыты или Explorer недоступен. Включите значки и повторите попытку.");
+            return false;
+        }
         if !self.start_guard() { return false; }
+        // Arm separately before touching either profile or Explorer. The guard
+        // can use it even when desktop-fences.json becomes corrupt or disappears.
+        if let Err(error) = super::recovery_marker::arm(&self.config_path) {
+            self.notify_error(&format!("Не удалось сохранить маркер восстановления значков: {error}"));
+            return false;
+        }
         self.config.settings.icons_hidden_by_aura = true;
-        // Never hide the Explorer icons unless the watchdog can read the
-        // recovery marker after an unexpected process or UI-thread exit.
         self.config.normalize();
         if let Err(error) = save_config(&self.config_path, &self.config) {
             self.config.settings.icons_hidden_by_aura = false;
+            if let Err(marker_error) = super::recovery_marker::clear(&self.config_path) {
+                self.notify_error(&format!("Не удалось удалить маркер восстановления значков: {marker_error}"));
+            }
             self.notify_error(&aura_core::tr_format!("无法保存桌面格子布局：{error}", error=error));
             return false;
         }
-        if desktop::set_icons_visible(false) {
-            self.config.settings.icons_hidden_by_aura=false;self.save_now();return false;
+        let _ = desktop::set_icons_visible(false);
+        if desktop::icons_visible_checked() != Some(false) {
+            // Only disarm if Explorer confirms that we did not hide the icons.
+            if desktop::icons_visible_checked() == Some(true) {
+                self.config.settings.icons_hidden_by_aura = false;
+                if let Err(error) = super::recovery_marker::clear(&self.config_path) {
+                    self.notify_error(&format!("Не удалось удалить маркер восстановления значков: {error}"));
+                }
+                self.save_now();
+            }
+            return false;
         }
         true
     }
@@ -597,8 +625,12 @@ impl DesktopHost {
     /// Leaves organize mode: icons return to Explorer, desktop fences are stashed.
     pub fn restore_desktop(&mut self) {
         if !self.config.settings.organize { return; }
-        if !desktop::set_icons_visible(true) {
+        let _ = desktop::set_icons_visible(true);
+        if desktop::icons_visible_checked() != Some(true) {
             self.notify_error(aura_core::i18n::text("系统桌面图标尚未恢复，已保留桌面格子和恢复进程，请稍后重试。"));return;
+        }
+        if let Err(error) = super::recovery_marker::clear(&self.config_path) {
+            self.notify_error(&format!("Значки восстановлены, но маркер восстановления не удалён: {error}"));return;
         }
         self.config.settings.organize = false;
         super::update_hook(self.config.settings.double_click_toggle,false);

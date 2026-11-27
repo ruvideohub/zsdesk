@@ -134,6 +134,9 @@ pub fn run(source: &Path, config_path: &Path, report_path: &Path, apply: bool) -
         "存在无法访问的项目，未应用导入；详见报告"
     );
     let _exclusive = DesktopImportLock::acquire(&config_path)?;
+    // A previous watchdog may still be restoring this profile after the host
+    // has exited. Do not race it with the import transaction.
+    let _recovery = super::recovery_lock::RecoveryLock::acquire(&config_path, 15_000)?;
     verify_inputs(
         &source,
         &plan.source_identity.sha256,

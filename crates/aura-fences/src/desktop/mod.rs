@@ -20,6 +20,8 @@ mod rounded_mask;
 mod shadow_mask;
 mod shadow;
 mod host;
+mod recovery_lock;
+mod recovery_marker;
 mod menu_worker;
 mod return_to_desktop;
 mod drag_placement;
@@ -288,6 +290,13 @@ pub fn run(config_path: PathBuf, settings_path: PathBuf, command: DesktopCommand
         let _ = unsafe { CloseHandle(mutex) };
         anyhow::bail!("{}", aura_core::tr_format!("当前配置的桌面格子未运行，未为诊断启动任何窗口"));
     }
+    // Serialize the entire host lifetime with any retiring watchdog. The
+    // lock belongs to this desktop thread, so Windows abandons it if the
+    // thread dies and the watchdog can still restore the icons.
+    let _recovery = match recovery_lock::RecoveryLock::acquire(&config_path, 15_000) {
+        Ok(lock) => lock,
+        Err(error) => { let _ = unsafe { CloseHandle(mutex) }; return Err(error); }
+    };
     if let Err(error) = unsafe { OleInitialize(None) }.context("OleInitialize failed") {
         let _ = unsafe { CloseHandle(mutex) };
         return Err(error);
@@ -316,7 +325,19 @@ fn forward(key: &[u16], command: &DesktopCommand) -> Result<()> {
     anyhow::bail!("{}", aura_core::tr_format!("桌面格子正在启动，请稍后重试"))
 }
 
+/// Restore only when our separate marker proves that icons were visible before
+/// this profile hid them. The caller holds the recovery lock and initialized OLE.
+fn recover_icons_from_marker(config_path: &std::path::Path) -> Result<bool> {
+    Ok(recovery_marker::recover_with(config_path, desktop::icons_visible_checked, || {
+        let _ = desktop::set_icons_visible(true);
+    })?)
+}
+
 fn run_host(config_path: PathBuf, settings_path: PathBuf, command: DesktopCommand, key: &[u16]) -> Result<()> {
+    // An earlier guard may not have run; recover independently of profile JSON.
+    recover_icons_from_marker(&config_path).with_context(|| format!(
+        "Не удалось восстановить значки для профиля Fences: {}", config_path.display()
+    ))?;
     // Do not start the host, hide icons or save defaults over a broken profile.
     let config = host::load_config(&config_path).with_context(|| format!(
         "Не удалось прочитать профиль Fences: {}. Файл не изменён. Восстановите его из резервной копии и повторите запуск.",
@@ -417,22 +438,25 @@ pub fn guard(config_path: PathBuf, pid: u32, desktop_thread: Option<u32>) -> Res
     let waited=unsafe { WaitForMultipleObjects(&handles, false, INFINITE) }.0;
     anyhow::ensure!((waited as usize)<handles.len(), "{}", aura_core::tr_format!("桌面监护等待失败：{waited:#x}" , waited=waited));
     drop(thread);drop(process);
-    // An unreadable marker is not evidence that the user wanted icons shown.
-    // Preserve the file and report the failure rather than guessing or overwriting it.
+    // A replacement host or import may have started while we waited. Never
+    // restore icons or write its profile until it has released this lease.
+    let _recovery = recovery_lock::RecoveryLock::acquire(&config_path, INFINITE)?;
+    // The marker is independent of profile JSON and is written only after
+    // verifying the icons were originally visible. Never guess if it is absent.
+    if !recovery_marker::is_armed(&config_path)? { return Ok(()); }
+    unsafe { OleInitialize(None)?; }
+    let restored = recover_icons_from_marker(&config_path);
+    unsafe { OleUninitialize(); }
+    restored?;
+    // Icon recovery succeeded even if the profile has since become corrupt.
+    // Do not replace an unreadable profile with defaults.
     let mut config = host::load_recovery_config(&config_path).with_context(|| format!(
-        "Не удалось прочитать состояние восстановления значков Fences: {}. Файл не изменён; проверьте видимость значков рабочего стола и восстановите профиль.",
+        "Значки восстановлены, но профиль Fences не удалось прочитать: {}. Файл не изменён.",
         config_path.display()
     ))?;
     if config.settings.icons_hidden_by_aura {
-        unsafe { OleInitialize(None)?; }
-        let restored=desktop::set_icons_visible(true);
-        unsafe { OleUninitialize(); }
-        if restored {
-            config.settings.icons_hidden_by_aura = false;
-            host::save_config(&config_path, &config)?;
-        } else {
-            anyhow::bail!("{}", aura_core::tr_format!("系统桌面图标恢复失败，恢复标记已保留"));
-        }
+        config.settings.icons_hidden_by_aura = false;
+        host::save_config(&config_path, &config)?;
     }
     Ok(())
 }

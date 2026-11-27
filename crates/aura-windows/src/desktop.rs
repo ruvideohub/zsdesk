@@ -142,10 +142,17 @@ pub fn icon_grid(work:RECT)->Result<DesktopIconGrid>{
     Ok(DesktopIconGrid{flags,spacing,origin,dpi})
 }
 
-/// Whether Explorer currently shows desktop icons.
+/// Whether Explorer shows desktop icons, or None if the Shell cannot report it.
+/// Recovery decisions must not guess the user's original state when Explorer
+/// is unavailable or still restarting.
+pub fn icons_visible_checked() -> Option<bool> {
+    if let Some(list) = desktop_list() { return Some(unsafe { IsWindowVisible(list) }.as_bool()); }
+    desktop_view().ok().and_then(|v| unsafe { v.GetCurrentFolderFlags() }.ok()).map(|f| f & FWF_NOICONS.0 as u32 == 0)
+}
+
+/// Existing callers retain their best-effort fallback when Explorer is unavailable.
 pub fn icons_visible() -> bool {
-    if let Some(list) = desktop_list() { return unsafe { IsWindowVisible(list) }.as_bool(); }
-    desktop_view().ok().and_then(|v| unsafe { v.GetCurrentFolderFlags() }.ok()).is_none_or(|f| f & FWF_NOICONS.0 as u32 == 0)
+    icons_visible_checked().unwrap_or(true)
 }
 
 /// Shows or hides Explorer's desktop icons. Returns the resulting visibility.
