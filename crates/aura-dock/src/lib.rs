@@ -15,6 +15,7 @@
 mod appbar_policy;
 mod apps;
 mod config;
+mod config_migration;
 mod control_center;
 mod desktop_card_policy;
 mod desktop_calendar;
@@ -138,9 +139,31 @@ fn composition_apartment() -> Result<()> {
     Ok(())
 }
 
+fn migrate_profile_or_report() -> Result<()> {
+    if let Err(error) = config::migrate_legacy_dir() {
+        let message = format!("Не удалось перенести профиль Aura Dock: {error}. Старые данные сохранены в %APPDATA%\\ZSDesk\\Dock. Проверьте доступ к файлам и повторите запуск.");
+        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+            MessageBoxW(None, windows::core::PCWSTR(text.as_ptr()), windows::core::w!("Aura Dock"), MB_OK | MB_ICONERROR);
+        }
+        return Err(windows::core::Error::new(windows::core::HRESULT(0x80004005_u32 as i32), message));
+    }
+    Ok(())
+}
+
 /// The panel: `AuraDock.exe` (and the helper docks on extra displays).
 pub fn run() -> Result<()> {
     let started = std::time::Instant::now();
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    // The watchdog must remain independent of profile I/O so it can restore the taskbar.
+    if args.first().map(|a| a == "--watchdog").unwrap_or(false) {
+        if let Some(pid) = args.get(1).and_then(|p| p.parse().ok()) {
+            taskbar::run_watchdog(pid, args.get(2).and_then(|s| s.parse().ok()));
+        }
+        return Ok(());
+    }
+    migrate_profile_or_report()?;
     // Velopack's install / update / uninstall steps run here and exit (see updater.rs).
     updater::startup();
     // The panel's own labels: Russian unless the settings say otherwise.
@@ -148,7 +171,6 @@ pub fn run() -> Result<()> {
         strings::set_language(&cfg.language);
     }
     leave_install_folder();
-    let args: Vec<String> = std::env::args().skip(1).collect();
 
     // `--component clock --dock <hwnd>`: the same binary standing in for `widgets.exe` when
     // that file is missing (an installation updated by copying just the panel).
@@ -166,15 +188,6 @@ pub fn run() -> Result<()> {
                 Ok(())
             }
         };
-    }
-
-    // `--watchdog <pid> [taskbar-state]`: tiny helper that restores the Windows taskbar
-    // when the dock process exits, however it exits.
-    if args.first().map(|a| a == "--watchdog").unwrap_or(false) {
-        if let Some(pid) = args.get(1).and_then(|p| p.parse().ok()) {
-            taskbar::run_watchdog(pid, args.get(2).and_then(|s| s.parse().ok()));
-        }
-        return Ok(());
     }
 
     // `--list-windows`: print what the dock sees (app identity, exe, title) for troubleshooting.
@@ -266,6 +279,7 @@ pub fn run() -> Result<()> {
 /// one card exits quietly instead of drawing it twice, and a card quits when the panel that
 /// started it is gone.
 pub fn run_widgets() -> Result<()> {
+    migrate_profile_or_report()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     if std::env::var_os("USERPROFILE").is_some() {
         leave_install_folder();

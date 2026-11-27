@@ -1047,6 +1047,23 @@ mod tests {
     }
 
     #[test]
+    fn damaged_saved_fences_profile_is_not_replaced() {
+        use std::fs;
+        let dir = std::env::temp_dir().join(format!("aura-fences-profile-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("desktop-fences.json");
+        let original = DesktopConfig::default();
+        aura_core::profile_file::save(&path, &original).unwrap();
+        assert_eq!(aura_core::profile_file::load_or_default::<DesktopConfig>(&path).unwrap(), original);
+        let damaged = b"{\"version\":broken";
+        fs::write(&path, damaged).unwrap();
+        assert!(aura_core::profile_file::load_or_default::<DesktopConfig>(&path).is_err());
+        assert!(aura_core::profile_file::save(&path, &original).is_err());
+        assert_eq!(fs::read(&path).unwrap(), damaged);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn config_round_trips_and_normalizes() {
         let mut config = DesktopConfig::default();
         let id = config.take_id();

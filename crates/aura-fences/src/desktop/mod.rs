@@ -317,6 +317,11 @@ fn forward(key: &[u16], command: &DesktopCommand) -> Result<()> {
 }
 
 fn run_host(config_path: PathBuf, settings_path: PathBuf, command: DesktopCommand, key: &[u16]) -> Result<()> {
+    // Do not start the host, hide icons or save defaults over a broken profile.
+    let config = host::load_config(&config_path).with_context(|| format!(
+        "Не удалось прочитать профиль Fences: {}. Файл не изменён. Восстановите его из резервной копии и повторите запуск.",
+        config_path.display()
+    ))?;
     let instance = HINSTANCE(unsafe { GetModuleHandleW(None)? }.0);
     let host_class = wide(HOST_CLASS);
     let fence_class = wide(host::FENCE_CLASS);
@@ -331,7 +336,6 @@ fn run_host(config_path: PathBuf, settings_path: PathBuf, command: DesktopComman
     let (family, _) = aura_windows::gfx::system_ui_font(None);
     let gfx = Gfx::new(&family).context(aura_core::i18n::text("Direct2D 初始化失败"))?;
     aura_windows::flyout::prepare();
-    let config = host::load_config(&config_path);
     HOST.with(|h| *h.borrow_mut() = Some(DesktopHost::new(hwnd, config_path, settings_path, config, gfx)));
     with_host(|h| h.start());
     unsafe { SetTimer(Some(hwnd), TIMER_SHARED_THEME, 2000, None); }
@@ -413,7 +417,12 @@ pub fn guard(config_path: PathBuf, pid: u32, desktop_thread: Option<u32>) -> Res
     let waited=unsafe { WaitForMultipleObjects(&handles, false, INFINITE) }.0;
     anyhow::ensure!((waited as usize)<handles.len(), "{}", aura_core::tr_format!("桌面监护等待失败：{waited:#x}" , waited=waited));
     drop(thread);drop(process);
-    let mut config = host::load_config(&config_path);
+    // An unreadable marker is not evidence that the user wanted icons shown.
+    // Preserve the file and report the failure rather than guessing or overwriting it.
+    let mut config = host::load_recovery_config(&config_path).with_context(|| format!(
+        "Не удалось прочитать состояние восстановления значков Fences: {}. Файл не изменён; проверьте видимость значков рабочего стола и восстановите профиль.",
+        config_path.display()
+    ))?;
     if config.settings.icons_hidden_by_aura {
         unsafe { OleInitialize(None)?; }
         let restored=desktop::set_icons_visible(true);

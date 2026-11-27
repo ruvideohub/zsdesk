@@ -389,28 +389,14 @@ impl Default for Config {
 }
 
 pub fn dir() -> PathBuf {
-    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
-    ONCE.get_or_init(migrate_legacy_dir);
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
     base.join("AuraUI").join("Dock")
 }
 
-/// The panel used to keep its settings in `%APPDATA%\ZSDesk\Dock`. Copy them over once:
-/// a rename shouldn't look like a fresh install (pins, widget placement, brightness).
-fn migrate_legacy_dir() {
-    let Some(base) = std::env::var_os("APPDATA").map(PathBuf::from) else { return };
-    let new = base.join("AuraUI").join("Dock");
-    let old = base.join("ZSDesk").join("Dock");
-    if new.exists() || !old.is_dir() {
-        return;
-    }
-    let _ = std::fs::create_dir_all(&new);
-    let Ok(entries) = std::fs::read_dir(&old) else { return };
-    for entry in entries.flatten() {
-        if entry.path().is_file() {
-            let _ = std::fs::copy(entry.path(), new.join(entry.file_name()));
-        }
-    }
+/// Complete the old profile copy before any normal process can read or save defaults.
+pub fn migrate_legacy_dir() -> std::io::Result<()> {
+    let Some(base) = std::env::var_os("APPDATA").map(PathBuf::from) else { return Ok(()) };
+    crate::config_migration::migrate(&base.join("ZSDesk").join("Dock"), &base.join("AuraUI").join("Dock"))
 }
 
 pub fn path() -> PathBuf {

@@ -3083,17 +3083,21 @@ pub fn from_screen(rect: RECT, keep_height: Option<i32>) -> Placement {
     }
 }
 
-pub fn load_config(path: &Path) -> DesktopConfig {
-    let mut config: DesktopConfig = std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+pub fn load_config(path: &Path) -> std::io::Result<DesktopConfig> {
+    let mut config: DesktopConfig = aura_core::profile_file::load_or_default(path)?;
     config.normalize();
-    config
+    Ok(config)
+}
+
+pub fn load_recovery_config(path: &Path) -> std::io::Result<DesktopConfig> {
+    let mut config: DesktopConfig = aura_core::profile_file::load_existing(path)?
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "recovery profile is missing"))?;
+    config.normalize();
+    Ok(config)
 }
 
 pub fn save_config(path: &Path, config: &DesktopConfig) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
-    let temporary = path.with_extension("json.tmp");
-    std::fs::write(&temporary, serde_json::to_vec_pretty(config).map_err(std::io::Error::other)?)?;
-    std::fs::rename(&temporary, path)
+    aura_core::profile_file::save(path, config)
 }
 
 #[cfg(test)]
