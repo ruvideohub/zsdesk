@@ -56,7 +56,9 @@ pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&
             }
         }
     }
-    let (host, port, path) = split_url(url).ok_or_else(|| format!("bad url: {url}"))?;
+    // URL paths, queries and even host strings may contain credentials.
+    // Never include the supplied URL in an error, including malformed input.
+    let (host, port, path) = split_url(url).ok_or_else(|| "bad url".to_string())?;
     let agent = wide("LaminarDock/0.2 (+https://github.com/davesousa/Laminar_Dock)");
     let whost = wide(&host);
     let wpath = wide(&path);
@@ -77,7 +79,7 @@ pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&
         let _ = WinHttpSetTimeouts(session.0, 8000, 8000, 8000, 8000);
         let connect = H(WinHttpConnect(session.0, PCWSTR(whost.as_ptr()), port, 0));
         if connect.0.is_null() {
-            return Err(format!("can't reach {host}"));
+            return Err("can't reach service".into());
         }
         let req = H(WinHttpOpenRequest(connect.0, PCWSTR(verb.as_ptr()), PCWSTR(wpath.as_ptr()), PCWSTR::null(), PCWSTR::null(), std::ptr::null(), WINHTTP_FLAG_SECURE));
         if req.0.is_null() {
@@ -87,24 +89,18 @@ pub fn request(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&
             Some(b) => (Some(b.as_ptr() as *const core::ffi::c_void), b.len() as u32),
             None => (None, 0),
         };
-        WinHttpSendRequest(req.0, if whdr.is_empty() { None } else { Some(&whdr) }, bptr, blen, blen, 0).map_err(|e| format!("can't reach {host} ({})", e.code().0 & 0xFFFF))?;
-        WinHttpReceiveResponse(req.0, std::ptr::null_mut()).map_err(|_| format!("no answer from {host}"))?;
+        WinHttpSendRequest(req.0, if whdr.is_empty() { None } else { Some(&whdr) }, bptr, blen, blen, 0).map_err(|e| format!("can't reach service ({})", e.code().0 & 0xFFFF))?;
+        WinHttpReceiveResponse(req.0, std::ptr::null_mut()).map_err(|_| "no answer from service".to_string())?;
         let mut status = 0u32;
         let mut len = 4u32;
         let mut idx = 0u32;
         let _ = WinHttpQueryHeaders(req.0, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, PCWSTR::null(), Some(&mut status as *mut u32 as *mut _), &mut len, &mut idx);
-        let mut out = Vec::new();
-        let mut buf = vec![0u8; 32 * 1024];
-        loop {
+        let out = crate::http_body::read_bounded(|buf| {
             let mut read = 0u32;
-            if WinHttpReadData(req.0, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut read).is_err() || read == 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..read as usize]);
-            if out.len() > 16 * 1024 * 1024 {
-                return Err("response too large".into());
-            }
-        }
+            WinHttpReadData(req.0, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut read)
+                .map_err(|_| std::io::Error::other("response read failed"))?;
+            Ok(read as usize)
+        }).map_err(|error| error.to_string())?;
         Ok(Response { status: status as u16, body: out })
     }
 }
@@ -164,6 +160,12 @@ mod tests {
         assert_eq!(split_url("https://api.x.com/2/users?a=1"), Some(("api.x.com".into(), 443, "/2/users?a=1".into())));
         assert_eq!(split_url("https://h:8443"), Some(("h".into(), 8443, "/".into())));
         assert_eq!(split_url("http://h/"), None);
+    }
+    #[test]
+    fn invalid_url_error_never_contains_private_address() {
+        let error = request("GET", "http://private-secret@example.invalid/path?token=private-secret", &[], None).unwrap_err();
+        assert_eq!(error, "bad url");
+        assert!(!error.contains("private-secret"));
     }
     #[test]
     fn b64() {

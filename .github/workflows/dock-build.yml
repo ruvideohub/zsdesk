@@ -243,6 +243,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           target/steam-shortcut-tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Connector HTTP safety tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          rustc --edition 2021 --test crates/laminar-sys/src/http_body.rs -o target/http-body-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          target/http-body-tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = cargo test --locked --release -p laminar-sys --lib http::tests::invalid_url_error_never_contains_private_address -- --list
+          if ($LASTEXITCODE -ne 0 -or -not ($tests | Select-String -SimpleMatch 'http::tests::invalid_url_error_never_contains_private_address')) { throw 'HTTP privacy test was not discovered' }
+          cargo test --locked --release -p laminar-sys --lib http::tests::invalid_url_error_never_contains_private_address -- --exact
+          exit $LASTEXITCODE
       - name: Fences decoration layout tests
         shell: pwsh
         working-directory: aura

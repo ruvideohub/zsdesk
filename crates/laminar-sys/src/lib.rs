@@ -45,6 +45,7 @@ pub mod feed;
 pub mod files;
 pub mod history;
 pub mod http;
+mod http_body;
 pub mod media;
 pub mod night;
 pub mod power;
