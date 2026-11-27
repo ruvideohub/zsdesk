@@ -1,6 +1,6 @@
 # AuraUI
 
-AuraUI — набор программ для рабочего стола Windows 10/11 x64: **Dock**, виджеты и **Fences**. Собственного файлового менеджера и сервиса запуска в этом наборе нет; системный Проводник Windows остаётся на месте.
+AuraUI — самостоятельные программы для рабочего стола Windows 10/11 x64: **Dock** с виджетами и **Fences**. У каждой программы свой установщик и запуск. Собственного файлового менеджера и сервиса запуска в этом наборе нет; системный Проводник Windows остаётся на месте.
 
 [Выпуски](https://github.com/ruvideohub/zsdesk/releases) · [Установка и сборка](docs/packaging.md) · [Использование](docs/user-guide.md) · [Проблемы](https://github.com/ruvideohub/zsdesk/issues)
 
@@ -8,7 +8,7 @@ AuraUI — набор программ для рабочего стола Window
 - **widgets.exe** — отдельные процессы виджетов рабочего стола. Их запускает Dock согласно настройкам.
 - **Fences.exe** — сетки рабочего стола и папок. Запускается вручную; в его настройках можно отдельно включить автоматический запуск.
 
-Настройки Dock находятся в `%APPDATA%\AuraExplorer\Dock\config.json`; историческое имя папки сохранено для совместимости. Fences использует собственный профиль. Пользовательские данные не удаляются при удалении нового набора.
+Настройки Dock находятся в `%APPDATA%\AuraUI\Dock\config.json`; старые настройки могут быть перенесены при обновлении. Fences использует собственный профиль. Пользовательские данные не удаляются при удалении нового набора.
 
 ## Важно при переходе со старых версий
 
@@ -16,4 +16,4 @@ AuraUI — набор программ для рабочего стола Window
 
 ## Сборка
 
-Rust workspace содержит общие библиотеки и отдельные `aura-dock` и `aura-fences`. Для Windows требуется также соседний checkout `zsui` на версии из `packaging/zsui-revision.txt`. `scripts/package.ps1` собирает набор согласно `packaging/bundle.json`, создаёт manifest с SHA-256 и по возможности установщик Inno Setup. См. [docs/packaging.md](docs/packaging.md).
+Rust workspace содержит общие библиотеки и отдельные `aura-dock` и `aura-fences`. Для Windows требуется также соседний checkout `zsui` на версии из `packaging/zsui-revision.txt`. `scripts/package.ps1` собирает самостоятельный Dock согласно `packaging/bundle.json`; `scripts/package-fences.ps1` отдельно собирает Fences. Оба пакета имеют собственный установщик и manifest. См. [docs/packaging.md](docs/packaging.md).

@@ -108,24 +108,26 @@ for misleading in ("在 AuraFences 中打开", "打开 AuraFences 文件管理�
     if misleading in fences_host:
         fail(f"Fences menu promises an in-app target that is delegated elsewhere: {misleading}")
 
-# The integrated bundle builds Fences from its own Cargo package.
+# Dock and Fences have distinct payloads, processes and installer ownership.
 bundle = json.loads(read(ROOT / "packaging" / "bundle.json"))
-fences_entry = next((entry for entry in bundle["entries"] if entry["name"] == "Fences.exe"), None)
-if not fences_entry or not fences_entry.get("required"):
-    fail("Fences.exe is not a required integrated-bundle entry")
-if fences_entry.get("source") != {"kind": "cargo", "package": "aura-fences", "bin": "Fences"}:
-    fail("bundle.json does not build Fences.exe from aura-fences --bin Fences")
-package_script = read(ROOT / "scripts" / "package.ps1")
-if "source.kind -eq 'cargo'" not in package_script or "($bin + '.exe')" not in package_script:
-    fail("the generic bundle packager does not build/copy Cargo binaries by bundle.json")
+if any(entry["name"].lower() == "fences.exe" for entry in bundle["entries"]):
+    fail("Dock payload must not include Fences.exe")
+for path in (ROOT / "crates" / "aura-dock" / "src").rglob("*.rs"):
+    text = read(path)
+    if re.search(r"(?i)fences\.exe|aura-fences|launch_fences|start_fences", text):
+        fail(f"Dock has a direct Fences launch/dependency reference: {path}")
 install_helper = read(ROOT / "packaging" / "windows" / "install.ps1")
-if "'Fences.exe'" not in install_helper or "'Fences.lnk'" not in install_helper:
-    fail("suite install helper does not require and expose Fences.exe")
 aura_installer = read(ROOT / "packaging" / "windows" / "aura.iss")
-if 'Source: "{#SourceDir}\\Fences.exe"' not in aura_installer:
-    fail("AuraUI Inno installer does not include Fences.exe")
-if 'Filename: "{app}\\Fences.exe"; Parameters: "--enable-startup"' in aura_installer:
-    fail("suite installer should not automatically enable Fences startup")
+if "@('AuraDock.exe','widgets.exe')" not in install_helper:
+    fail("Dock script must require and remove only its own executables")
+if "'Fences.lnk'" in install_helper or "'AuraDock', 'aura-dock', 'Fences', 'widgets'" in install_helper:
+    fail("Dock installer must not manage Fences shortcuts or processes")
+if 'Source: "{#SourceDir}\\Fences.exe"' in aura_installer or 'Name: "{group}\\Fences"' in aura_installer:
+    fail("Dock installer must not install Fences")
+if 'CloseApplicationsFilter=AuraDock.exe,widgets.exe' not in aura_installer:
+    fail("Dock installer must not close Fences")
+if 'AppId={{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}' in aura_installer:
+    fail("Dock installer must not adopt the old combined product uninstall log")
 
 # Standalone Fences retains its own optional sign-in setting, without requiring Explorer or the service.
 fences_package = read(ROOT / "scripts" / "package-fences.ps1")
@@ -137,6 +139,10 @@ if 'CloseApplicationsFilter=Fences.exe' not in fences_installer or 'CloseApplica
 if '--enable-startup' not in fences_installer:
     fail("standalone Fences installer does not configure its own optional startup")
 standalone_install = read(ROOT / "packaging" / "windows" / "install-fences.ps1")
+if 'Remove-Item -LiteralPath $Dir -Recurse' in standalone_install:
+    fail("standalone Fences script must not recursively remove an arbitrary install directory")
+if "'AuraDock.exe'" not in standalone_install or "{app}\\AuraDock.exe" not in fences_installer:
+    fail("Fences installers must reject an occupied Dock directory")
 if "Remove-LegacyDesktopStartup" in standalone_install or "RemoveLegacyDesktopStartup" in fences_installer:
     fail("standalone Fences installer must not delete another application's startup entries")
 if "elseif ($Autostart) { Invoke-Fences '--enable-startup' }" not in standalone_install:

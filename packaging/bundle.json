@@ -1,8 +1,8 @@
 {
-  "product": "AuraUI",
+  "product": "AuraDock",
   "platform": "windows-x64",
   "version_from": "Cargo.toml",
-  "about": "Единственное описание того, что входит в сборку AuraUI. Из него собирает scripts/package.ps1, по нему проверяет scripts/verify-bundle.ps1, и эту же проверку зовёт CI. Добавил компонент — добавь строку сюда; проверка скажет, если строка разошлась с делом.",
+  "about": "Состав самостоятельного пакета AuraDock: Dock и его виджеты. Fences поставляется отдельно.",
   "entries": [
     {
       "name": "AuraDock.exe",
@@ -13,18 +13,6 @@
         "kind": "cargo",
         "package": "aura-dock",
         "bin": "aura-dock"
-      },
-      "required": true
-    },
-    {
-      "name": "Fences.exe",
-      "role": "desktop",
-      "title": "Сетки рабочего стола",
-      "note": "Standalone host for desktop and folder grids; own profile and process.",
-      "source": {
-        "kind": "cargo",
-        "package": "aura-fences",
-        "bin": "Fences"
       },
       "required": true
     },
@@ -44,7 +32,7 @@
       "name": "install.ps1",
       "role": "installer",
       "title": "Установка",
-      "note": "Установка для текущего пользователя; Dock запускается при входе, Fences — вручную.",
+      "note": "Устанавливает только Dock и widgets; Fences устанавливается отдельно.",
       "source": {
         "kind": "file",
         "path": "packaging/windows/install.ps1"

@@ -85,6 +85,11 @@ var
   ExitCode, I: Integer;
 begin
   Result := '';
+  if FileExists(ExpandConstant('{app}\AuraDock.exe')) then
+  begin
+    Result := 'Choose a separate Fences folder. AuraDock will not be modified.';
+    exit;
+  end;
   if FileExists(ExpandConstant('{app}\Fences.exe')) then
   begin
     ExtractTemporaryFile('Fences-update-helper.exe');

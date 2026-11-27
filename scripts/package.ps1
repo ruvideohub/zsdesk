@@ -73,7 +73,7 @@ $bundlePath = Join-Path $root 'packaging/bundle.json'
 if (-not (Test-Path -LiteralPath $bundlePath -PathType Leaf)) { throw "Нет описания набора: $bundlePath" }
 $description = Get-Content -LiteralPath $bundlePath -Raw -Encoding utf8 | ConvertFrom-Json
 $entries = @($description.entries)
-if (-not $StageDir) { $StageDir = Join-Path $root "releases\$version\AuraUI-$version-x64" }
+if (-not $StageDir) { $StageDir = Join-Path $root "releases\$version\AuraDock-$version-x64" }
 if (-not $OutputDir) { $OutputDir = Join-Path $root "releases\$version" }
 $StageDir = [IO.Path]::GetFullPath($StageDir)
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
@@ -163,7 +163,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Набор не прошёл проверку 
 # ------------------------------------------------------------------ zip
 if (-not $NoZip) {
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-    $zip = Join-Path $OutputDir ("AuraUI-$version-x64.zip")
+    $zip = Join-Path $OutputDir ("AuraDock-$version-x64.zip")
     if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
     Compress-Archive -Path (Join-Path $StageDir '*') -DestinationPath $zip -CompressionLevel Optimal
     $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -183,7 +183,7 @@ if ($InnoCompiler) {
     Write-Host "  установщик: $InnoCompiler"
     & $InnoCompiler "/DSourceDir=$StageDir" "/DOutputDir=$OutputDir" "/DMyAppVersion=$version" $iss
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup не собрал установщик' }
-    $setup = Join-Path $OutputDir ("AuraUI-$version-x64-setup.exe")
+    $setup = Join-Path $OutputDir ("AuraDock-$version-x64-setup.exe")
     if (Test-Path -LiteralPath $setup) {
         Write-Host "  установщик: $setup ($((Get-Item -LiteralPath $setup).Length) байт)"
     }

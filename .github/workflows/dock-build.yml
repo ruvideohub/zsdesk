@@ -140,9 +140,38 @@ jobs:
           # -ManifestOnly: набор уже разложен и подписан, его нельзя перезаписывать неподписанным.
           pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -ManifestOnly -StageDir dist -OutputDir installer -NoZip -InnoCompiler $iscc
           exit $LASTEXITCODE
+      - name: Smoke-test independent Dock installer
+        working-directory: aura
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem installer/AuraDock-*-x64-setup.exe | Select-Object -First 1).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'AuraDock independent smoke'
+          $fenceDir = Join-Path $env:RUNNER_TEMP 'Separate Fences sentinel'
+          New-Item -ItemType Directory -Force -Path $fenceDir | Out-Null
+          $sentinel = Join-Path $fenceDir 'Fences.exe'
+          [IO.File]::WriteAllText($sentinel, 'independent')
+          $p = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',"/DIR=`"$dir`"",'/TASKS=') -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Dock setup failed: $($p.ExitCode)" }
+          foreach ($name in @('AuraDock.exe','widgets.exe')) { if (-not (Test-Path (Join-Path $dir $name))) { throw "Missing $name" } }
+          if (Test-Path (Join-Path $dir 'Fences.exe')) { throw 'Dock installer installed Fences' }
+          $p = Start-Process -FilePath (Join-Path $dir 'unins000.exe') -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART') -Wait -PassThru
+          if ($p.ExitCode -ne 0 -or (Test-Path (Join-Path $dir 'AuraDock.exe'))) { throw 'Dock uninstall failed' }
+          if ([IO.File]::ReadAllText($sentinel) -ne 'independent') { throw 'Dock installer modified Fences' }
+      - name: Guard Fences script from removing a Dock directory
+        working-directory: aura
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'Dock directory sentinel'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $sentinel = Join-Path $dir 'AuraDock.exe'
+          [IO.File]::WriteAllText($sentinel, 'independent')
+          $script = (Resolve-Path packaging/windows/install-fences.ps1).Path
+          $p = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',"`"$script`"",'-Dir',"`"$dir`"",'-Remove') -Wait -PassThru -RedirectStandardOutput (Join-Path $env:RUNNER_TEMP 'fences-guard.out') -RedirectStandardError (Join-Path $env:RUNNER_TEMP 'fences-guard.err')
+          if ($p.ExitCode -eq 0) { throw 'Fences removal should reject the Dock directory' }
+          if ([IO.File]::ReadAllText($sentinel) -ne 'independent') { throw 'Fences script modified Dock' }
       - uses: actions/upload-artifact@v4
         with:
-          name: aura-ui-setup
+          name: aura-dock-setup
           path: aura/installer/*
           if-no-files-found: error
       # The tests run after the archive is uploaded, so the archive exists either way — but a

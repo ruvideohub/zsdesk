@@ -1,7 +1,7 @@
-﻿<# Install the verified AuraUI bundle for the current user. No profiles are deleted. #>
+﻿<# Install the verified standalone AuraDock bundle for the current user. No profiles are deleted. #>
 [CmdletBinding()]
 param(
-    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\AuraUI'),
+    [string]$Dir = (Join-Path $env:LOCALAPPDATA 'Programs\AuraDock'),
     [switch]$NoAutostart,
     [switch]$PanelOnly, # compatibility: only Dock is automatic in this version
     [switch]$DesktopShortcut,
@@ -18,7 +18,7 @@ $RunName = 'AuraDock'
 $Command = '"{0}"' -f $Dock
 $Programs = [Environment]::GetFolderPath('Programs')
 $Desktop = [Environment]::GetFolderPath('Desktop')
-$Group = if ($Programs) { Join-Path $Programs 'AuraUI' } else { $null }
+$Group = if ($Programs) { Join-Path $Programs 'AuraDock' } else { $null }
 
 function Get-DockStartup {
     $key = Get-Item -LiteralPath $RunKey -ErrorAction SilentlyContinue
@@ -56,7 +56,7 @@ function New-OwnShortcut([string]$path, [string]$target, [string]$arguments) {
     } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
 }
 function Assert-NotRunning {
-    foreach ($name in @('AuraDock', 'aura-dock', 'Fences', 'widgets')) {
+    foreach ($name in @('AuraDock', 'aura-dock', 'widgets')) {
         foreach ($process in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
             try { $path = $process.Path } catch { $path = $null }
             if ($path -and [IO.Path]::GetDirectoryName($path).Equals($Dir, [StringComparison]::OrdinalIgnoreCase)) {
@@ -81,7 +81,6 @@ $shortcuts = @()
 if ($Group) {
     $shortcuts += @{Path=(Join-Path $Group 'AuraDock.lnk'); Target=$Dock; Args=''}
     $shortcuts += @{Path=(Join-Path $Group 'AuraDock Settings.lnk'); Target=$Dock; Args='--settings'}
-    $shortcuts += @{Path=(Join-Path $Group 'Fences.lnk'); Target=(Join-Path $Dir 'Fences.exe'); Args=''}
 }
 if ($Desktop) { $desktopLink = Join-Path $Desktop 'AuraDock.lnk' } else { $desktopLink = $null }
 
@@ -91,14 +90,14 @@ if ($Remove) {
     $installedManifest = Join-Path $Dir 'manifest.json'
     if (-not (Test-Path -LiteralPath $installedManifest -PathType Leaf)) { throw 'Нет манифеста установленного AuraUI; файлы и ярлыки не удалены.' }
     $receipt = Get-Content -LiteralPath $installedManifest -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($receipt.product -ne 'AuraUI' -or $null -eq $receipt.files) { throw 'Манифест установленного AuraUI неверен; файлы и ярлыки не удалены.' }
+    if ($receipt.product -ne 'AuraDock' -or $null -eq $receipt.files) { throw 'Манифест установленного AuraUI неверен; файлы и ярлыки не удалены.' }
     $current = Get-DockStartup
     if (Test-OwnStartup $current) { Remove-ItemProperty -LiteralPath $RunKey -Name $RunName }
     foreach ($shortcut in $shortcuts) { Remove-OwnShortcut $shortcut.Path $shortcut.Target }
     Remove-OwnShortcut $desktopLink $Dock
     # Only delete files exactly matching this installation receipt. Keep modified files,
     # scripts, licenses, the manifest and all unknown/user-owned files.
-    foreach ($name in @('AuraDock.exe','Fences.exe','widgets.exe')) {
+    foreach ($name in @('AuraDock.exe','widgets.exe')) {
         $path = Join-Path $Dir $name
         $record = $receipt.files.PSObject.Properties[$name]
         if ($record -and (Test-Path -LiteralPath $path -PathType Leaf)) {
@@ -114,19 +113,25 @@ if ($Remove) {
 
 Assert-NoLegacyInstall
 Assert-NotRunning
+# A separate directory keeps old combined uninstall logs and Fences untouched.
+$legacyDir = [IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'Programs\AuraUI')).TrimEnd('\')
+if ($Dir.Equals($legacyDir, [StringComparison]::OrdinalIgnoreCase) -or (Test-Path -LiteralPath (Join-Path $Dir 'Fences.exe'))) {
+    throw 'Выберите отдельную папку AuraDock; старая совместная установка и Fences не изменены.'
+}
 $current = Get-DockStartup
 if ($null -ne $current -and -not (Test-OwnStartup $current)) { throw 'Запись AuraDock принадлежит другой установке и не изменена.' }
-$required = @('AuraDock.exe','Fences.exe','widgets.exe')
+$required = @('AuraDock.exe','widgets.exe')
 $manifestPath = Join-Path $Source 'manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'Нет manifest.json: установка неполного набора запрещена.' }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-if ($manifest.product -ne 'AuraUI' -or $null -eq $manifest.files) { throw 'Неверный манифест набора.' }
+if ($manifest.product -ne 'AuraDock' -or $null -eq $manifest.files) { throw 'Неверный манифест набора.' }
 $records = @($manifest.files.PSObject.Properties)
 foreach ($name in $required) {
     if ($records.Name -notcontains $name) { throw "Нет $name в манифесте." }
 }
 foreach ($entry in $records) {
     $relative = [string]$entry.Name
+    if ($relative -match '(?i)\.exe$' -and $relative -notin $required) { throw "Посторонний исполняемый файл в манифесте: $relative" }
     if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)' -or $relative -match ':') { throw "Недопустимый путь в манифесте: $relative" }
     $path = [IO.Path]::GetFullPath((Join-Path $Source $relative))
     if (-not $path.StartsWith($Source + '\', [StringComparison]::OrdinalIgnoreCase) -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Файл отсутствует: $relative" }
@@ -157,4 +162,4 @@ if ($Group) {
 }
 if ($DesktopShortcut -and $desktopLink) { New-OwnShortcut $desktopLink $Dock '' }
 if (-not $NoStart) { Start-Process -FilePath $Dock -WorkingDirectory $Dir }
-Write-Host 'AuraUI установлен. Dock запускается при входе, Fences запускается вручную.' -ForegroundColor Green
+Write-Host 'AuraDock установлен; Fences устанавливается и запускается отдельно.' -ForegroundColor Green

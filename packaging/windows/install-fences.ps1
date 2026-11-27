@@ -30,6 +30,12 @@ if (-not $Source) { $Source = (Get-Location).Path }
 if (-not $Dir) { throw 'No install directory was supplied and LOCALAPPDATA is empty.' }
 $Exe = Join-Path $Dir 'Fences.exe'
 $SourceExe = Join-Path $Source 'Fences.exe'
+# Never install over or remove the Dock, even when a custom directory is supplied.
+if (Test-Path -LiteralPath (Join-Path $Dir 'AuraDock.exe') -PathType Leaf) {
+    throw 'Choose a separate Fences directory; AuraDock will not be modified.'
+}
+$Receipt = Join-Path $Dir 'fences-manifest.json'
+
 $Programs = [Environment]::GetFolderPath('Programs')
 $DesktopDir = [Environment]::GetFolderPath('Desktop')
 $StartMenu = if ($Programs) { Join-Path $Programs 'Fences.lnk' } else { $null }
@@ -63,7 +69,14 @@ function Invoke-Fences([string]$Argument) {
 }
 
 function Remove-Shortcut([string]$Path) {
-    if ($Path -and (Test-Path -LiteralPath $Path)) { Remove-Item -LiteralPath $Path -Force }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        $link = $shell.CreateShortcut($Path)
+        try {
+            if ([string]::Equals($link.TargetPath, $Exe, [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $Path -Force }
+        } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($link) }
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
 }
 
 function New-Shortcut([string]$Path, [string]$Target) {
@@ -72,6 +85,9 @@ function New-Shortcut([string]$Path, [string]$Target) {
     $link = $null
     try {
         $link = $shell.CreateShortcut($Path)
+        if ((Test-Path -LiteralPath $Path) -and -not [string]::Equals($link.TargetPath, $Target, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Another application's shortcut was not replaced: $Path"
+        }
         $link.TargetPath = $Target
         $link.WorkingDirectory = Split-Path -Parent $Target
         $link.IconLocation = "$Target,0"
@@ -84,17 +100,50 @@ function New-Shortcut([string]$Path, [string]$Target) {
 }
 
 if ($Remove) {
+    # No recursive directory deletion: only remove files recorded by a Fences receipt,
+    # and only if their hashes still match. Old installations without a receipt stay intact.
+    $receiptPath = $Receipt
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { $receiptPath = Join-Path $Dir 'manifest.json' }
+    if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf)) { throw 'No Fences receipt; files and startup were not changed.' }
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($receipt.product -ne 'Fences' -or -not $receipt.standalone -or $null -eq $receipt.files) { throw 'Invalid Fences receipt; files and startup were not changed.' }
+    $exeRecord = $receipt.files.PSObject.Properties['Fences.exe']
+    if ((Test-Path -LiteralPath $Exe -PathType Leaf) -and
+        (-not $exeRecord -or (Get-Item -LiteralPath $Exe).Length -ne [int64]$exeRecord.Value.bytes -or
+        (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash -ne [string]$exeRecord.Value.sha256)) {
+        throw 'Fences executable differs from its receipt; startup and files were not changed.'
+    }
     Stop-Fences
     Invoke-Fences '--uninstall-startup'
     Remove-Shortcut $StartMenu
     Remove-Shortcut $DesktopLink
-    if (Test-Path -LiteralPath $Dir) { Remove-Item -LiteralPath $Dir -Recurse -Force }
-    Write-Host 'Fences was removed. User settings remain in %APPDATA%\AuraFences.' -ForegroundColor Green
+    foreach ($name in @('Fences.exe','msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
+        $path = Join-Path $Dir $name
+        $record = $receipt.files.PSObject.Properties[$name]
+        if ($record -and (Test-Path -LiteralPath $path -PathType Leaf)) {
+            if ((Get-Item -LiteralPath $path).Length -eq [int64]$record.Value.bytes -and
+                (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash -eq [string]$record.Value.sha256) {
+                Remove-Item -LiteralPath $path -Force
+            } else { Write-Warning "Modified file preserved: $path" }
+        }
+    }
+    Write-Host 'Fences was removed; profiles and other files were preserved.' -ForegroundColor Green
     return
 }
 
 if (-not (Test-Path -LiteralPath $SourceExe -PathType Leaf)) {
     throw 'Fences.exe is missing. Run this script from the extracted standalone Fences package.'
+}
+$sourceManifest = Join-Path $Source 'manifest.json'
+if (-not (Test-Path -LiteralPath $sourceManifest -PathType Leaf)) { throw 'Missing Fences package manifest.' }
+$manifest = Get-Content -LiteralPath $sourceManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($manifest.product -ne 'Fences' -or -not $manifest.standalone -or $null -eq $manifest.files) { throw 'Invalid Fences package manifest.' }
+foreach ($name in @('Fences.exe','msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
+    $file = Join-Path $Source $name
+    $entry = $manifest.files.PSObject.Properties[$name]
+    if (-not $entry -or -not (Test-Path -LiteralPath $file -PathType Leaf) -or
+        (Get-Item -LiteralPath $file).Length -ne [int64]$entry.Value.bytes -or
+        (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne [string]$entry.Value.sha256) { throw "Fences package file missing or modified: $name" }
 }
 $SameFolder = [IO.Path]::GetFullPath($Source).TrimEnd('\') -ieq [IO.Path]::GetFullPath($Dir).TrimEnd('\')
 if (-not $SameFolder) { Stop-Fences }
@@ -104,6 +153,7 @@ foreach ($name in @('msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll')) {
     $from = Join-Path $Source $name
     if ((Test-Path -LiteralPath $from -PathType Leaf) -and -not $SameFolder) { Copy-Item -LiteralPath $from -Destination $Dir -Force }
 }
+Copy-Item -LiteralPath $sourceManifest -Destination $Receipt -Force
 try { Get-ChildItem -LiteralPath $Dir -Filter '*.exe' | Unblock-File -ErrorAction SilentlyContinue } catch { }
 New-Shortcut $StartMenu $Exe
 if ($DesktopShortcut) { New-Shortcut $DesktopLink $Exe }

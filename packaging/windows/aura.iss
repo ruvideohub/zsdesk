@@ -1,4 +1,4 @@
-; AuraUI: Dock, desktop widgets and standalone Fences. The payload is verified by package.ps1.
+; Standalone AuraDock and its desktop widgets; Fences has a separate installer.
 #ifndef SourceDir
 #error SourceDir must point to a verified AuraUI payload
 #endif
@@ -8,26 +8,26 @@
 #ifndef MyAppVersion
 #error MyAppVersion is required
 #endif
-#if !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\Fences.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\manifest.json")
-#error AuraDock.exe, Fences.exe, widgets.exe and manifest.json are required
+#if !FileExists(SourceDir + "\AuraDock.exe") || !FileExists(SourceDir + "\widgets.exe") || !FileExists(SourceDir + "\manifest.json")
+#error AuraDock.exe, widgets.exe and manifest.json are required
 #endif
 
 [Setup]
-AppId={{B7C0F4C2-6E1B-4E52-9E4E-6A0F1C2D3A41}
-AppName=AuraUI
+AppId={{A84A62E5-9820-4618-B7B9-2358BE8F2AF8}
+AppName=AuraDock
 AppVersion={#MyAppVersion}
-AppVerName=AuraUI {#MyAppVersion}
+AppVerName=AuraDock {#MyAppVersion}
 AppPublisher=AuraUI contributors
 AppPublisherURL=https://github.com/ruvideohub/zsdesk
 AppSupportURL=https://github.com/ruvideohub/zsdesk/issues
-DefaultDirName={localappdata}\Programs\AuraUI
-DefaultGroupName=AuraUI
+DefaultDirName={localappdata}\Programs\AuraDock
+DefaultGroupName=AuraDock
 AllowNoIcons=yes
 UsePreviousAppDir=yes
 DisableProgramGroupPage=yes
 DisableWelcomePage=yes
 OutputDir={#OutputDir}
-OutputBaseFilename=AuraUI-{#MyAppVersion}-x64-setup
+OutputBaseFilename=AuraDock-{#MyAppVersion}-x64-setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -38,7 +38,7 @@ MinVersion=10.0.18362
 SetupIconFile=..\..\crates\aura-dock\resources\aura-dock.ico
 UninstallDisplayIcon={app}\AuraDock.exe
 CloseApplications=yes
-CloseApplicationsFilter=AuraDock.exe,Fences.exe,widgets.exe
+CloseApplicationsFilter=AuraDock.exe,widgets.exe
 RestartApplications=no
 
 [Languages]
@@ -51,7 +51,6 @@ Name: "autostart"; Description: "Start Dock when I sign in to Windows"; GroupDes
 
 [Files]
 Source: "{#SourceDir}\AuraDock.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\Fences.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\widgets.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\manifest.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\install.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -64,8 +63,7 @@ Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversi
 [Icons]
 Name: "{group}\AuraDock"; Filename: "{app}\AuraDock.exe"
 Name: "{group}\AuraDock Settings"; Filename: "{app}\AuraDock.exe"; Parameters: "--settings"
-Name: "{group}\Fences"; Filename: "{app}\Fences.exe"
-Name: "{group}\Uninstall AuraUI"; Filename: "{uninstallexe}"
+Name: "{group}\Uninstall AuraDock"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\AuraDock"; Filename: "{app}\AuraDock.exe"; Tasks: desktopicon
 
 [Run]
@@ -91,6 +89,13 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var Value: String;
 begin
   Result := '';
+  { Never reuse a directory belonging to the old combined product or another Fences install. }
+  if FileExists(ExpandConstant('{app}\Fences.exe')) or
+     (CompareText(ExpandConstant('{app}'), ExpandConstant('{localappdata}\Programs\AuraUI')) = 0) then
+  begin
+    Result := 'Choose a separate AuraDock folder. The old combined installation and Fences are not modified.';
+    exit;
+  end;
   { Previous Explorer versions could own folder-opening registry values. Never delete or
     overwrite their binary before their own uninstaller has restored those associations. }
   if FileExists(ExpandConstant('{app}\AuraExplorer.exe')) or
