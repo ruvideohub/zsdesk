@@ -33,6 +33,13 @@ fn fnv(s: &str) -> u64 {
     h
 }
 
+fn cache_file(dir: &std::path::Path, id: &str) -> PathBuf {
+    // Old shortcut PNGs could be generic web icons. Refresh only .url cache
+    // entries, keeping all other cached application icons intact.
+    let version = if id.to_ascii_lowercase().ends_with(".url") { "v3" } else { "v2" };
+    dir.join(format!("{version}-{:016x}.png", fnv(id)))
+}
+
 impl IconCache {
     pub fn open() -> Self {
         let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
@@ -63,7 +70,7 @@ impl IconCache {
     }
 
     fn file(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("v2-{:016x}.png", fnv(id)))
+        cache_file(&self.dir, id)
     }
 
     /// Decode a cached icon without ever asking the shell (fast; for Launchpad tiles).
@@ -118,14 +125,32 @@ impl IconCache {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn internet_shortcuts_refresh_old_generic_icons_without_invalidating_other_apps() {
+        let dir = std::path::Path::new("cache");
+        let shortcut = cache_file(dir, r"C:\Games\Portal.URL");
+        let app = cache_file(dir, r"C:\Games\Portal.exe");
+        assert!(shortcut.file_name().unwrap().to_string_lossy().starts_with("v3-"));
+        assert!(app.file_name().unwrap().to_string_lossy().starts_with("v2-"));
+        assert_eq!(shortcut, cache_file(dir, r"c:\games\portal.url"));
+    }
+}
+
 /// Off the UI thread: ask the shell for an app's icon and save it into the cache folder.
 /// Returns the display name. Used by the background worker for Launchpad's many apps.
 pub fn extract_to_cache(wic: &IWICImagingFactory, dir: &std::path::Path, id: &str) -> Option<String> {
-    let file = dir.join(format!("v2-{:016x}.png", fnv(id)));
+    let file = cache_file(dir, id);
     let (name, hbmp) = apps::extract(id)?;
-    if !file.exists() {
+    if decode(wic, &file).is_err() {
         let bmp = icon_bitmap(wic, hbmp)?;
-        encode(wic, &bmp, &file).ok()?;
+        if encode(wic, &bmp, &file).is_err() {
+            // A partial cache entry must not masquerade as a valid PNG later.
+            let _ = std::fs::remove_file(&file);
+            return None;
+        }
     } else {
         unsafe {
             let _ = DeleteObject(hbmp.into());

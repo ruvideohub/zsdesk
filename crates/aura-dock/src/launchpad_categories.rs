@@ -13,6 +13,9 @@ pub fn category<'a>(name: &str, id: &str, assigned: Option<&'a str>) -> &'a str 
     }
     let name = name.to_lowercase();
     let id = id.to_lowercase();
+    // The installed-app collector admits .url entries only after verifying
+    // that they are Steam game shortcuts; ordinary web links are filtered.
+    if id.ends_with(".url") { return "games"; }
     let text = format!("{name} {id}");
     let any = |terms: &[&str]| terms.iter().any(|term| text.contains(term));
     if any(&["telegram", "discord", "lolka", "whatsapp", "signal", "skype", "teams", "zoom", "slack"]) { "communication" }
@@ -71,5 +74,7 @@ mod tests {
         assert_eq!(category("Unknown", "foo", None), "other");
         assert_eq!(category("Steam", "steam.exe", Some("media")), "media");
         assert_eq!(category("Steam", "steam.exe", Some("invalid")), "games");
+        assert_eq!(category("Portal", r"C:\Users\User\Desktop\Portal.URL", None), "games");
+        assert_eq!(category("Portal", r"C:\Users\User\Desktop\Portal.url", Some("other")), "other");
     }
 }

@@ -35,7 +35,7 @@ pub enum Power {
 }
 
 pub enum Req {
-    Apps,
+    Apps(Vec<String>),
     Files(u64, String),
     Control,
     Stats,
@@ -178,7 +178,7 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
         let newest_files = batch.iter().rposition(|r| matches!(r, Req::Files(..)));
         for (i, req) in batch.into_iter().enumerate() {
             match req {
-                Req::Apps => post(Reply::Apps(laminar_sys::apps::installed_apps())),
+                Req::Apps(pins) => post(Reply::Apps(laminar_sys::apps::installed_apps_with_shortcuts(&pins))),
                 Req::Files(gen, q) => {
                     if Some(i) == newest_files {
                         let hits = laminar_sys::files::search_files(&q, 6);

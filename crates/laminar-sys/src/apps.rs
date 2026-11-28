@@ -11,9 +11,11 @@
 
 use crate::util::{take_pwstr, wide};
 use serde::{Deserialize, Serialize};
-use windows::core::PCWSTR;
+use windows::core::{GUID, PCWSTR};
 use windows::Win32::System::Com::IBindCtx;
-use windows::Win32::UI::Shell::{IEnumShellItems, IShellItem, SHCreateItemFromParsingName, BHID_EnumItems, SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING};
+use windows::Win32::UI::Shell::{IEnumShellItems, IShellItem, SHCreateItemFromParsingName, SHGetKnownFolderPath, BHID_EnumItems,
+    FOLDERID_Desktop, FOLDERID_PublicDesktop, FOLDERID_Programs, FOLDERID_CommonPrograms, KF_FLAG_DEFAULT,
+    SIGDN_NORMALDISPLAY, SIGDN_PARENTRELATIVEPARSING};
 
 /// One launchable entry from "All apps".
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,15 +28,41 @@ pub struct AppEntry {
 }
 
 /// Enumerates `shell:AppsFolder`, filters obvious non-apps (uninstallers, readmes, help
-/// files, web links), sorts by name (case-insensitive) and dedupes by id.
-/// Typically 50-300 ms cold. Returns an empty list on failure.
+/// files, web links), adds verified local Steam game shortcuts, sorts by name
+/// and dedupes by id. If AppsFolder fails, discovered shortcuts can still appear.
+/// Called on the background worker; local shortcut discovery is bounded.
 pub fn installed_apps() -> Vec<AppEntry> {
+    installed_apps_with_shortcuts(&[])
+}
+
+/// Include verified local Steam shortcuts already pinned on Dock, even when
+/// they live outside Desktop/Start Menu. This does not alter either pin list.
+pub fn installed_apps_with_shortcuts(pinned: &[String]) -> Vec<AppEntry> {
     let mut out = enumerate().unwrap_or_default();
     out.retain(|a| !is_junk(a));
+    // Steam game shortcuts are .url files, which AppsFolder may omit and the
+    // generic web-link filter correctly rejects. Include only verified Steam
+    // game shortcuts from local Desktop and Start Menu folders, never web URLs.
+    let roots = [(FOLDERID_Desktop, 0), (FOLDERID_PublicDesktop, 0),
+        (FOLDERID_Programs, 6), (FOLDERID_CommonPrograms, 6)]
+        .into_iter().filter_map(|(folder, depth)| local_known_folder(&folder).map(|p| (p, depth))).collect::<Vec<_>>();
+    let pinned = pinned.iter().take(512).map(std::path::PathBuf::from).collect::<Vec<_>>();
+    out.extend(crate::steam_discovery::scan(&roots, &pinned).into_iter().filter_map(|game| {
+        game.path.to_str().map(|path| AppEntry { id: path.to_owned(), name: game.name })
+    }));
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
     let mut seen = std::collections::HashSet::new();
     out.retain(|a| seen.insert(a.id.to_lowercase()));
     out
+}
+
+fn local_known_folder(folder: &GUID) -> Option<std::path::PathBuf> {
+    let path = unsafe { SHGetKnownFolderPath(folder, KF_FLAG_DEFAULT, None).ok().map(take_pwstr) }?;
+    // Avoid blocking enumeration on UNC/network paths. Other AppsFolder entries
+    // are still shown if the user's known folder is redirected to a share.
+    if path.starts_with("\\\\") || path.starts_with("//") { return None; }
+    let path = std::path::PathBuf::from(path);
+    path.is_absolute().then_some(path)
 }
 
 fn enumerate() -> windows::core::Result<Vec<AppEntry>> {

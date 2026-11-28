@@ -24,9 +24,16 @@ pub fn parse(text: &str) -> Option<Shortcut> {
 /// Cap shortcut size and accept UTF-8 or Windows UTF-16LE INI files.
 pub fn read(path:&Path)->Option<Shortcut>{
     if !path.extension().is_some_and(|ext|ext.eq_ignore_ascii_case("url")) { return None; }
+    use std::io::Read;
     let meta=std::fs::symlink_metadata(path).ok()?;
     if !meta.is_file() || meta.len()>128*1024 { return None; }
-    let bytes=std::fs::read(path).ok()?;
+    #[cfg(windows)] {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 { return None; }
+    }
+    let mut bytes=Vec::new();
+    std::fs::File::open(path).ok()?.take(128*1024+1).read_to_end(&mut bytes).ok()?;
+    if bytes.len()>128*1024 { return None; }
     let text=if bytes.starts_with(&[0xff,0xfe]) {
         if bytes.len()%2!=0{return None;}
         String::from_utf16(&bytes[2..].chunks_exact(2).map(|p|u16::from_le_bytes([p[0],p[1]])).collect::<Vec<_>>()).ok()?

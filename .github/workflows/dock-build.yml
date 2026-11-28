@@ -304,6 +304,15 @@ jobs:
           $output | ForEach-Object { Write-Host $_ }
           if ($code -ne 0) { exit $code }
           if (-not ($output | Select-String -SimpleMatch '1 passed; 0 failed')) { throw 'Native shadow test did not execute' }
+      - name: Steam shortcut discovery tests
+        shell: pwsh
+        working-directory: aura
+        run: |
+          $tests = cargo test --locked --release -p laminar-sys --lib steam_discovery::tests -- --list
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not ($tests | Select-String -SimpleMatch 'steam_discovery::tests::only_real_steam_games_are_included_and_duplicate_appids_coalesce')) { throw 'Steam discovery tests were not discovered' }
+          cargo test --locked --release -p laminar-sys --lib steam_discovery::tests
+          exit $LASTEXITCODE
       - name: Fences replacement taskbar regression (private desktop)
         shell: pwsh
         working-directory: aura

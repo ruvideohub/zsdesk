@@ -3693,6 +3693,16 @@ impl Dock {
 
     // ---------------------------------------------------------------- Launchpad
 
+    /// Explicit Dock shortcuts can also be discovered as Steam games in All
+    /// Apps. This only supplies scan candidates; Launchpad pins stay separate.
+    fn steam_pin_candidates(&self) -> Vec<String> {
+        self.cfg.pins.iter().flat_map(|pin| match pin {
+            Pin::Id(id) => std::slice::from_ref(id),
+            Pin::Stack { apps, .. } => apps.as_slice(),
+            Pin::Widget { .. } => &[],
+        }).take(512).cloned().collect()
+    }
+
     /// Apps listed under "Pinned" in Launchpad.
     fn lp_pinned(&self) -> Vec<String> {
         self.cfg.launchpad_pins.clone()
@@ -4215,7 +4225,7 @@ impl Dock {
             self.services.send(Req::Update);
         }
         if self.lp_apps.is_empty() {
-            self.services.send(Req::Apps);
+            self.services.send(Req::Apps(self.steam_pin_candidates()));
         }
         let pinned = self.lp_pinned();
         let mut needed = pinned.clone();
@@ -7245,7 +7255,7 @@ pub fn run(opts: Options, started: Instant) -> Result<()> {
         dock._preview_drop = crate::filedrop::register(dock.preview.hwnd(), preview_drop_callback).ok();
         dock.apply_system();
         // Warm up Launchpad data in the background; refresh the weather every 30 minutes.
-        dock.services.send(Req::Apps);
+        dock.services.send(Req::Apps(dock.steam_pin_candidates()));
         dock.services.send(Req::Weather(dock.cfg.weather_lat, dock.cfg.weather_lon));
         dock.services.send(Req::Control);
         SetTimer(Some(hwnd), T_WEATHER, 30 * 60 * 1000, None);
