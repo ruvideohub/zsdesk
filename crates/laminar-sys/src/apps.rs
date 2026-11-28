@@ -25,6 +25,10 @@ pub struct AppEntry {
     pub id: String,
     /// Display name as shown in Start.
     pub name: String,
+    /// Optional icon source for a Shell entry with a matching Steam shortcut.
+    /// The launch identity and stored user preferences still use `id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon_source: Option<String>,
 }
 
 /// Enumerates `shell:AppsFolder`, filters obvious non-apps (uninstallers, readmes, help
@@ -38,6 +42,13 @@ pub fn installed_apps() -> Vec<AppEntry> {
 /// Include verified local Steam shortcuts already pinned on Dock, even when
 /// they live outside Desktop/Start Menu. This does not alter either pin list.
 pub fn installed_apps_with_shortcuts(pinned: &[String]) -> Vec<AppEntry> {
+    installed_apps_with_icon_probe(pinned, |_| None)
+}
+
+/// `icon_missing` is consulted only for a unique exact-name match with no
+/// stronger Steam identity. None means the icon could not be inspected and
+/// keeps potentially distinct apps separate.
+pub fn installed_apps_with_icon_probe(pinned: &[String], icon_missing: impl FnMut(&str) -> Option<bool>) -> Vec<AppEntry> {
     let mut out = enumerate().unwrap_or_default();
     out.retain(|a| !is_junk(a));
     // Steam game shortcuts are .url files, which AppsFolder may omit and the
@@ -47,9 +58,8 @@ pub fn installed_apps_with_shortcuts(pinned: &[String]) -> Vec<AppEntry> {
         (FOLDERID_Programs, 6), (FOLDERID_CommonPrograms, 6)]
         .into_iter().filter_map(|(folder, depth)| local_known_folder(&folder).map(|p| (p, depth))).collect::<Vec<_>>();
     let pinned = pinned.iter().take(512).map(std::path::PathBuf::from).collect::<Vec<_>>();
-    out.extend(crate::steam_discovery::scan(&roots, &pinned).into_iter().filter_map(|game| {
-        game.path.to_str().map(|path| AppEntry { id: path.to_owned(), name: game.name })
-    }));
+    let games = crate::steam_discovery::scan(&roots, &pinned);
+    crate::steam_merge::merge(&mut out, games, icon_missing);
     out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()).then_with(|| a.id.cmp(&b.id)));
     let mut seen = std::collections::HashSet::new();
     out.retain(|a| seen.insert(a.id.to_lowercase()));
@@ -81,7 +91,7 @@ fn enumerate() -> windows::core::Result<Vec<AppEntry>> {
                 let id = item.GetDisplayName(SIGDN_PARENTRELATIVEPARSING).map(take_pwstr).unwrap_or_default();
                 let name = item.GetDisplayName(SIGDN_NORMALDISPLAY).map(take_pwstr).unwrap_or_default();
                 if !id.is_empty() && !name.trim().is_empty() {
-                    out.push(AppEntry { id, name: name.trim().to_string() });
+                    out.push(AppEntry { id, name: name.trim().to_string(), icon_source: None });
                 }
             }
         }
@@ -118,7 +128,7 @@ fn is_junk(a: &AppEntry) -> bool {
 mod tests {
     use super::*;
     fn e(id: &str, name: &str) -> AppEntry {
-        AppEntry { id: id.into(), name: name.into() }
+        AppEntry { id: id.into(), name: name.into(), icon_source: None }
     }
     #[test]
     fn junk_filter() {

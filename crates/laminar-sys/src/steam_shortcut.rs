@@ -15,10 +15,16 @@ pub fn parse(text: &str) -> Option<Shortcut> {
         else if key.trim().eq_ignore_ascii_case("IconFile") && !value.is_empty() { icon=Some(PathBuf::from(value)); }
         else if key.trim().eq_ignore_ascii_case("IconIndex") { index=value.parse().unwrap_or(0); }
     }
-    let url=url?; let lower=url.to_ascii_lowercase();
-    let appid=lower.strip_prefix("steam://rungameid/").or_else(||lower.strip_prefix("steam://run/"))?;
-    if appid.is_empty() || !appid.bytes().all(|c|c.is_ascii_digit()) { return None; }
+    let appid = game_id(url?)?;
     Some(Shortcut{appid:appid.to_owned(),icon_file:icon,icon_index:index})
+}
+
+/// Recognize only complete Steam game URLs, not arbitrary Steam commands.
+pub fn game_id(url: &str) -> Option<&str> {
+    let prefix = ["steam://rungameid/", "steam://run/"]
+        .iter().find(|prefix| url.get(..prefix.len()).is_some_and(|head| head.eq_ignore_ascii_case(prefix)))?;
+    let id = &url[prefix.len()..];
+    (!id.is_empty() && id.bytes().all(|c| c.is_ascii_digit())).then_some(id)
 }
 
 /// Cap shortcut size and accept UTF-8 or Windows UTF-16LE INI files.

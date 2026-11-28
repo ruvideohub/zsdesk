@@ -159,6 +159,20 @@ pub fn extract_to_cache(wic: &IWICImagingFactory, dir: &std::path::Path, id: &st
     Some(name)
 }
 
+/// Probe only a unique possible Steam duplicate, on the worker thread. If WIC
+/// itself cannot inspect an icon, do not infer that two apps are identical.
+pub fn icon_missing(wic: &IWICImagingFactory, id: &str) -> Option<bool> {
+    let Some((_, hbmp)) = apps::extract(id) else { return Some(true) };
+    let bitmap = icon_bitmap(wic, hbmp)?;
+    let src = to_pbgra(wic, &bitmap.into()).ok()?;
+    let (mut width, mut height) = (0, 0);
+    unsafe { src.GetSize(&mut width, &mut height).ok()?; }
+    if width == 0 || height == 0 || width > 2048 || height > 2048 { return None; }
+    let mut pixels = vec![0; width as usize * height as usize * 4];
+    unsafe { src.CopyPixels(std::ptr::null(), width * 4, &mut pixels).ok()?; }
+    Some(!pixels.chunks_exact(4).any(|p| p[3] != 0))
+}
+
 /// Render a Shell bitmap, correcting only egregious transparent-canvas padding.
 fn icon_bitmap(wic: &IWICImagingFactory, hbmp: windows::Win32::Graphics::Gdi::HBITMAP) -> Option<IWICBitmap> {
     let result = unsafe { wic.CreateBitmapFromHBITMAP(hbmp, HPALETTE::default(), WICBitmapUseAlpha).ok() };

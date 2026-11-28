@@ -312,6 +312,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not ($tests | Select-String -SimpleMatch 'steam_discovery::tests::only_real_steam_games_are_included_and_duplicate_appids_coalesce')) { throw 'Steam discovery tests were not discovered' }
           cargo test --locked --release -p laminar-sys --lib steam_discovery::tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = cargo test --locked --release -p laminar-sys --lib steam_merge::tests -- --list
+          if ($LASTEXITCODE -ne 0 -or -not ($tests | Select-String -SimpleMatch 'steam_merge::tests::unique_unrenderable_shell_entry_reuses_the_game_icon')) { throw 'Steam merge tests were not discovered' }
+          cargo test --locked --release -p laminar-sys --lib steam_merge::tests
           exit $LASTEXITCODE
       - name: Fences replacement taskbar regression (private desktop)
         shell: pwsh

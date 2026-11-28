@@ -34,6 +34,15 @@ pub fn contains(selected: &str, name: &str, id: &str, assigned: Option<&str>, ad
     added.iter().any(|value| value == id) || category(name, id, assigned) == selected
 }
 
+/// An existing Shell ID and its Steam shortcut may both have saved category
+/// settings. Honor either without changing the stored lists or overrides.
+pub fn contains_alias(selected: &str, name: &str, id: &str, alias: Option<&str>, assigned: Option<&str>, added: &[String], excluded: &[String]) -> bool {
+    let matches = |value: &str| value == id || alias.is_some_and(|other| value == other);
+    if excluded.iter().any(|v| matches(v)) { return false; }
+    if added.iter().any(|v| matches(v)) { return true; }
+    category(name, alias.unwrap_or(id), assigned) == selected
+}
+
 pub fn set_membership(id: &str, member: bool, added: &mut Vec<String>, excluded: &mut Vec<String>) {
     added.retain(|v| v != id);
     excluded.retain(|v| v != id);
@@ -59,6 +68,14 @@ mod tests {
         set_membership("tg", true, &mut added, &mut excluded);
         assert!(contains("communication", "Telegram", "tg", None, &added, &excluded));
         assert!(contains("custom:1", "Telegram", "tg", None, &added, &excluded));
+    }
+    #[test]
+    fn steam_alias_keeps_user_membership_and_exclusion() {
+        let added = vec!["shortcut.url".to_string()];
+        assert!(contains_alias("custom:1", "Portal", "original", Some("shortcut.url"), None, &added, &[]));
+        assert!(!contains_alias("custom:1", "Portal", "original", Some("shortcut.url"), None, &added, &["shortcut.url".into()]));
+        assert!(contains_alias("games", "Portal", "original", Some("shortcut.url"), None, &[], &[]));
+        assert!(contains_alias("media", "Portal", "original", Some("shortcut.url"), Some("media"), &[], &[]));
     }
     #[test]
     fn names_reject_empty_duplicates_and_controls() {

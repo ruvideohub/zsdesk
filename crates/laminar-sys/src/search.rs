@@ -293,7 +293,7 @@ mod tests {
     fn rank_orders_and_limits() {
         let items: Vec<AppEntry> = ["Calculator", "Calendar", "Google Chrome", "Excel", "Windows Calculator Pro", "Recall"]
             .iter()
-            .map(|n| AppEntry { id: n.to_string(), name: n.to_string() })
+            .map(|n| AppEntry { id: n.to_string(), name: n.to_string(), icon_source: None })
             .collect();
         let r = rank("cal", &items, 3);
         assert_eq!(r.len(), 3);

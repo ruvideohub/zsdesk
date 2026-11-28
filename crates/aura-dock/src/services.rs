@@ -178,7 +178,8 @@ fn worker(rx: Receiver<Req>, out: Arc<Mutex<Vec<Reply>>>, hwnd: isize) {
         let newest_files = batch.iter().rposition(|r| matches!(r, Req::Files(..)));
         for (i, req) in batch.into_iter().enumerate() {
             match req {
-                Req::Apps(pins) => post(Reply::Apps(laminar_sys::apps::installed_apps_with_shortcuts(&pins))),
+                Req::Apps(pins) => post(Reply::Apps(laminar_sys::apps::installed_apps_with_icon_probe(&pins,
+                    |id| wic.as_ref().and_then(|factory| crate::iconcache::icon_missing(factory, id))))),
                 Req::Files(gen, q) => {
                     if Some(i) == newest_files {
                         let hits = laminar_sys::files::search_files(&q, 6);

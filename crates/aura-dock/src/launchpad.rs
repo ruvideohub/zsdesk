@@ -641,8 +641,9 @@ impl Launchpad {
     pub fn category_has(cfg: &Config, key: &str, app: &AppEntry) -> bool {
         let added = cfg.launchpad_category_apps.get(key).map(Vec::as_slice).unwrap_or(&[]);
         let excluded = cfg.launchpad_category_excluded.get(key).map(Vec::as_slice).unwrap_or(&[]);
-        let assigned = cfg.launchpad_categories.get(&app.id).map(String::as_str);
-        crate::launchpad_categories::contains(key, &app.name, &app.id, assigned, added, excluded)
+        let alias = app.icon_source.as_deref();
+        let assigned = cfg.launchpad_categories.get(&app.id).or_else(|| alias.and_then(|id| cfg.launchpad_categories.get(id))).map(String::as_str);
+        crate::launchpad_categories::contains_alias(key, &app.name, &app.id, alias, assigned, added, excluded)
     }
 
     pub fn sidebar_to_end(&mut self) { self.sidebar_scroll = f32::MAX; }

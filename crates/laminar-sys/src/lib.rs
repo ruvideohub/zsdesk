@@ -38,6 +38,7 @@ macro_rules! wait {
 pub mod apps;
 pub mod steam_shortcut;
 mod steam_discovery;
+mod steam_merge;
 pub mod audio;
 pub mod calc;
 pub mod connectors;

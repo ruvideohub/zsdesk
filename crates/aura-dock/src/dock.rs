@@ -3696,11 +3696,11 @@ impl Dock {
     /// Explicit Dock shortcuts can also be discovered as Steam games in All
     /// Apps. This only supplies scan candidates; Launchpad pins stay separate.
     fn steam_pin_candidates(&self) -> Vec<String> {
-        self.cfg.pins.iter().flat_map(|pin| match pin {
+        self.cfg.launchpad_pins.iter().chain(self.cfg.pins.iter().flat_map(|pin| match pin {
             Pin::Id(id) => std::slice::from_ref(id),
             Pin::Stack { apps, .. } => apps.as_slice(),
             Pin::Widget { .. } => &[],
-        }).take(512).cloned().collect()
+        })).take(512).cloned().collect()
     }
 
     /// Apps listed under "Pinned" in Launchpad.
@@ -3717,7 +3717,11 @@ impl Dock {
             if self.brushes.contains_key(id) {
                 continue;
             }
-            match self.icons.get_cached(&self.gfx.wic, id) {
+            // A merged Shell entry keeps its original launch ID but can use
+            // the matching Steam shortcut as its icon source.
+            let source = self.lp_apps.iter().find(|app| app.id == *id)
+                .and_then(|app| app.icon_source.as_deref()).unwrap_or(id);
+            match self.icons.get_cached(&self.gfx.wic, source) {
                 Some(src) => {
                     if let Ok(surface) = self.gfx.icon_surface(&src, px) {
                         if let Ok(b) = self.compositor.CreateSurfaceBrushWithSurface(&surface) {
@@ -3727,8 +3731,8 @@ impl Dock {
                     }
                 }
                 None => {
-                    if self.icons_requested.insert(id.clone()) {
-                        missing.push(id.clone());
+                    if self.icons_requested.insert(source.to_string()) {
+                        missing.push(source.to_string());
                     }
                 }
             }
@@ -4461,9 +4465,14 @@ impl Dock {
                 if let (Some(key), Some(app)) = (Launchpad::category_key(self.launchpad.category, &self.cfg), self.lp_apps.iter().find(|a| a.id == id)) {
                     let key = key.to_string();
                     let selected = Launchpad::category_has(&self.cfg, &key, app);
+                    let alias = app.icon_source.clone();
                     self.save_and_apply(|cfg| {
                         let mut added = cfg.launchpad_category_apps.remove(&key).unwrap_or_default();
                         let mut excluded = cfg.launchpad_category_excluded.remove(&key).unwrap_or_default();
+                        if let Some(alias) = alias {
+                            added.retain(|value| value != &alias);
+                            excluded.retain(|value| value != &alias);
+                        }
                         crate::launchpad_categories::set_membership(&id, !selected, &mut added, &mut excluded);
                         if !added.is_empty() { cfg.launchpad_category_apps.insert(key.clone(), added); }
                         if !excluded.is_empty() { cfg.launchpad_category_excluded.insert(key, excluded); }
@@ -4670,6 +4679,9 @@ impl Dock {
             match r {
                 Reply::Apps(list) => {
                     trace!("apps: {}", list.len());
+                    for app in &list {
+                        if app.icon_source.is_some() { self.brushes.remove(&app.id); }
+                    }
                     self.lp_apps = list;
                     render = true;
                 }
